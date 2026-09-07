@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from django.db.models import Count, Sum
 from django.db.models.functions import ExtractHour
 from django.http import HttpResponse
+from django.utils import timezone
 
 from equipment.models import Equipment, MaintenanceRecord
 from facilities.models import Facility
@@ -32,16 +33,134 @@ def _in_range(qs, start=None, end=None):
     return qs
 
 
+def _compact_reservation(reservation: Reservation) -> dict:
+    """Minimal reservation payload for dashboard lists.
+
+    Only non-sensitive display fields — no contact details, notes, check-in
+    codes, or internal notes. The frontend links to the full detail endpoint
+    for anything more.
+    """
+    return {
+        "id": reservation.id,
+        "reservation_id": reservation.reservation_id,
+        "event_name": reservation.event_name,
+        "facility": reservation.facility.name,
+        "facility_id": reservation.facility_id,
+        "requester": reservation.requester_display_name,
+        "date": reservation.date.isoformat(),
+        "start_time": reservation.start_time.isoformat(),
+        "end_time": reservation.end_time.isoformat(),
+        "status": reservation.status,
+        "status_label": reservation.get_status_display(),
+    }
+
+
+def _dashboard_lists(user, today) -> dict:
+    """Today / upcoming / pending / recent rows for the dashboard.
+
+    Computed server-side so "today" uses Django's TIME_ZONE (Asia/Manila),
+    not the browser's clock, and so lists reflect the full database rather
+    than page 1 of the paginated reservation list. Scope mirrors summary().
+    """
+    is_staff = user is None or user.is_sas_staff
+    base = Reservation.objects.select_related("facility", "requester")
+    if not is_staff:
+        base = base.filter(requester=user)
+
+    today_rows = (
+        base.filter(date=today, status__in=Reservation.ACTIVE_STATUSES)
+        .order_by("start_time")
+    )
+    upcoming_rows = (
+        base.filter(date__gt=today, status=Reservation.Status.APPROVED)
+        .order_by("date", "start_time")[:5]
+    )
+    pending_rows = (
+        base.filter(status=Reservation.Status.PENDING)
+        .order_by("date", "start_time")[:5]
+    )
+    recent_rows = base.order_by("-created_at")[:6]
+
+    return {
+        "today": [_compact_reservation(r) for r in today_rows],
+        "upcoming": [_compact_reservation(r) for r in upcoming_rows],
+        "pending": [_compact_reservation(r) for r in pending_rows],
+        "recent": [_compact_reservation(r) for r in recent_rows],
+    }
+
+
+def equipment_attention(limit: int = 5) -> list[dict]:
+    """Active equipment with low availability, maintenance, or poor condition.
+
+    Mirrors the availability engine's at-a-glance mode: an item needs
+    attention when it is archived, not currently AVAILABLE, under open
+    maintenance, or in poor/damaged condition.
+
+    Uses today's reservations only for the at-a-glance view to avoid
+    summing non-overlapping future reservations.
+    """
+    from equipment.services import _open_maintenance_quantities, _reserved_quantities
+
+    maintenance_map = _open_maintenance_quantities()
+    reserved_map = _reserved_quantities()  # today's reservations only
+    rows = []
+    for eq in Equipment.objects.filter(is_active=True).select_related("category"):
+        maint = maintenance_map.get(eq.id, 0)
+        reserved = reserved_map.get(eq.id, 0)
+        # Cap reserved at total to prevent impossible display values.
+        reserved = min(reserved, eq.total_quantity)
+        available = (
+            max(eq.total_quantity - maint - reserved, 0)
+            if eq.status == Equipment.Status.AVAILABLE
+            else 0
+        )
+        needs_attention = (
+            available == 0
+            or maint > 0
+            or eq.condition in (Equipment.Condition.POOR, Equipment.Condition.DAMAGED)
+        )
+        if not needs_attention:
+            continue
+        rows.append(
+            {
+                "id": eq.id,
+                "name": eq.name,
+                "category": eq.category.name,
+                "condition": eq.condition,
+                "condition_label": eq.get_condition_display(),
+                "available": available,
+                "total_quantity": eq.total_quantity,
+                "availability_status": (
+                    "AVAILABLE" if available > 0 else "UNAVAILABLE"
+                ),
+            }
+        )
+    return rows[:limit]
+
+
 # ---------------------------------------------------------------------------
 # Dashboard + analytics endpoints
 # ---------------------------------------------------------------------------
 
-def summary() -> dict:
-    today = date.today()
+def summary(user=None) -> dict:
+    """Dashboard aggregates.
+
+    Staff get organization-wide counts. A non-staff ``user`` gets the same
+    structure scoped to their own reservations, so a requester never sees
+    administrative statistics about other people's activity. Facilities and
+    equipment counts describe the public inventory and are the same for
+    everyone.
+    """
+    is_staff = user is None or user.is_sas_staff
+    today = timezone.localdate()
     all_reservations = Reservation.objects.all()
+    if not is_staff:
+        all_reservations = all_reservations.filter(requester=user)
     pending = all_reservations.filter(status=Reservation.Status.PENDING).count()
     facilities_total = Facility.objects.filter(is_active=True).count()
-    equipment_total = sum(e.total_quantity for e in Equipment.objects.filter(is_active=True))
+    active_equipment = Equipment.objects.filter(is_active=True)
+    equipment_total = sum(e.total_quantity for e in active_equipment)
+    equipment_types = active_equipment.count()
 
     today_qs = all_reservations.filter(
         date=today, status__in=Reservation.ACTIVE_STATUSES
@@ -53,6 +172,7 @@ def summary() -> dict:
         "pending_requests": pending,
         "active_today": today_qs.count(),
         "facilities": facilities_total,
+        "equipment_types": equipment_types,
         "equipment": equipment_total,
         "campus_reservations": all_reservations.filter(
             requester_type=Reservation.RequesterType.CAMPUS
@@ -63,6 +183,12 @@ def summary() -> dict:
         "facility_utilization": round(utilization.get("overall", 0), 1),
         "cancellation_rate": cancellation_rate(),
         "no_show_rate": no_show_rate(),
+        # The backend's local date (Asia/Manila) used for the lists below, so
+        # the UI can display the same "today" the server filtered by.
+        "today_date": today.isoformat(),
+        # Server-computed lists (timezone-correct "today", full-DB scope).
+        **_dashboard_lists(user, today),
+        "equipment_attention": equipment_attention(),
     }
 
 
@@ -71,7 +197,7 @@ def requester_breakdown(days: int = 365) -> dict:
 
     Helps SAS understand how much its facilities serve outside organizations.
     """
-    start = date.today() - timedelta(days=days)
+    start = timezone.localdate() - timedelta(days=days)
     qs = Reservation.objects.filter(date__gte=start)
 
     campus = qs.filter(requester_type=Reservation.RequesterType.CAMPUS).count()
@@ -102,7 +228,7 @@ def reservation_trends(months: int = 6) -> list:
     """Reservations per month (counts + status breakdown) for the last N months."""
     from django.db.models.functions import TruncMonth
 
-    cutoff = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1)
+    cutoff = (timezone.localdate().replace(day=1) - timedelta(days=1)).replace(day=1)
     start = cutoff
     for _ in range(max(months - 1, 0)):
         start = (start - timedelta(days=1)).replace(day=1)
@@ -132,7 +258,8 @@ def reservation_trends(months: int = 6) -> list:
 
 def facility_utilization(days: int = 30) -> dict:
     """Share of operating hours booked per facility over the window."""
-    start = date.today() - timedelta(days=days)
+    today = timezone.localdate()
+    start = today - timedelta(days=days)
     facilities = Facility.objects.filter(is_active=True).prefetch_related("operating_hours")
     rows = []
     total_capacity_hours = 0
@@ -143,8 +270,8 @@ def facility_utilization(days: int = 30) -> dict:
             if oh.is_closed:
                 continue
             seconds = (
-                datetime.combine(date.today(), oh.close_time)
-                - datetime.combine(date.today(), oh.open_time)
+                datetime.combine(today, oh.close_time)
+                - datetime.combine(today, oh.open_time)
             ).total_seconds()
             capacity_hours += seconds / 3600
 
@@ -182,14 +309,21 @@ def facility_utilization(days: int = 30) -> dict:
 
 
 def equipment_utilization() -> dict:
-    """Reserved share of each equipment pool plus overall figure."""
+    """Reserved share of each equipment pool plus overall figure.
+
+    Uses today's reservations only for the at-a-glance view, matching the
+    equipment inventory calculation in equipment/services.py.
+    """
+    from equipment.services import _reserved_quantities
+
+    reserved_map = _reserved_quantities()  # today's reservations only
     rows = []
     total_qty = 0
     total_reserved = 0
     for eq in Equipment.objects.filter(is_active=True):
-        reserved = eq.reservation_items.filter(
-            reservation__status__in=Reservation.ACTIVE_STATUSES
-        ).aggregate(total=Sum("quantity"))["total"] or 0
+        reserved = reserved_map.get(eq.id, 0)
+        # Cap reserved at total to prevent impossible values.
+        reserved = min(reserved, eq.total_quantity)
         utilization = round((reserved / eq.total_quantity) * 100, 1) if eq.total_quantity else 0
         total_qty += eq.total_quantity
         total_reserved += reserved
@@ -217,7 +351,7 @@ def cancellation_rate() -> float:
 
 def no_show_rate() -> float:
     """Approved/active reservations past their date that were never checked in."""
-    today = date.today()
+    today = timezone.localdate()
     no_shows = Reservation.objects.filter(
         date__lt=today,
         status__in=[Reservation.Status.APPROVED, Reservation.Status.ACTIVE],
@@ -395,7 +529,7 @@ def _report_rows(slug: str, start=None, end=None):
 
     if slug == "no-show":
         qs = Reservation.objects.filter(
-            date__lt=date.today(),
+            date__lt=timezone.localdate(),
             status__in=[Reservation.Status.APPROVED, Reservation.Status.ACTIVE],
             checked_in_at__isnull=True,
         ).select_related("facility", "requester")
@@ -416,7 +550,7 @@ def report_preview(slug: str, start=None, end=None) -> dict:
 
 def export_report(slug: str, fmt: str, start=None, end=None) -> HttpResponse:
     headers, rows = _report_rows(slug, start, end)
-    filename = f"{slug}-{date.today().isoformat()}"
+    filename = f"{slug}-{timezone.localdate().isoformat()}"
 
     if fmt == "csv":
         buffer = io.StringIO()

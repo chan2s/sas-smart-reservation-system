@@ -454,13 +454,13 @@ class EquipmentManagementApiTests(TestCase):
             status=Equipment.Status.UNAVAILABLE,
         )
         stats = equipment_stats()
-        self.assertEqual(stats["unavailable"], 2)
-        self.assertIn("unavailable", stats)
+        self.assertEqual(stats["unavailable_units"], 2)
+        self.assertIn("unavailable_units", stats)
 
         self._auth(self.requester)
         response = self.client.get("/api/equipment/stats/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["unavailable"], 2)
+        self.assertEqual(response.json()["unavailable_units"], 2)
 
     def test_status_filter(self):
         Equipment.objects.create(

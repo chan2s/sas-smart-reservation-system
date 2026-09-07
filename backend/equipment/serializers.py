@@ -253,12 +253,13 @@ class MaintenanceRecordSerializer(serializers.ModelSerializer):
 
 
 class EquipmentStatsSerializer(serializers.Serializer):
-    total = serializers.IntegerField()
-    available = serializers.IntegerField()
-    reserved = serializers.IntegerField()
-    under_maintenance = serializers.IntegerField()
-    unavailable = serializers.IntegerField()
-    damaged = serializers.IntegerField()
+    equipment_types = serializers.IntegerField()
+    total_units = serializers.IntegerField()
+    available_units = serializers.IntegerField()
+    reserved_units = serializers.IntegerField()
+    under_maintenance_units = serializers.IntegerField()
+    unavailable_units = serializers.IntegerField()
+    damaged_records = serializers.IntegerField()
 
 
 class EquipmentStatsViewMixin:

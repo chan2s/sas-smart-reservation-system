@@ -76,6 +76,7 @@ export function useReportEquipmentIssue(equipmentId: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-maintenance'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -87,6 +88,7 @@ export function useCreateEquipment() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['equipment'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -99,6 +101,7 @@ export function useUpdateEquipment(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', id] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -111,6 +114,7 @@ export function useDeleteEquipment(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', id] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -123,6 +127,7 @@ export function useRestoreEquipment(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', id] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -145,6 +150,7 @@ export function useSetEquipmentMaintenance(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', id] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-maintenance'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -158,6 +164,7 @@ export function useResolveMaintenance(equipmentId: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', equipmentId] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-maintenance'] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }

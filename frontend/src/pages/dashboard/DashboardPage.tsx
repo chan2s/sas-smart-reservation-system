@@ -8,15 +8,14 @@ import {
   Clock3,
   Package,
   Plus,
+  RefreshCw,
   Ticket,
   TriangleAlert,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import {
   useDashboardSummary,
-  useEquipment,
   useFacilities,
-  useReservations,
   useUtilization,
 } from '@/hooks/queries'
 import { useAuth } from '@/hooks/useAuth'
@@ -26,29 +25,29 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Backdrop } from '@/components/decor/Backdrop'
 import { cn, formatTime, STATUS_META } from '@/lib/utils'
-import type { ReservationSummary } from '@/lib/types'
-
-const todayISO = format(new Date(), 'yyyy-MM-dd')
+import type { DashboardReservationRow } from '@/lib/types'
 
 export function DashboardPage() {
   const navigate = useNavigate()
   const { isStaff } = useAuth()
-  const { data: summary, isLoading: summaryLoading } = useDashboardSummary()
-  const { data: reservations } = useReservations({ page: 1 })
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryError,
+    refetch: summaryRefetch,
+    isFetching: summaryFetching,
+  } = useDashboardSummary()
   const { data: facilities } = useFacilities()
-  const { data: equipment } = useEquipment()
   const { data: utilization } = useUtilization(30)
 
-  const today = (reservations?.results ?? []).filter((r) => r.date === todayISO)
-  const upcoming = (reservations?.results ?? [])
-    .filter((r) => r.date >= todayISO && r.status === 'APPROVED')
-    .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time))
-    .slice(0, 5)
-  const pending = (reservations?.results ?? []).filter((r) => r.status === 'PENDING').slice(0, 5)
-  const recentActivity = (reservations?.results ?? []).slice(0, 6)
-  const equipmentAttention = (equipment ?? []).filter(
-    (item) => item.availability.status !== 'AVAILABLE' || item.condition === 'POOR',
-  )
+  // All dashboard rows come from the backend summary — computed with the
+  // backend's Asia/Manila clock and scoped server-side to the signed-in
+  // user's role. The frontend applies no filtering of its own.
+  const today = summary?.today ?? []
+  const upcoming = summary?.upcoming ?? []
+  const pending = summary?.pending ?? []
+  const recentActivity = summary?.recent ?? []
+  const equipmentAttention = summary?.equipment_attention ?? []
 
   return (
     <div className="relative">
@@ -64,6 +63,36 @@ export function DashboardPage() {
           </Button>
         }
       />
+
+      {/* Error state — never fake numbers when the API fails. */}
+      {summaryError && (
+        <Card className="mt-8 border-status-rejected/40">
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-status-rejected-bg text-status-rejected">
+                <TriangleAlert className="size-5" aria-hidden />
+              </span>
+              <div>
+                <p className="text-[15px] font-semibold text-ink">
+                  Couldn't load dashboard statistics
+                </p>
+                <p className="mt-0.5 text-sm text-body">
+                  The server didn't return the latest numbers. Nothing shown below is a
+                  placeholder — retry to load real data.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void summaryRefetch()}
+              loading={summaryFetching}
+              icon={<RefreshCw className="size-4" />}
+            >
+              Retry
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Statistics */}
       <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -88,9 +117,10 @@ export function DashboardPage() {
         />
         <StatCard
           icon={<Package className="size-[18px]" />}
-          label="Equipment Items"
+          label="Total Units"
           value={summary?.equipment}
           loading={summaryLoading}
+          suffix="units"
         />
       </div>
 
@@ -115,7 +145,11 @@ export function DashboardPage() {
         <Card className="lg:col-span-2">
           <CardHeader
             title="Today's reservations"
-            description={format(new Date(), 'EEEE, MMMM d, yyyy')}
+            description={
+              summary?.today_date
+                ? format(new Date(`${summary.today_date}T00:00:00`), 'EEEE, MMMM d, yyyy')
+                : undefined
+            }
             action={
               <Link
                 to="/calendar"
@@ -125,7 +159,12 @@ export function DashboardPage() {
               </Link>
             }
           />
-          {today.length === 0 ? (
+          {summaryLoading ? (
+            <div className="mt-4 space-y-2">
+              <Skeleton className="h-12" />
+              <Skeleton className="h-12" />
+            </div>
+          ) : today.length === 0 ? (
             <EmptyState
               title="No reservations today"
               description="The facility calendar is clear — create a reservation to get started."
@@ -185,7 +224,9 @@ export function DashboardPage() {
             title={isStaff ? 'Pending approval' : 'My pending requests'}
             description={isStaff ? 'Requests awaiting your decision' : 'Requests awaiting SAS review'}
           />
-          {pending.length === 0 ? (
+          {summaryLoading ? (
+            <Skeleton className="mt-4 h-16" />
+          ) : pending.length === 0 ? (
             <p className="mt-4 text-sm text-muted">Nothing awaiting approval.</p>
           ) : (
             <ul className="mt-3 divide-y divide-line">
@@ -198,7 +239,9 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader title="Upcoming reservations" description="Approved events in the next 7 days" />
-          {upcoming.length === 0 ? (
+          {summaryLoading ? (
+            <Skeleton className="mt-4 h-16" />
+          ) : upcoming.length === 0 ? (
             <p className="mt-4 text-sm text-muted">No approved events on the horizon.</p>
           ) : (
             <ul className="mt-3 divide-y divide-line">
@@ -275,7 +318,9 @@ export function DashboardPage() {
               </Link>
             }
           />
-          {equipmentAttention.length === 0 ? (
+          {summaryLoading ? (
+            <Skeleton className="mt-4 h-16" />
+          ) : equipmentAttention.length === 0 ? (
             <p className="mt-4 text-sm text-muted">All equipment is in good standing.</p>
           ) : (
             <ul className="mt-3 divide-y divide-line">
@@ -289,20 +334,18 @@ export function DashboardPage() {
                       {item.name}
                     </Link>
                     <p className="text-xs text-muted">
-                      {item.category.name} · {item.condition_label}
+                      {item.category} · {item.condition_label}
                     </p>
                   </div>
                   <span
                     className={cn(
                       'shrink-0 rounded-md px-2 py-0.5 text-xs font-medium',
-                      item.availability.status === 'AVAILABLE'
+                      item.availability_status === 'AVAILABLE'
                         ? 'bg-status-available-bg text-status-available'
-                        : item.availability.status === 'PARTIAL'
-                          ? 'bg-status-partial-bg text-status-partial'
-                          : 'bg-status-rejected-bg text-status-rejected',
+                        : 'bg-status-rejected-bg text-status-rejected',
                     )}
                   >
-                    {item.availability.available} / {item.total_quantity} available
+                    {item.available} / {item.total_quantity} available
                   </span>
                 </li>
               ))}
@@ -312,7 +355,9 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader title="Reservation activity" description="Most recent requests across the system" />
-          {recentActivity.length === 0 ? (
+          {summaryLoading ? (
+            <Skeleton className="mt-4 h-16" />
+          ) : recentActivity.length === 0 ? (
             <p className="mt-4 text-sm text-muted">No reservation activity yet.</p>
           ) : (
             <ol className="mt-4 space-y-0">
@@ -365,12 +410,14 @@ function StatCard({
   value,
   loading,
   accent,
+  suffix,
 }: {
   icon: React.ReactNode
   label: string
   value?: number
   loading?: boolean
   accent?: string
+  suffix?: string
 }) {
   return (
     <div className="card flex items-start gap-4 p-5">
@@ -385,13 +432,16 @@ function StatCard({
             {value ?? 0}
           </p>
         )}
-        <p className="mt-1.5 text-[13px] text-body">{label}</p>
+        <p className="mt-1.5 text-[13px] text-body">
+          {label}
+          {suffix ? ` · ${suffix}` : ''}
+        </p>
       </div>
     </div>
   )
 }
 
-function TodayRow({ reservation }: { reservation: ReservationSummary }) {
+function TodayRow({ reservation }: { reservation: DashboardReservationRow }) {
   return (
     <li>
       <Link
@@ -416,7 +466,7 @@ function TodayRow({ reservation }: { reservation: ReservationSummary }) {
   )
 }
 
-function PendingRow({ reservation }: { reservation: ReservationSummary }) {
+function PendingRow({ reservation }: { reservation: DashboardReservationRow }) {
   return (
     <li>
       <Link
@@ -437,7 +487,7 @@ function PendingRow({ reservation }: { reservation: ReservationSummary }) {
   )
 }
 
-function UpcomingRow({ reservation }: { reservation: ReservationSummary }) {
+function UpcomingRow({ reservation }: { reservation: DashboardReservationRow }) {
   return (
     <li>
       <Link

@@ -106,12 +106,13 @@ export interface Equipment {
 }
 
 export interface EquipmentStats {
-  total: number
-  available: number
-  reserved: number
-  under_maintenance: number
-  unavailable: number
-  damaged: number
+  equipment_types: number
+  total_units: number
+  available_units: number
+  reserved_units: number
+  under_maintenance_units: number
+  unavailable_units: number
+  damaged_records: number
 }
 
 export interface EquipmentHistoryItem {
@@ -353,17 +354,52 @@ export interface Notification {
   time_ago: string
 }
 
+/** Compact reservation row for server-computed dashboard lists. */
+export interface DashboardReservationRow {
+  id: number
+  reservation_id: string
+  event_name: string
+  facility: string
+  facility_id: number
+  requester: string
+  date: string
+  start_time: string
+  end_time: string
+  status: ReservationStatus
+  status_label: string
+}
+
+export interface EquipmentAttentionRow {
+  id: number
+  name: string
+  category: string
+  condition: EquipmentCondition
+  condition_label: string
+  available: number
+  total_quantity: number
+  availability_status: 'AVAILABLE' | 'UNAVAILABLE'
+}
+
 export interface DashboardSummary {
   total_reservations: number
   pending_requests: number
   active_today: number
   facilities: number
+  equipment_types: number
   equipment: number
   campus_reservations: number
   external_reservations: number
   facility_utilization: number
   cancellation_rate: number
   no_show_rate: number
+  /** The backend's local date (Asia/Manila) that "today" was computed with. */
+  today_date: string
+  /** Server-computed in Asia/Manila time (not the browser's clock). */
+  today: DashboardReservationRow[]
+  upcoming: DashboardReservationRow[]
+  pending: DashboardReservationRow[]
+  recent: DashboardReservationRow[]
+  equipment_attention: EquipmentAttentionRow[]
 }
 
 export interface RequesterBreakdown {

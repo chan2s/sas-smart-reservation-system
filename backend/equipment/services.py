@@ -1,6 +1,7 @@
 from datetime import date as date_cls
 
 from django.db.models import Sum
+from django.utils import timezone
 
 from reservations.models import Reservation
 
@@ -17,11 +18,19 @@ def _open_maintenance_quantities() -> dict:
     return {row["equipment_id"]: row["total"] for row in qs}
 
 
-def _reserved_quantities(date_str=None, start=None, end=None, exclude_reservation_id=None) -> dict:
+def _reserved_quantities(date_str=None, start=None, end=None, exclude_reservation_id=None, include_all_dates=False) -> dict:
     """equipment_id -> quantity reserved by active reservations on the window.
 
-    Without date/time parameters, quantities reserved by all active
-    reservations are returned (useful for an at-a-glance inventory).
+    Without date/time parameters:
+    - If ``include_all_dates=False`` (default): only today's reservations are
+      counted. This is for the at-a-glance inventory view, where summing across
+      non-overlapping future dates would produce impossible totals.
+    - If ``include_all_dates=True``: all active reservations across all dates
+      are counted. This is for validation contexts (e.g. preventing inventory
+      reduction below committed quantities).
+
+    For a specific date/time window, only reservations whose time range
+    overlaps the window are counted.
     """
     items = Reservation.objects.exclude(status=Reservation.Status.REJECTED).exclude(
         status=Reservation.Status.CANCELLED
@@ -40,18 +49,29 @@ def _reserved_quantities(date_str=None, start=None, end=None, exclude_reservatio
             status__in=Reservation.ACTIVE_STATUSES,
         )
     else:
-        items = items.filter(status__in=Reservation.ACTIVE_STATUSES)
+        if include_all_dates:
+            items = items.filter(status__in=Reservation.ACTIVE_STATUSES)
+        else:
+            # At-a-glance: count today's active reservations only.
+            # Future reservations don't reduce current availability — items
+            # are returned after each event, so they can be re-reserved.
+            today = timezone.localdate()
+            items = items.filter(
+                date=today,
+                status__in=Reservation.ACTIVE_STATUSES,
+            )
     rows = items.values("items__equipment_id").annotate(total=Sum("items__quantity"))
     return {row["items__equipment_id"]: row["total"] for row in rows}
 
 
 def committed_quantity(equipment) -> int:
-    """Units of ``equipment`` that are unavailable right now.
+    """Units of ``equipment`` that are committed across all active reservations.
 
-    Reserved by active reservations plus units under open maintenance. This is
-    the floor below which ``total_quantity`` must never be reduced.
+    Reserved by active reservations (all dates) plus units under open
+    maintenance. This is the floor below which ``total_quantity`` must never
+    be reduced, regardless of when the reservations are scheduled.
     """
-    reserved = _reserved_quantities().get(equipment.id, 0)
+    reserved = _reserved_quantities(include_all_dates=True).get(equipment.id, 0)
     maintenance = _open_maintenance_quantities().get(equipment.id, 0)
     return reserved + maintenance
 
@@ -95,34 +115,56 @@ def equipment_availability(equipment, request=None):
 
 
 def equipment_stats(request=None) -> dict:
-    """Rollup counts for the equipment inventory header."""
+    """Rollup counts for the equipment inventory header.
+
+    Returns both record counts and physical unit counts so the frontend can
+    display them with distinct terminology (e.g. "Equipment Types" vs
+    "Total Units").
+    """
     equipments = list(Equipment.objects.filter(is_active=True))
     maintenance_map = _open_maintenance_quantities()
     reserved_map = _reserved_quantities()
 
-    total = sum(e.total_quantity for e in equipments)
-    available = 0
+    equipment_types = len(equipments)
+    total_units = sum(e.total_quantity for e in equipments)
+    available_units = 0
+    reserved_units = 0
+    under_maintenance_units = 0
+    unavailable_units = 0
+    damaged_records = 0
+
     for e in equipments:
-        if e.status != Equipment.Status.AVAILABLE:
-            continue
         maintenance = maintenance_map.get(e.id, 0)
         reserved = reserved_map.get(e.id, 0)
-        available += max(e.total_quantity - maintenance - reserved, 0)
+
+        # Capped reserved: cannot exceed total_quantity.
+        reserved = min(reserved, e.total_quantity)
+        reserved_units += reserved
+
+        if e.status != Equipment.Status.AVAILABLE:
+            # Item-level status takes the whole line out of service.
+            if e.status == Equipment.Status.MAINTENANCE:
+                under_maintenance_units += e.total_quantity
+            else:
+                # UNAVAILABLE or RETIRED
+                unavailable_units += e.total_quantity
+            continue
+
+        under_maintenance_units += maintenance
+        available = max(e.total_quantity - maintenance - reserved, 0)
+        available_units += available
+
+        if e.condition in (Equipment.Condition.POOR, Equipment.Condition.DAMAGED):
+            damaged_records += 1
 
     return {
-        "total": total,
-        "available": available,
-        "reserved": sum(reserved_map.values()),
-        "under_maintenance": sum(maintenance_map.values()),
-        "unavailable": sum(
-            e.total_quantity
-            for e in equipments
-            if e.status in (Equipment.Status.UNAVAILABLE, Equipment.Status.RETIRED)
-        ),
-        "damaged": Equipment.objects.filter(
-            is_active=True,
-            condition__in=[Equipment.Condition.POOR, Equipment.Condition.DAMAGED],
-        ).count(),
+        "equipment_types": equipment_types,
+        "total_units": total_units,
+        "available_units": available_units,
+        "reserved_units": reserved_units,
+        "under_maintenance_units": under_maintenance_units,
+        "unavailable_units": unavailable_units,
+        "damaged_records": damaged_records,
     }
 
 

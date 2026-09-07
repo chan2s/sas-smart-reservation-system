@@ -38,7 +38,13 @@ def _range_params(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def analytics_summary(request):
-    return Response(summary())
+    """Dashboard aggregates for the signed-in user.
+
+    Staff receive organization-wide counts; requesters receive the same
+    structure scoped to their own reservations. The backend decides the
+    scope — the frontend never sends a role or scope hint.
+    """
+    return Response(summary(user=request.user))
 
 
 @api_view(["GET"])

@@ -138,13 +138,14 @@ export function EquipmentPage() {
       />
 
       {/* Stats */}
-      <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <EquipmentStat icon={<Package className="size-[18px]" />} label="Total equipment" value={stats?.total} />
-        <EquipmentStat icon={<CircleCheck className="size-[18px]" />} label="Available" value={stats?.available} accent="text-status-available" />
-        <EquipmentStat icon={<ArrowRight className="size-[18px]" />} label="Reserved" value={stats?.reserved} accent="text-status-approved" />
-        <EquipmentStat icon={<Wrench className="size-[18px]" />} label="Under maintenance" value={stats?.under_maintenance} accent="text-status-maintenance" />
-        <EquipmentStat icon={<PackageX className="size-[18px]" />} label="Unavailable" value={stats?.unavailable} accent="text-status-rejected" />
-        <EquipmentStat icon={<TriangleAlert className="size-[18px]" />} label="Damaged" value={stats?.damaged} accent="text-status-rejected" />
+      <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
+        <EquipmentStat icon={<Package className="size-[18px]" />} label="Equipment Types" value={stats?.equipment_types} suffix="types" />
+        <EquipmentStat icon={<Package className="size-[18px]" />} label="Total Units" value={stats?.total_units} suffix="units" />
+        <EquipmentStat icon={<CircleCheck className="size-[18px]" />} label="Available" value={stats?.available_units} suffix="units" accent="text-status-available" />
+        <EquipmentStat icon={<ArrowRight className="size-[18px]" />} label="Reserved" value={stats?.reserved_units} suffix="units" accent="text-status-approved" />
+        <EquipmentStat icon={<Wrench className="size-[18px]" />} label="Under Maintenance" value={stats?.under_maintenance_units} suffix="units" accent="text-status-maintenance" />
+        <EquipmentStat icon={<PackageX className="size-[18px]" />} label="Unavailable" value={stats?.unavailable_units} suffix="units" accent="text-status-rejected" />
+        <EquipmentStat icon={<TriangleAlert className="size-[18px]" />} label="Damaged" value={stats?.damaged_records} suffix="records" accent="text-status-rejected" />
       </div>
 
       {/* Filters */}
@@ -380,7 +381,9 @@ function EquipmentTableRow({
           {item.availability.available}
         </span>
         {item.availability.reserved > 0 && (
-          <span className="ml-1 text-xs text-muted">· {item.availability.reserved} reserved</span>
+          <span className="ml-1 text-xs text-muted">
+            · {Math.min(item.availability.reserved, item.total_quantity)} reserved
+          </span>
         )}
       </td>
       <td className="px-4 py-4">
@@ -490,6 +493,14 @@ function EquipmentMobileRow({
             {item.availability.available}
           </span>{' '}
           available
+          {item.availability.reserved > 0 && (
+            <>
+              {' · '}
+              <span className="text-muted">
+                {Math.min(item.availability.reserved, item.total_quantity)} reserved
+              </span>
+            </>
+          )}
         </p>
         <ConditionBadge condition={item.condition} />
       </div>
@@ -549,11 +560,13 @@ function EquipmentStat({
   label,
   value,
   accent,
+  suffix,
 }: {
   icon: React.ReactNode
   label: string
   value?: number
   accent?: string
+  suffix?: string
 }) {
   return (
     <div className="card flex items-center gap-3.5 p-4">
@@ -564,7 +577,10 @@ function EquipmentStat({
         <p className={cn('text-xl font-semibold leading-none tabular-nums', accent ?? 'text-ink')}>
           {value ?? 0}
         </p>
-        <p className="mt-1 truncate text-xs text-muted">{label}</p>
+        <p className="mt-1 truncate text-xs text-muted">
+          {label}
+          {suffix ? ` · ${suffix}` : ''}
+        </p>
       </div>
     </div>
   )
