@@ -1,0 +1,204 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+/* ==========================================================================
+   SAS Reserve — design tokens
+   A calm, premium institutional palette. Neutrals carry the interface;
+   pastel accents are reserved for semantic status and subtle decoration.
+   ========================================================================== */
+
+@theme {
+  /* Typography */
+  --font-sans:
+    'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  /* Surface */
+  --color-surface: #ffffff;
+  --color-soft: #f8fafc;
+  --color-softer: #f1f5f9;
+
+  /* Text */
+  --color-ink: #1f2937;
+  --color-body: #6b7280;
+  --color-muted: #9ca3af;
+  --color-faint: #d1d5db;
+
+  /* Lines */
+  --color-line: #e5e7eb;
+  --color-line-strong: #d1d5db;
+
+  /* Brand — calm indigo used sparingly for primary actions */
+  --color-brand: #4f46e5;
+  --color-brand-dark: #4338ca;
+  --color-brand-soft: #eef2ff;
+  --color-brand-faint: #e0e7ff;
+
+  /* Status — pastel semantic accents */
+  --color-status-available: #059669;
+  --color-status-available-bg: #ecfdf5;
+  --color-status-pending: #b45309;
+  --color-status-pending-bg: #fffbeb;
+  --color-status-approved: #4f46e5;
+  --color-status-approved-bg: #eef2ff;
+  --color-status-active: #0284c7;
+  --color-status-active-bg: #f0f9ff;
+  --color-status-completed: #0d9488;
+  --color-status-completed-bg: #f0fdfa;
+  --color-status-rejected: #e11d48;
+  --color-status-rejected-bg: #fff1f2;
+  --color-status-cancelled: #6b7280;
+  --color-status-cancelled-bg: #f3f4f6;
+  --color-status-maintenance: #ea580c;
+  --color-status-maintenance-bg: #fff7ed;
+  --color-status-partial: #d97706;
+  --color-status-partial-bg: #fffbeb;
+
+  /* Decorative pastels */
+  --color-blob-blue: #dbeafe;
+  --color-blob-indigo: #e0e7ff;
+  --color-blob-emerald: #d1fae5;
+  --color-blob-amber: #fef3c7;
+
+  /* Shadows — soft, low-contrast */
+  --shadow-card: 0 1px 2px 0 rgb(16 24 40 / 0.04), 0 1px 3px 0 rgb(16 24 40 / 0.06);
+  --shadow-card-hover:
+    0 2px 4px -1px rgb(16 24 40 / 0.06), 0 8px 20px -4px rgb(16 24 40 / 0.1);
+  --shadow-pop:
+    0 4px 6px -2px rgb(16 24 40 / 0.05), 0 12px 28px -4px rgb(16 24 40 / 0.14);
+  --shadow-float:
+    0 1px 2px 0 rgb(16 24 40 / 0.05), 0 12px 32px -8px rgb(16 24 40 / 0.18);
+
+  /* Motion */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Radius */
+  --radius-card: 0.875rem; /* 14px */
+  --radius-control: 0.5rem; /* 8px */
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-soft text-ink font-sans;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-semibold text-ink;
+    letter-spacing: -0.02em;
+  }
+
+  /* Visible, consistent focus for keyboard users */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--color-brand-faint);
+  }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+
+@utility card {
+  @apply bg-surface border border-line rounded-card shadow-card;
+}
+
+@utility card-hover {
+  transition:
+    transform 200ms var(--ease-out-soft),
+    box-shadow 200ms var(--ease-out-soft),
+    border-color 200ms var(--ease-out-soft);
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card-hover);
+  }
+}
+
+@utility focus-ring {
+  @apply outline-none;
+  &:focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+}
+
+/* Subtle page entrance */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-fade-up {
+  animation: fade-up 260ms var(--ease-out-soft) both;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@utility skeleton {
+  @apply rounded-md;
+  background: linear-gradient(
+    90deg,
+    var(--color-softer) 25%,
+    var(--color-soft) 50%,
+    var(--color-softer) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* Reduced motion — respect user preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Print — used by the reports "Export PDF" flow */
+@media print {
+  body {
+    background: white;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-area {
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

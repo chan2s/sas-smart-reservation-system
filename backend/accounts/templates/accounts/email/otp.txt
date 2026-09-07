@@ -1,0 +1,10 @@
+SAS RESERVE
+
+{% if first_send %}Verify your email to finish signing in.{% else %}Here is your new verification code.{% endif %}
+
+Your verification code is: {{ otp }}
+
+This code expires in {{ minutes }} minutes and can be used only once.
+
+If you didn't try to sign in to SAS RESERVE, you can safely ignore this
+email — no changes will be made to any account.
