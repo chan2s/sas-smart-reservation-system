@@ -86,7 +86,6 @@ def _requester_fields(obj):
             "organization_type": obj.organization_type,
             "organization_type_label": obj.get_organization_type_display(),
             "contact_person": obj.contact_person,
-            "contact_number": obj.contact_number,
             "contact_email": obj.contact_email,
         }
     return {
@@ -97,7 +96,6 @@ def _requester_fields(obj):
         "organization_type": "",
         "organization_type_label": "",
         "contact_person": obj.contact_person,
-        "contact_number": "",
         "contact_email": obj.requester.email if obj.requester else "",
     }
 
@@ -111,7 +109,6 @@ class ReservationListSerializer(serializers.ModelSerializer):
     requester_type_label = serializers.CharField(read_only=True)
     organization_type = serializers.CharField(read_only=True)
     organization_type_label = serializers.CharField(read_only=True)
-    contact_number = serializers.CharField(read_only=True)
     contact_email = serializers.CharField(read_only=True)
     created_by_name = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
@@ -135,7 +132,6 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "organization_type",
             "organization_type_label",
             "contact_person",
-            "contact_number",
             "contact_email",
             "created_by_name",
             "expected_participants",
@@ -192,7 +188,6 @@ class ReservationListSerializer(serializers.ModelSerializer):
         )
         if not (is_staff or is_own):
             data["contact_email"] = ""
-            data["contact_number"] = ""
         return data
 
 
@@ -321,7 +316,6 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         choices=Reservation.RequesterType.choices,
         required=False,
     )
-    contact_number = serializers.CharField(required=False, allow_blank=True)
     contact_email = serializers.EmailField(required=False, allow_blank=True)
     organization_type = serializers.ChoiceField(
         choices=Reservation.OrganizationType.choices,
@@ -344,7 +338,6 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "description",
             "expected_participants",
             "contact_person",
-            "contact_number",
             "contact_email",
             "special_requirements",
             "notes",
@@ -380,10 +373,6 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             if not (attrs.get("contact_person") or "").strip():
                 raise serializers.ValidationError(
                     {"contact_person": "Contact person is required for external reservations."}
-                )
-            if not (attrs.get("contact_number") or "").strip():
-                raise serializers.ValidationError(
-                    {"contact_number": "Contact number is required for external reservations."}
                 )
             if not (attrs.get("contact_email") or "").strip():
                 raise serializers.ValidationError(
@@ -423,6 +412,12 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         )
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
+
+        # For campus reservations, use the user's email if not provided
+        contact_email = validated_data.get("contact_email", "")
+        if not contact_email and user and user.is_authenticated:
+            contact_email = user.email
+            validated_data["contact_email"] = contact_email
 
         reservation = Reservation.objects.create(
             **validated_data,
@@ -477,7 +472,6 @@ class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.Mode
             "description",
             "expected_participants",
             "contact_person",
-            "contact_number",
             "contact_email",
             "special_requirements",
             "items",
@@ -491,7 +485,6 @@ class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.Mode
         for field, label in (
             ("organization", "Organization / school name"),
             ("contact_person", "Contact person"),
-            ("contact_number", "Contact number"),
             ("contact_email", "Email address"),
         ):
             if not (attrs.get(field) or "").strip():
@@ -543,7 +536,6 @@ class PublicTrackSerializer(serializers.Serializer):
     organization = serializers.CharField(read_only=True)
     organization_type_label = serializers.CharField(read_only=True, default="")
     contact_person = serializers.CharField(read_only=True)
-    contact_number = serializers.CharField(read_only=True)
     contact_email = serializers.EmailField(read_only=True)
     facility = serializers.CharField(read_only=True)
     facility_id = serializers.IntegerField(read_only=True)

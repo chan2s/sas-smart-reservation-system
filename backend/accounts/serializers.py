@@ -21,7 +21,6 @@ class UserSerializer(serializers.ModelSerializer):
             "email",
             "role",
             "organization",
-            "phone",
             "display_name",
         )
         read_only_fields = ("role",)
@@ -39,7 +38,6 @@ class RegisterSerializer(serializers.ModelSerializer):
             "last_name",
             "email",
             "organization",
-            "phone",
         )
 
     def create(self, validated_data):

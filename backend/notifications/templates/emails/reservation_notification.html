@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ subject }}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #1a56db;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #1a1a1a;
+            margin: 16px 0 8px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 12px 0;
+        }
+        .status-approved {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-rejected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status-cancelled {
+            background-color: #e2e3e5;
+            color: #383d41;
+        }
+        .status-pending {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .details {
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        .detail-label {
+            font-weight: 500;
+            color: #6c757d;
+        }
+        .detail-value {
+            color: #1a1a1a;
+            font-weight: 500;
+        }
+        .message {
+            background-color: #e7f3ff;
+            border-left: 4px solid #1a56db;
+            padding: 16px;
+            margin: 20px 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .next-steps {
+            background-color: #f0f7ff;
+            padding: 16px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        .next-steps h4 {
+            margin: 0 0 8px;
+            color: #1a56db;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e0e0e0;
+            color: #6c757d;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <span>📅</span>
+                <span>{{ site_name }}</span>
+            </div>
+        </div>
+
+        <h1 class="title">{{ status_label }}</h1>
+
+        <span class="status-badge status-{{ status|lower }}">
+            {{ status_label }}
+        </span>
+
+        <div class="details">
+            <div class="detail-row">
+                <span class="detail-label">Reservation ID:</span>
+                <span class="detail-value">{{ reservation_id }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Event:</span>
+                <span class="detail-value">{{ event_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Facility:</span>
+                <span class="detail-value">{{ facility_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Date:</span>
+                <span class="detail-value">{{ date }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Time:</span>
+                <span class="detail-value">{{ start_time }} - {{ end_time }}</span>
+            </div>
+        </div>
+
+        <div class="message">
+            <strong>Update:</strong><br>
+            {{ message }}
+        </div>
+
+        {% if next_action %}
+        <div class="next-steps">
+            <h4>Next Steps</h4>
+            <p>{{ next_action }}</p>
+        </div>
+        {% endif %}
+
+        <div class="footer">
+            <p>This is an automated notification from {{ site_name }}.</p>
+            <p>If you have questions, please contact the SAS Office.</p>
+        </div>
+    </div>
+</body>
+</html>

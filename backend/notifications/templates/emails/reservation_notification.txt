@@ -1,0 +1,24 @@
+{% autoescape off %}
+SAS RESERVE - {{ status_label }}
+========================================
+
+Reservation ID: {{ reservation_id }}
+Event: {{ event_name }}
+Facility: {{ facility_name }}
+Date: {{ date }}
+Time: {{ start_time }} - {{ end_time }}
+
+UPDATE
+-------
+{{ message }}
+
+{% if next_action %}
+NEXT STEPS
+----------
+{{ next_action }}
+{% endif %}
+
+---
+This is an automated notification from {{ site_name }}.
+If you have questions, please contact the SAS Office.
+{% endautoescape %}

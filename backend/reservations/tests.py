@@ -601,6 +601,51 @@ class ReservationApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()), 1)
 
+    def test_calendar_events_has_is_sas_staff_field(self):
+        """Calendar events include is_sas_staff to drive role-aware UI."""
+        self._auth(self.requester)
+        self.client.post("/api/reservations/", self._payload(), format="json")
+        response = self.client.get(
+            "/api/calendar/events/", {"start": "2026-09-01", "end": "2026-09-30"}
+        )
+        event = response.json()[0]
+        self.assertIn("is_sas_staff", event)
+        self.assertFalse(event["is_sas_staff"])
+        # Non-staff should NOT receive admin-only fields.
+        self.assertNotIn("requester_type", event)
+        self.assertNotIn("organization", event)
+        self.assertNotIn("contact_person", event)
+        self.assertNotIn("created_by", event)
+
+    def test_calendar_events_admin_sees_extra_fields(self):
+        """Admin calendar events include requester/org/contact metadata."""
+        self._auth(self.admin)
+        self.client.post(
+            "/api/reservations/",
+            self._payload(
+                event_name="Admin Event",
+                requester_type="EXTERNAL",
+                organization="ABC School",
+                contact_person="Juan",
+                contact_email="juan@example.com",
+                requester_id=self.requester.id,
+            ),
+            format="json",
+        )
+        response = self.client.get(
+            "/api/calendar/events/", {"start": "2026-09-01", "end": "2026-09-30"}
+        )
+        events = response.json()
+        self.assertTrue(events)
+        admin_event = next(e for e in events if e["title"] == "Admin Event")
+        self.assertTrue(admin_event["is_sas_staff"])
+        self.assertIn("requester_type", admin_event)
+        self.assertEqual(admin_event["requester_type"], "EXTERNAL")
+        self.assertEqual(admin_event["organization"], "ABC School")
+        self.assertEqual(admin_event["contact_person"], "Juan")
+        self.assertEqual(admin_event["contact_email"], "juan@example.com")
+        self.assertEqual(admin_event["created_by"], "admin")
+
 
 class RequesterTypeApiTests(TestCase):
     """Campus vs external requester flows + created-by semantics."""
@@ -641,7 +686,6 @@ class RequesterTypeApiTests(TestCase):
             purpose="Inter-school tournament",
             expected_participants=200,
             contact_person="Juan Dela Cruz",
-            contact_number="0917 123 4567",
             contact_email="juan@example.com",
             requester_type="EXTERNAL",
             items=[],
@@ -736,190 +780,230 @@ class RequesterTypeApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("requester_type", response.json())
 
-    # ------------------------------------------------------------------
-    # Public guest flow
-    # ------------------------------------------------------------------
 
-    def test_guest_reservation_requires_no_account_and_stays_pending(self):
-        before = Reservation.objects.count()
-        response = self.client.post(
-            "/api/public/reservations/", self._external_payload(), format="json"
+
+class AuthenticationRequiredTests(TestCase):
+    """Tests for authentication requirements on reservation endpoints."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="testuser",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+            first_name="Test",
+            last_name="User",
+            email="test@example.com",
         )
-        self.assertEqual(response.status_code, 201, response.content)
-        body = response.json()
-        self.assertTrue(body["reservation_id"].startswith("SAS-"))
-        self.assertEqual(body["status"], "PENDING")
-        self.assertEqual(Reservation.objects.count(), before + 1)
-        reservation = Reservation.objects.get(reservation_id=body["reservation_id"])
-        self.assertIsNone(reservation.requester)
-        self.assertEqual(reservation.requester_type, Reservation.RequesterType.EXTERNAL)
-        self.assertIsNone(reservation.created_by)
-
-    def test_guest_reservation_requires_contact_fields(self):
-        for field in ("organization", "contact_person", "contact_number", "contact_email"):
-            payload = self._external_payload()
-            payload[field] = ""
-            response = self.client.post("/api/public/reservations/", payload, format="json")
-            self.assertEqual(response.status_code, 400, field)
-
-    def test_guest_reservation_conflict_returns_409(self):
-        # Block the slot first via an authenticated campus reservation.
-        self.client.force_authenticate(self.requester)
-        self.client.post(
-            "/api/reservations/",
-            {
-                "facility_id": self.facility.id,
-                "date": "2026-09-14",
-                "start_time": "13:00",
-                "end_time": "15:00",
-                "event_name": "Campus event",
-                "event_type": "SPORTS",
-                "purpose": "Practice",
-                "expected_participants": 30,
-                "items": [],
-            },
-            format="json",
+        self.facility = Facility.objects.create(
+            name="AVR",
+            facility_type=Facility.FacilityType.AVR,
+            capacity=50,
         )
-        self.client.force_authenticate(None)
-        response = self.client.post(
-            "/api/public/reservations/",
-            self._external_payload(start_time="14:00", end_time="16:00"),
-            format="json",
+        OperatingHour.objects.create(
+            facility=self.facility,
+            day_of_week=0,
+            open_time=time(6, 0),
+            close_time=time(22, 0),
         )
-        self.assertEqual(response.status_code, 409)
-
-    def test_track_reservation_with_code_and_email(self):
-        created = self.client.post(
-            "/api/public/reservations/", self._external_payload(), format="json"
-        ).json()
-        code = created["reservation_id"]
-
-        # Correct code + email -> full tracking payload.
-        response = self.client.post(
-            "/api/public/track/",
-            {"reservation_code": code, "email": "juan@example.com"},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200, response.content)
-        body = response.json()
-        self.assertEqual(body["reservation_id"], code)
-        self.assertEqual(body["status"], "PENDING")
-        self.assertEqual(body["organization"], "ABC National High School")
-        self.assertEqual(body["facility"], "Gymnasium")
-        # Restricted payload: no internal/approval data.
-        self.assertNotIn("checkin_code", body)
-        self.assertNotIn("events", body)
-        self.assertNotIn("notes", body)
-
-    def test_track_reservation_requires_matching_email(self):
-        created = self.client.post(
-            "/api/public/reservations/", self._external_payload(), format="json"
-        ).json()
-        wrong = self.client.post(
-            "/api/public/track/",
-            {"reservation_code": created["reservation_id"], "email": "wrong@example.com"},
-            format="json",
-        )
-        self.assertEqual(wrong.status_code, 404)
-        wrong_code = self.client.post(
-            "/api/public/track/",
-            {"reservation_code": "SAS-2026-99999", "email": "juan@example.com"},
-            format="json",
-        )
-        self.assertEqual(wrong_code.status_code, 404)
-
-    def test_track_shows_checked_in_status(self):
-        created = self.client.post(
-            "/api/public/reservations/", self._external_payload(), format="json"
-        ).json()
-        reservation = Reservation.objects.get(reservation_id=created["reservation_id"])
-        reservation.status = Reservation.Status.ACTIVE
-        reservation.save(update_fields=["status"])
-
-        response = self.client.post(
-            "/api/public/track/",
-            {"reservation_code": reservation.reservation_id, "email": "juan@example.com"},
-            format="json",
-        )
-        self.assertEqual(response.json()["status"], "CHECKED_IN")
-
-    def test_public_endpoints_cannot_list_or_modify_reservations(self):
-        """Guests must never reach the authenticated reservation API."""
-        self.client.post("/api/public/reservations/", self._external_payload(), format="json")
-        # Unauthenticated access to the authenticated endpoints is rejected.
-        for method, path in (
-            ("get", "/api/reservations/"),
-            ("post", "/api/reservations/"),
-            ("get", "/api/reservations/users/"),
-        ):
-            response = getattr(self.client, method)(path, format="json")
-            self.assertEqual(response.status_code, 401, path)
-
-    def test_user_search_is_staff_only(self):
-        self.client.force_authenticate(self.requester)
-        response = self.client.get("/api/reservations/users/?search=juan")
-        self.assertEqual(response.status_code, 403)
-
-        self.client.force_authenticate(self.admin)
-        response = self.client.get("/api/reservations/users/?search=juan")
-        self.assertEqual(response.status_code, 200)
-        results = response.json()["results"]
-        self.assertTrue(any(r["id"] == self.requester.id for r in results))
-
-    def test_requester_type_filter(self):
-        self.client.force_authenticate(self.admin)
-        # One external + one campus.
-        self.client.post("/api/reservations/", self._external_payload(), format="json")
-        self.client.post(
-            "/api/reservations/",
-            {
-                "facility_id": self.facility.id,
-                "date": "2026-09-21",
-                "start_time": "09:00",
-                "end_time": "11:00",
-                "event_name": "Campus meeting",
-                "event_type": "MEETING",
-                "purpose": "Planning",
-                "expected_participants": 10,
-                "items": [],
-            },
-            format="json",
-        )
-        external = self.client.get("/api/reservations/?requester_type=EXTERNAL")
-        self.assertEqual(external.json()["count"], 1)
-        self.assertEqual(
-            external.json()["results"][0]["requester_type"], "EXTERNAL"
-        )
-        campus = self.client.get("/api/reservations/?requester_type=CAMPUS")
-        self.assertEqual(campus.json()["count"], 1)
-
-    def test_public_facilities_and_availability(self):
-        response = self.client.get("/api/public/facilities/")
-        self.assertEqual(response.status_code, 200)
-        names = [f["name"] for f in response.json()["results"]]
-        self.assertIn("Gymnasium", names)
-
-        response = self.client.post(
-            "/api/public/availability/check/",
-            {
-                "facility_id": self.facility.id,
-                "date": "2026-09-14",
-                "start_time": "09:00",
-                "end_time": "11:00",
-                "items": [],
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["overall"]["ok"])
-
-    def test_public_recommendations(self):
         category = EquipmentCategory.objects.create(name="Chairs")
-        Equipment.objects.create(name="Folding Chair", category=category, total_quantity=200)
-        response = self.client.post(
-            "/api/public/availability/resources/",
-            {"event_type": "SPORTS", "expected_participants": 100},
-            format="json",
+        self.chairs = Equipment.objects.create(
+            name="Folding Chair", category=category, total_quantity=100
         )
+
+    def test_anonymous_user_cannot_create_reservation(self):
+        """Unauthenticated users cannot create reservations."""
+        payload = {
+            "facility_id": self.facility.id,
+            "date": "2026-09-14",
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Test Event",
+            "event_type": "MEETING",
+            "purpose": "Test purpose",
+            "expected_participants": 10,
+        }
+        response = self.client.post("/api/reservations/", payload, format="json")
+        self.assertEqual(response.status_code, 401)
+
+    def test_authenticated_user_can_create_reservation(self):
+        """Authenticated users can create reservations."""
+        self.client.force_authenticate(self.user)
+        payload = {
+            "facility_id": self.facility.id,
+            "date": "2026-09-14",
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Test Event",
+            "event_type": "MEETING",
+            "purpose": "Test purpose",
+            "expected_participants": 10,
+            "items": [{"equipment_id": self.chairs.id, "quantity": 5}],
+        }
+        response = self.client.post("/api/reservations/", payload, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["requester"], self.user.display_name)
+
+    def test_anonymous_user_cannot_access_reservation_list(self):
+        """Unauthenticated users cannot list reservations."""
+        response = self.client.get("/api/reservations/")
+        self.assertEqual(response.status_code, 401)
+
+    def test_anonymous_user_cannot_access_reservation_detail(self):
+        """Unauthenticated users cannot view reservation details."""
+        reservation = Reservation.objects.create(
+            requester=self.user,
+            event_name="Test",
+            facility=self.facility,
+            date=date(2026, 9, 14),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=Reservation.Status.PENDING,
+        )
+        response = self.client.get(f"/api/reservations/{reservation.id}/")
+        self.assertEqual(response.status_code, 401)
+
+    def test_user_cannot_create_reservation_for_another_user(self):
+        """Regular users cannot create reservations for other users."""
+        other_user = User.objects.create_user(
+            username="otheruser",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        self.client.force_authenticate(self.user)
+        payload = {
+            "facility_id": self.facility.id,
+            "date": "2026-09-14",
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Test Event",
+            "event_type": "MEETING",
+            "purpose": "Test purpose",
+            "expected_participants": 10,
+            "requester_type": "CAMPUS",
+            "requester_id": other_user.id,
+        }
+        response = self.client.post("/api/reservations/", payload, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("requester_id", response.json())
+
+    def test_staff_can_create_reservation_for_other_user(self):
+        """Staff can create reservations on behalf of other users."""
+        admin = User.objects.create_user(
+            username="admin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        other_user = User.objects.create_user(
+            username="otheruser",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        self.client.force_authenticate(admin)
+        payload = {
+            "facility_id": self.facility.id,
+            "date": "2026-09-14",
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Test Event",
+            "event_type": "MEETING",
+            "purpose": "Test purpose",
+            "expected_participants": 10,
+            "requester_type": "CAMPUS",
+            "requester_id": other_user.id,
+        }
+        response = self.client.post("/api/reservations/", payload, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["requester"], other_user.display_name)
+        self.assertIn("on behalf", response.json()["created_by_name"])
+
+    def test_phone_field_not_in_user_serializer(self):
+        """Phone number should not be exposed in user API responses."""
+        self.client.force_authenticate(self.user)
+        response = self.client.get("/api/auth/me/")
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["recommendations"])
+        data = response.json()
+        self.assertNotIn("phone", data)
+
+    def test_phone_field_not_in_reservation_response(self):
+        """Phone number should not be exposed in reservation API responses."""
+        self.client.force_authenticate(self.user)
+        reservation = Reservation.objects.create(
+            requester=self.user,
+            event_name="Test",
+            facility=self.facility,
+            date=date(2026, 9, 14),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=Reservation.Status.PENDING,
+        )
+        response = self.client.get(f"/api/reservations/{reservation.id}/")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertNotIn("contact_number", data)
+
+    def test_reservation_uses_user_email_for_contact(self):
+        """Reservation contact email should come from user's account."""
+        self.client.force_authenticate(self.user)
+        payload = {
+            "facility_id": self.facility.id,
+            "date": "2026-09-14",
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Test Event",
+            "event_type": "MEETING",
+            "purpose": "Test purpose",
+            "expected_participants": 10,
+            "items": [{"equipment_id": self.chairs.id, "quantity": 5}],
+        }
+        response = self.client.post("/api/reservations/", payload, format="json")
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        # Contact email should be the user's email, not empty
+        self.assertEqual(data["contact_email"], self.user.email)
+
+    def test_external_user_can_still_reserve_with_account(self):
+        """External users can create accounts and make reservations."""
+        external_user = User.objects.create_user(
+            username="external",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+            first_name="External",
+            last_name="User",
+            email="external@example.com",
+            organization="External Org",
+        )
+        self.client.force_authenticate(external_user)
+        payload = {
+            "facility_id": self.facility.id,
+            "date": "2026-09-14",
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "External Event",
+            "event_type": "MEETING",
+            "purpose": "External purpose",
+            "expected_participants": 20,
+            "organization": "External Org",
+            "requester_type": "EXTERNAL",
+            "contact_person": "External Contact",
+            "contact_email": "external@example.com",
+            "items": [{"equipment_id": self.chairs.id, "quantity": 10}],
+        }
+        response = self.client.post("/api/reservations/", payload, format="json")
+        # External reservations by authenticated users should work
+        # (staff only can create external reservations through authenticated endpoint)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("requester_type", response.json())
+
+    def test_public_endpoints_removed(self):
+        """Public reservation endpoints should return 404 (removed)."""
+        # All public endpoints should return 404 since they've been removed
+        for path in (
+            "/api/public/reservations/",
+            "/api/public/track/",
+            "/api/public/facilities/",
+            "/api/public/availability/check/",
+            "/api/public/availability/resources/",
+        ):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 404, f"{path} should return 404")

@@ -72,7 +72,6 @@ class Reservation(models.Model):
         blank=True,
         help_text="For external requesters: what kind of organization they are.",
     )
-    contact_number = models.CharField(max_length=32, blank=True)
     contact_email = models.EmailField(
         blank=True,
         help_text=(

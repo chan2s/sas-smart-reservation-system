@@ -331,13 +331,10 @@ export function ReservationDetailPage() {
             </div>
             {/* External contact details — shown to staff viewers. */}
             {reservation.requester_type === 'EXTERNAL' &&
-              (reservation.contact_person || reservation.contact_number || reservation.contact_email) && (
+              (reservation.contact_person || reservation.contact_email) && (
                 <dl className="mt-4 space-y-2.5 text-sm">
                   {reservation.contact_person && (
                     <DetailItem label="Contact person" value={reservation.contact_person} />
-                  )}
-                  {reservation.contact_number && (
-                    <DetailItem label="Contact number" value={reservation.contact_number} />
                   )}
                   {reservation.contact_email && (
                     <DetailItem label="Email" value={reservation.contact_email} />

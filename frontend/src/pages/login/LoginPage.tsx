@@ -280,27 +280,6 @@ export function LoginPage() {
           <ShieldCheck className="size-3.5" aria-hidden />
           Managed by the SAS Office — contact staff for account access
         </p>
-
-        <div className="mt-4 space-y-2 text-center">
-          <p className="text-sm text-body">
-            External organization?{' '}
-            <a
-              href="/reserve"
-              className="font-medium text-brand transition-colors hover:text-brand-dark"
-            >
-              Reserve without an account
-            </a>
-          </p>
-          <p className="text-xs text-muted">
-            Already submitted?{' '}
-            <a
-              href="/track-reservation"
-              className="font-medium text-brand transition-colors hover:text-brand-dark"
-            >
-              Track your reservation
-            </a>
-          </p>
-        </div>
       </div>
     </div>
   )

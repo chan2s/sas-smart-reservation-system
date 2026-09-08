@@ -4,7 +4,6 @@ import {
   endpoints,
   type CreateReservationPayload,
   type EquipmentPayload,
-  type GuestReservationPayload,
   type ReservationFilters,
 } from '@/lib/api'
 
@@ -202,20 +201,6 @@ export function useCampusUsers(search: string, enabled = true) {
     queryKey: ['campus-users', search],
     queryFn: () => endpoints.campusUsers(search),
     enabled,
-  })
-}
-
-export function useCreateGuestReservation() {
-  return useMutation({
-    mutationFn: (payload: GuestReservationPayload) =>
-      endpoints.createGuestReservation(payload),
-  })
-}
-
-export function useTrackReservation() {
-  return useMutation({
-    mutationFn: (payload: { reservation_code: string; email: string }) =>
-      endpoints.trackReservation(payload),
   })
 }
 

@@ -1,7 +1,7 @@
 """Reservation workflow actions.
 
 Each transition records a ReservationEvent (timeline + approval history) and
-emits the appropriate notifications.
+emits the appropriate notifications (in-app + email).
 """
 
 from __future__ import annotations
@@ -11,6 +11,13 @@ from django.utils import timezone
 from accounts.models import AuditLog
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
+from notifications.email_service import (
+    send_reservation_approved,
+    send_reservation_cancelled,
+    send_reservation_notification,
+    send_reservation_rejected,
+    send_reservation_submitted,
+)
 from reservations.models import InspectionReport, Reservation, ReservationEvent
 
 
@@ -44,13 +51,51 @@ def _reservation_link(reservation) -> str:
     return f"/reservations/{reservation.id}"
 
 
+def _get_requester_email(reservation) -> str:
+    """Get the requester's email for notifications.
+
+    For campus users, use their account email. For external requesters,
+    use the contact_email from the reservation.
+    """
+    if reservation.requester and reservation.requester.email:
+        return reservation.requester.email
+    return reservation.contact_email or ""
+
+
+def _send_reservation_email(
+    reservation,
+    status: str,
+    status_label: str,
+    message: str,
+    next_action: str | None = None,
+):
+    """Send email notification to the requester."""
+    email = _get_requester_email(reservation)
+    if not email:
+        return
+    
+    send_reservation_notification(
+        user_email=email,
+        reservation_id=reservation.reservation_id,
+        event_name=reservation.event_name,
+        facility_name=reservation.facility.name,
+        date=reservation.date.isoformat(),
+        start_time=reservation.start_time.strftime("%H:%M"),
+        end_time=reservation.end_time.strftime("%H:%M"),
+        status=status,
+        status_label=status_label,
+        message=message,
+        next_action=next_action,
+    )
+
+
 def auto_approve(reservation, actor, message=""):
     """Approve a reservation without a manual review step.
 
     Used when an administrator creates a reservation (for a campus user or an
     external organization): those reservations skip the pending queue and are
     immediately confirmed. Records an APPROVED timeline event and notifies the
-    requester when they have an account (external requesters are no-ops).
+    requester via email.
     """
     from_status = reservation.status
     reservation.status = Reservation.Status.APPROVED
@@ -79,6 +124,14 @@ def auto_approve(reservation, actor, message=""):
         "Reservation approved",
         f"{reservation.event_name} on {reservation.date} was automatically approved.",
         _reservation_link(reservation),
+    )
+    # Send email notification
+    _send_reservation_email(
+        reservation,
+        status="APPROVED",
+        status_label="Approved",
+        message=f"{reservation.event_name} on {reservation.date} was automatically approved.",
+        next_action="Check in at the facility on the event date.",
     )
     return reservation
 
@@ -114,6 +167,14 @@ def approve_reservation(reservation, actor, comment=""):
         f"{reservation.event_name} on {reservation.date} has been approved.",
         _reservation_link(reservation),
     )
+    # Send email notification
+    _send_reservation_email(
+        reservation,
+        status="APPROVED",
+        status_label="Approved",
+        message=f"{reservation.event_name} on {reservation.date} has been approved.",
+        next_action="Check in at the facility on the event date.",
+    )
     return reservation
 
 
@@ -146,6 +207,14 @@ def reject_reservation(reservation, actor, reason):
         "Reservation rejected",
         f"{reservation.event_name} on {reservation.date} was rejected. Reason: {reason}",
         _reservation_link(reservation),
+    )
+    # Send email notification
+    _send_reservation_email(
+        reservation,
+        status="REJECTED",
+        status_label="Rejected",
+        message=f"Your reservation was rejected. Reason: {reason}",
+        next_action="Contact the SAS Office if you have questions.",
     )
     return reservation
 
@@ -214,6 +283,15 @@ def cancel_reservation(reservation, actor, reason=""):
             f"{reservation.event_name} on {reservation.date} was cancelled.",
             _reservation_link(reservation),
         )
+    # Send email notification
+    cancelled_by = "you" if is_requester_cancel else f"{actor.display_name}"
+    _send_reservation_email(
+        reservation,
+        status="CANCELLED",
+        status_label="Cancelled",
+        message=f"Your reservation was cancelled by {cancelled_by}.",
+        next_action="Contact the SAS Office if you need to reschedule.",
+    )
     return reservation
 
 

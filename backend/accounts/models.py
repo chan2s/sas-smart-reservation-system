@@ -19,7 +19,6 @@ class User(AbstractUser):
         max_length=16, choices=Role.choices, default=Role.REQUESTER
     )
     organization = models.CharField(max_length=120, blank=True)
-    phone = models.CharField(max_length=32, blank=True)
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
     # Persistent first-time verification state (server-authoritative):
     # accounts created by first-time Google sign-in start as False and are

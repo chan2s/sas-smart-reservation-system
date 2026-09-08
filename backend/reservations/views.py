@@ -11,6 +11,7 @@ from accounts.permissions import IsSasStaff
 from facilities.models import Facility
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
+from notifications.email_service import send_reservation_submitted
 from .models import Reservation, ReservationEvent
 from .serializers import (
     ReservationCreateSerializer,
@@ -24,6 +25,7 @@ from .services.recommendations import recommend_resources
 
 class ReservationViewSet(viewsets.ModelViewSet):
     """Administrative reservation management + requester self-service."""
+    permission_classes = [IsAuthenticated]
 
     search_fields = (
         "event_name",
@@ -59,12 +61,20 @@ class ReservationViewSet(viewsets.ModelViewSet):
             qs = qs.filter(date__gte=params["from"])
         if params.get("to"):
             qs = qs.filter(date__lte=params["to"])
-        if params.get("facility"):
-            qs = qs.filter(facility_id=params["facility"])
+        facility = params.get("facility")
+        if facility and facility not in ("undefined", "null", "all", ""):
+            try:
+                qs = qs.filter(facility_id=int(facility))
+            except (TypeError, ValueError):
+                pass
         if params.get("requester"):
             qs = qs.filter(requester_id=params["requester"])
-        if params.get("equipment"):
-            qs = qs.filter(items__equipment_id=params["equipment"])
+        equipment = params.get("equipment")
+        if equipment and equipment not in ("undefined", "null", "all", ""):
+            try:
+                qs = qs.filter(items__equipment_id=int(equipment))
+            except (TypeError, ValueError):
+                pass
         return qs
 
     def get_serializer_class(self):
@@ -116,6 +126,18 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
                 f"/reservations/{reservation.id}",
             )
+        # Send email notification to the requester
+        if reservation.requester and reservation.requester.email:
+            send_reservation_submitted(
+                user_email=reservation.requester.email,
+                reservation_id=reservation.reservation_id,
+                event_name=reservation.event_name,
+                facility_name=reservation.facility.name,
+                date=reservation.date.isoformat(),
+                start_time=reservation.start_time.strftime("%H:%M"),
+                end_time=reservation.end_time.strftime("%H:%M"),
+            )
+
         return Response(
             ReservationDetailSerializer(
                 reservation, context={"request": request}
@@ -155,7 +177,6 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 "username": u.username,
                 "email": u.email,
                 "organization": u.organization,
-                "phone": u.phone,
                 "role": u.role,
             }
             for u in qs
@@ -406,26 +427,48 @@ def calendar_events(request):
     ).select_related("facility", "requester")
     if not request.user.is_sas_staff:
         qs = qs.filter(requester=request.user)
-    if request.query_params.get("facility"):
-        qs = qs.filter(facility_id=request.query_params["facility"])
+    facility = request.query_params.get("facility")
+    if facility and facility not in ("undefined", "null", "all", ""):
+        try:
+            qs = qs.filter(facility_id=int(facility))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Invalid facility filter."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
     if request.query_params.get("status"):
         qs = qs.filter(status=request.query_params["status"])
-    if request.query_params.get("equipment"):
-        qs = qs.filter(items__equipment_id=request.query_params["equipment"])
+    equipment = request.query_params.get("equipment")
+    if equipment and equipment not in ("undefined", "null", "all", ""):
+        try:
+            qs = qs.filter(items__equipment_id=int(equipment))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Invalid equipment filter."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+    is_staff = request.user.is_sas_staff
     events = []
     for r in qs:
-        events.append(
-            {
-                "id": r.id,
-                "reservation_id": r.reservation_id,
-                "title": r.event_name,
-                "start": f"{r.date}T{r.start_time}",
-                "end": f"{r.date}T{r.end_time}",
-                "facility_id": r.facility_id,
-                "facility": r.facility.name,
-                "status": r.status,
-                "requester": r.requester_display_name,
-            }
-        )
+        event = {
+            "id": r.id,
+            "reservation_id": r.reservation_id,
+            "title": r.event_name,
+            "start": f"{r.date}T{r.start_time}",
+            "end": f"{r.date}T{r.end_time}",
+            "facility_id": r.facility_id,
+            "facility": r.facility.name,
+            "status": r.status,
+            "requester": r.requester_display_name,
+            "is_sas_staff": is_staff,
+        }
+        if is_staff and r.requester_type:
+            event["requester_type"] = r.requester_type
+            event["organization"] = r.organization or ""
+            event["contact_person"] = r.contact_person or ""
+            event["contact_email"] = r.contact_email or ""
+        if is_staff and r.created_by:
+            event["created_by"] = r.created_by.display_name
+        events.append(event)
     return Response(events)

@@ -10,7 +10,6 @@ export interface User {
   email: string
   role: Role
   organization: string
-  phone: string
   display_name: string
 }
 
@@ -216,7 +215,6 @@ export interface ReservationSummary {
   organization_type_label: string
   expected_participants: number
   contact_person: string
-  contact_number: string
   contact_email: string
   created_by_name: string
   special_requirements: string
@@ -331,6 +329,12 @@ export interface CalendarEvent {
   facility: string
   status: ReservationStatus
   requester: string
+  is_sas_staff: boolean
+  requester_type?: string
+  organization?: string
+  contact_person?: string
+  contact_email?: string
+  created_by?: string
 }
 
 export interface Paginated<T> {
@@ -416,7 +420,6 @@ export interface CampusUserOption {
   username: string
   email: string
   organization: string
-  phone: string
   role: Role
 }
 
@@ -462,7 +465,6 @@ export interface TrackResult {
   organization: string
   organization_type_label: string
   contact_person: string
-  contact_number: string
   contact_email: string
   facility: string
   facility_id: number

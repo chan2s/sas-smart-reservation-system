@@ -74,7 +74,6 @@ const EMPTY_EXTERNAL = {
   organization: '',
   organization_type: 'SCHOOL',
   contact_person: '',
-  contact_number: '',
   contact_email: '',
 }
 
@@ -225,7 +224,6 @@ export function ReservationWizardPage() {
       const missing: string[] = []
       if (!external.organization.trim()) missing.push('Organization / school name')
       if (!external.contact_person.trim()) missing.push('Contact person')
-      if (!external.contact_number.trim()) missing.push('Contact number')
       if (!external.contact_email.trim()) missing.push('Email address')
       if (missing.length > 0) {
         setStepError(`Complete the requester information: ${missing.join(', ')}.`)
@@ -263,7 +261,6 @@ export function ReservationWizardPage() {
             organization: external.organization,
             organization_type: external.organization_type,
             contact_person: external.contact_person,
-            contact_number: external.contact_number,
             contact_email: external.contact_email,
           }
         : { requester_type: 'CAMPUS' as const, requester_id: selectedUser!.id }
@@ -627,14 +624,12 @@ function StepRequester({
     organization: string
     organization_type: string
     contact_person: string
-    contact_number: string
     contact_email: string
   }
   onExternalChange: (next: {
     organization: string
     organization_type: string
     contact_person: string
-    contact_number: string
     contact_email: string
   }) => void
   showErrors: boolean
@@ -812,23 +807,10 @@ function StepRequester({
               />
             </Field>
             <Field
-              label="Contact number"
-              htmlFor="ext-phone"
-              error={externalFieldError('Contact number', !external.contact_number.trim())}
-            >
-              <Input
-                id="ext-phone"
-                type="tel"
-                value={external.contact_number}
-                onChange={(event) => setExternal('contact_number', event.target.value)}
-                placeholder="e.g. 0917 123 4567"
-              />
-            </Field>
-            <Field
               label="Email address"
               htmlFor="ext-email"
               error={externalFieldError('Email address', !external.contact_email.trim())}
-              hint="Used to track the reservation — no account needed."
+              hint="Used to track the reservation."
             >
               <Input
                 id="ext-email"

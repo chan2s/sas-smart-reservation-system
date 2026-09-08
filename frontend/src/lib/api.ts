@@ -307,7 +307,6 @@ export interface CreateReservationPayload {
   description: string
   expected_participants: number
   contact_person: string
-  contact_number?: string
   contact_email?: string
   special_requirements: string
   notes: string
@@ -331,7 +330,6 @@ export interface GuestReservationPayload {
   description: string
   expected_participants: number
   contact_person: string
-  contact_number: string
   contact_email: string
   special_requirements: string
   items: { equipment_id: number; quantity: number }[]
@@ -418,50 +416,20 @@ export const endpoints = {
   calendarEvents: (params: {
     start: string
     end: string
-    facility?: string
+    facility?: string | number
     status?: string
-    equipment?: string
+    equipment?: string | number
   }) => {
-    const qs = new URLSearchParams(params as Record<string, string>).toString()
-    return api.get<CalendarEvent[]>(`/api/calendar/events/?${qs}`)
+    const qs = new URLSearchParams()
+    qs.set('start', params.start)
+    qs.set('end', params.end)
+    if (params.facility) qs.set('facility', String(params.facility))
+    if (params.status) qs.set('status', params.status)
+    if (params.equipment) qs.set('equipment', String(params.equipment))
+    return api.get<CalendarEvent[]>(`/api/calendar/events/?${qs.toString()}`)
   },
 
-  // Public (unauthenticated) — external requester flow --------------------
-  publicFacilities: () =>
-    api.get<{ results: PublicFacility[] }>('/api/public/facilities/'),
-  publicEquipment: (params?: { date?: string; start?: string; end?: string }) => {
-    const qs = new URLSearchParams()
-    if (params?.date) qs.set('date', params.date)
-    if (params?.start) qs.set('start', params.start)
-    if (params?.end) qs.set('end', params.end)
-    const suffix = qs.toString() ? `?${qs.toString()}` : ''
-    return api.get<{ results: Equipment[] }>(`/api/public/equipment/${suffix}`)
-  },
-  publicCheckAvailability: (payload: {
-    facility_id: number
-    date: string
-    start_time: string
-    end_time: string
-    items: { equipment_id: number; quantity: number }[]
-  }) => api.post<AvailabilityCheck>('/api/public/availability/check/', payload),
-  publicRecommendResources: (payload: {
-    event_type: string
-    expected_participants: number
-    facility_id?: number
-    purpose?: string
-    special_requirements?: string
-    date?: string
-    start_time?: string
-    end_time?: string
-  }) =>
-    api.post<{ recommendations: Recommendation[] }>(
-      '/api/public/availability/resources/',
-      payload,
-    ),
-  createGuestReservation: (payload: GuestReservationPayload) =>
-    api.post<GuestReservationResult>('/api/public/reservations/', payload),
-  trackReservation: (payload: { reservation_code: string; email: string }) =>
-    api.post<TrackResult>('/api/public/track/', payload),
+
 
   summary: () => api.get<DashboardSummary>('/api/analytics/summary/'),
   trends: (months = 6) => api.get<TrendPoint[]>(`/api/analytics/trends/?months=${months}`),

@@ -4,6 +4,9 @@ import { AppShell } from '@/components/layout/AppShell'
 import { useAuth } from '@/hooks/useAuth'
 import { Spinner } from '@/components/ui/Misc'
 
+const LandingPage = lazy(() =>
+  import('@/pages/public/LandingPage').then((module) => ({ default: module.LandingPage })),
+)
 const LoginPage = lazy(() =>
   import('@/pages/login/LoginPage').then((module) => ({ default: module.LoginPage })),
 )
@@ -15,21 +18,6 @@ const AuthCallbackPage = lazy(() =>
 const VerifyOtpPage = lazy(() =>
   import('@/pages/login/VerifyOtpPage').then((module) => ({
     default: module.VerifyOtpPage,
-  })),
-)
-const ReserveEntryPage = lazy(() =>
-  import('@/pages/public/ReserveEntryPage').then((module) => ({
-    default: module.ReserveEntryPage,
-  })),
-)
-const GuestReservationWizardPage = lazy(() =>
-  import('@/pages/public/GuestReservationWizardPage').then((module) => ({
-    default: module.GuestReservationWizardPage,
-  })),
-)
-const TrackReservationPage = lazy(() =>
-  import('@/pages/public/TrackReservationPage').then((module) => ({
-    default: module.TrackReservationPage,
   })),
 )
 const DashboardPage = lazy(() =>
@@ -109,16 +97,13 @@ export default function App() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Routes>
-        {/* Public routes — external requesters, no authentication */}
-        <Route path="/reserve" element={<ReserveEntryPage />} />
-        <Route path="/reserve/guest" element={<GuestReservationWizardPage />} />
-        <Route path="/track-reservation" element={<TrackReservationPage />} />
-
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<LoginPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route path="/auth/verify-otp" element={<VerifyOtpPage />} />
         <Route element={<Protected />}>
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/facilities" element={<FacilitiesPage />} />
           <Route path="/facilities/:id" element={<FacilityDetailPage />} />
           <Route path="/reservations" element={<ReservationsPage />} />
@@ -136,7 +121,7 @@ export default function App() {
           <Route path="/help" element={<HelpPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/reserve" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   )
