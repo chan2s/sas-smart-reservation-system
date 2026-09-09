@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "website-orchestrator": {
+      "source": "MattiaAlessi/Web-Design-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/website-orchestrator/SKILL.md",
+      "computedHash": "c4ad584761075af85498f33431c8db35b128a973e952dae1a84d5f7ae8118ef9"
+    }
+  }
+}

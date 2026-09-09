@@ -24,7 +24,6 @@ export function SettingsPage() {
   const [lastName, setLastName] = useState(user?.last_name ?? '')
   const [email, setEmail] = useState(user?.email ?? '')
   const [organization, setOrganization] = useState(user?.organization ?? '')
-  const [phone, setPhone] = useState(user?.phone ?? '')
   const [saving, setSaving] = useState(false)
 
   const [twoFactor, setTwoFactor] = useState<TwoFactorState | null>(null)
@@ -55,7 +54,6 @@ export function SettingsPage() {
         last_name: lastName,
         email,
         organization,
-        phone,
       })
       updateUser(updated)
       toast('Profile updated.')
@@ -189,9 +187,6 @@ export function SettingsPage() {
           </Field>
           <Field label="Organization" htmlFor="organization">
             <Input id="organization" value={organization} onChange={(event) => setOrganization(event.target.value)} />
-          </Field>
-          <Field label="Phone" htmlFor="phone">
-            <Input id="phone" value={phone} onChange={(event) => setPhone(event.target.value)} />
           </Field>
           <div className="sm:col-span-2">
             <Button type="submit" loading={saving}>

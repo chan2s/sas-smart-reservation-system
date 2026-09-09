@@ -66,7 +66,7 @@ export function VerifyOtpPage() {
     setSubmitting(true)
     try {
       await verifyGoogleOtp(verificationToken, otp.replace(/\s/g, ''))
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err) {
       handleError(err)
     } finally {
@@ -109,7 +109,7 @@ export function VerifyOtpPage() {
     }
   }
 
-  if (user) return <Navigate to="/" replace />
+  if (user) return <Navigate to="/dashboard" replace />
   if (invalidEntry) return null
 
   return (

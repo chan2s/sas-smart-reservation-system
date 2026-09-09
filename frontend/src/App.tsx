@@ -7,6 +7,12 @@ import { Spinner } from '@/components/ui/Misc'
 const LandingPage = lazy(() =>
   import('@/pages/public/LandingPage').then((module) => ({ default: module.LandingPage })),
 )
+const RegisterPage = lazy(() =>
+  import('@/pages/public/RegisterPage').then((module) => ({ default: module.RegisterPage })),
+)
+const NotFoundPage = lazy(() =>
+  import('@/pages/public/NotFoundPage').then((module) => ({ default: module.NotFoundPage })),
+)
 const LoginPage = lazy(() =>
   import('@/pages/login/LoginPage').then((module) => ({ default: module.LoginPage })),
 )
@@ -99,7 +105,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route path="/auth/verify-otp" element={<VerifyOtpPage />} />
         <Route element={<Protected />}>
@@ -121,7 +127,7 @@ export default function App() {
           <Route path="/help" element={<HelpPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Suspense>
   )

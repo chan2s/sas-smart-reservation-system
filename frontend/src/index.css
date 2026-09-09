@@ -7,6 +7,20 @@
    pastel accents are reserved for semantic status and subtle decoration.
    ========================================================================== */
 
+/* Centralized nav theming — change the whole header in one place. */
+:root {
+  --nav-background: #0b1220;
+  --nav-background-applied: rgba(11, 18, 32, 0.85);
+  --nav-foreground: #ffffff;
+  --nav-foreground-muted: rgba(255, 255, 255, 0.70);
+  --nav-border: rgba(255, 255, 255, 0.10);
+  --nav-accent: var(--color-brand);
+  --nav-button-background: var(--color-brand);
+  --nav-button-foreground: #ffffff;
+  --nav-scrolled-background: rgba(11, 18, 32, 0.90);
+  --nav-scrolled-border: rgba(255, 255, 255, 0.15);
+}
+
 @theme {
   /* Typography */
   --font-sans:
@@ -33,6 +47,10 @@
   --color-brand-dark: #4338ca;
   --color-brand-soft: #eef2ff;
   --color-brand-faint: #e0e7ff;
+
+  /* Deep navy — dark cinematic surfaces (hero overlay, CTA, auth panel) */
+  --color-navy: #0b1220;
+  --color-navy-2: #111a30;
 
   /* Status — pastel semantic accents */
   --color-status-available: #059669;
@@ -156,6 +174,22 @@
   animation: fade-up 260ms var(--ease-out-soft) both;
 }
 
+/* Cinematic hero entrance — large rise + fade for editorial headings */
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-hero-rise {
+  animation: hero-rise 900ms var(--ease-out-soft) both;
+}
+
 /* Skeleton shimmer */
 @keyframes shimmer {
   from {
@@ -186,6 +220,17 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* GSAP inline transforms are disabled at the JS layer for reduced motion;
+     this guard ensures nothing slides around if any slipped through. */
+  [data-clip-reveal],
+  [data-visual-media],
+  [data-facility-featured-media],
+  [data-facility-side-media],
+  [data-cta-background] {
+    clip-path: none !important;
+    transform: none !important;
   }
 }
 

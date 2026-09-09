@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { CalendarDays, Eye, EyeOff, KeyRound, ShieldCheck } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Form'
-import { Backdrop } from '@/components/decor/Backdrop'
+import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   not_configured:
@@ -75,7 +75,7 @@ export function LoginPage() {
     }
   }, [searchParams])
 
-  if (user) return <Navigate to="/" replace />
+  if (user) return <Navigate to="/dashboard" replace />
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -84,11 +84,11 @@ export function LoginPage() {
     try {
       if (step === 'twofa') {
         await verifyTwoFactorLogin(mfaToken, totpCode.trim())
-        navigate('/', { replace: true })
+        navigate('/dashboard', { replace: true })
         return
       }
       await login(username.trim(), password)
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         const mfaToken = (err as ApiError & { mfaToken?: string }).mfaToken
@@ -125,162 +125,170 @@ export function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-soft px-4 py-12">
-      <Backdrop />
+    <div className="min-h-screen bg-soft lg:grid lg:grid-cols-2">
+      {/* Left — dark editorial brand panel (desktop) */}
+      <AuthVisualPanel headline="Reserve spaces. Manage resources. Simplify events." />
 
-      <div className="w-full max-w-[400px]">
-        {/* Brand */}
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-brand text-white shadow-card-hover">
-            <CalendarDays className="size-6" aria-hidden />
+      {/* Right — form */}
+      <main className="relative flex min-h-screen flex-col px-5 py-6 sm:px-10 lg:px-16 lg:py-10">
+        <div className="flex items-start justify-between">
+          <BackHomeLink />
+          <div className="lg:hidden">
+            <BrandMark />
           </div>
-          <h1 className="mt-4 text-[22px] font-bold tracking-tight text-ink">SAS RESERVE</h1>
-          <p className="mt-1 text-sm text-body">
-            Smart Facility &amp; Resource Reservation System
-          </p>
         </div>
 
-        <div className="card p-7 sm:p-8">
-          {step === 'credentials' ? (
-            <>
-              <h2 className="text-xl font-semibold text-ink">Sign in</h2>
-              <p className="mt-1 text-sm text-body">
-                Access your reservations and institutional resources.
-              </p>
+        <div className="flex flex-1 items-center justify-center py-10">
+          <div className="w-full max-w-[420px]">
+            <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
+              {step === 'credentials' ? 'Welcome back' : 'Two-factor verification'}
+            </h1>
+            <p className="mt-2.5 text-[15px] leading-relaxed text-body">
+              {step === 'credentials'
+                ? 'Sign in to manage your reservations, facilities, and resources.'
+                : 'Enter the 6-digit verification code from your authenticator app.'}
+            </p>
 
-              <button
-                type="button"
-                onClick={handleGoogle}
-                disabled={googleLoading}
-                className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink shadow-sm transition-colors duration-150 hover:bg-soft disabled:opacity-60"
-              >
-                <GoogleIcon />
-                {googleLoading ? 'Redirecting to Google…' : 'Continue with Google'}
-              </button>
+            <div className="mt-9">
+              {step === 'credentials' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleGoogle}
+                    disabled={googleLoading}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-full border border-line bg-surface px-4 py-3 text-sm font-medium text-ink shadow-sm transition-colors duration-150 hover:bg-soft disabled:opacity-60"
+                  >
+                    <GoogleIcon />
+                    {googleLoading ? 'Redirecting to Google…' : 'Continue with Google'}
+                  </button>
 
-              <div className="my-5 flex items-center gap-3" aria-hidden>
-                <span className="h-px flex-1 bg-line" />
-                <span className="text-xs text-muted">or</span>
-                <span className="h-px flex-1 bg-line" />
-              </div>
+                  <div className="my-6 flex items-center gap-3" aria-hidden>
+                    <span className="h-px flex-1 bg-line" />
+                    <span className="text-xs text-muted">or</span>
+                    <span className="h-px flex-1 bg-line" />
+                  </div>
 
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <Field label="Username" htmlFor="username">
-                  <Input
-                    id="username"
-                    name="username"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    required
-                    autoFocus
-                  />
-                </Field>
+                  <form onSubmit={handleSubmit} className="space-y-5">
+                    <Field label="Username" htmlFor="username">
+                      <Input
+                        id="username"
+                        name="username"
+                        autoComplete="username"
+                        value={username}
+                        onChange={(event) => setUsername(event.target.value)}
+                        required
+                        autoFocus
+                      />
+                    </Field>
 
-                <Field label="Password" htmlFor="password">
-                  <div className="relative">
-                    <Input
-                      id="password"
-                      name="password"
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      required
-                      className="pr-10"
-                    />
+                    <Field label="Password" htmlFor="password">
+                      <div className="relative">
+                        <Input
+                          id="password"
+                          name="password"
+                          type={showPassword ? 'text' : 'password'}
+                          autoComplete="current-password"
+                          value={password}
+                          onChange={(event) => setPassword(event.target.value)}
+                          required
+                          className="pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((value) => !value)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted transition-colors hover:text-ink"
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        >
+                          {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        </button>
+                      </div>
+                    </Field>
+
+                    {error && (
+                      <p
+                        role="alert"
+                        className="rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected"
+                      >
+                        {error}
+                      </p>
+                    )}
+
+                    <Button type="submit" loading={submitting} className="w-full" size="lg">
+                      Sign in
+                    </Button>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <div className="flex size-11 items-center justify-center rounded-xl bg-brand-soft text-brand">
+                    <KeyRound className="size-5" aria-hidden />
+                  </div>
+
+                  <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+                    <Field label="Verification code" htmlFor="totp">
+                      <Input
+                        id="totp"
+                        name="totp"
+                        inputMode="text"
+                        autoComplete="one-time-code"
+                        placeholder="000000"
+                        maxLength={11}
+                        value={totpCode}
+                        onChange={(event) => setTotpCode(event.target.value.toUpperCase())}
+                        required
+                        autoFocus
+                        className="text-center text-lg tracking-[0.4em]"
+                      />
+                    </Field>
+
+                    {error && (
+                      <p
+                        role="alert"
+                        className="rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected"
+                      >
+                        {error}
+                      </p>
+                    )}
+
+                    <Button type="submit" loading={submitting} className="w-full" size="lg">
+                      Verify
+                    </Button>
+
                     <button
                       type="button"
-                      onClick={() => setShowPassword((value) => !value)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted transition-colors hover:text-ink"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="w-full text-center text-xs font-medium text-muted transition-colors hover:text-ink"
+                      onClick={() => {
+                        // The same field accepts single-use backup codes.
+                        setError('')
+                        setTotpCode('')
+                      }}
                     >
-                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                      Tip: you can enter a backup code here
                     </button>
-                  </div>
-                </Field>
 
-                {error && (
-                  <p role="alert" className="rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected">
-                    {error}
-                  </p>
-                )}
+                    <button
+                      type="button"
+                      className="w-full text-center text-xs font-medium text-brand transition-colors hover:text-brand-dark"
+                      onClick={() => {
+                        setStep('credentials')
+                        setTotpCode('')
+                        setError('')
+                      }}
+                    >
+                      Back to sign in
+                    </button>
+                  </form>
+                </>
+              )}
+            </div>
 
-                <Button type="submit" loading={submitting} className="w-full" size="lg">
-                  Sign in
-                </Button>
-              </form>
-            </>
-          ) : (
-            <>
-              <div className="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-brand">
-                <KeyRound className="size-5" aria-hidden />
-              </div>
-              <h2 className="mt-3 text-xl font-semibold text-ink">Two-factor verification</h2>
-              <p className="mt-1 text-sm text-body">
-                Enter the 6-digit verification code from your authenticator app.
-              </p>
-
-              <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-                <Field label="Verification code" htmlFor="totp">
-                  <Input
-                    id="totp"
-                    name="totp"
-                    inputMode="text"
-                    autoComplete="one-time-code"
-                    placeholder="000000"
-                    maxLength={11}
-                    value={totpCode}
-                    onChange={(event) => setTotpCode(event.target.value.toUpperCase())}
-                    required
-                    autoFocus
-                    className="text-center text-lg tracking-[0.4em]"
-                  />
-                </Field>
-
-                {error && (
-                  <p role="alert" className="rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected">
-                    {error}
-                  </p>
-                )}
-
-                <Button type="submit" loading={submitting} className="w-full" size="lg">
-                  Verify
-                </Button>
-
-                <button
-                  type="button"
-                  className="w-full text-center text-xs font-medium text-muted transition-colors hover:text-ink"
-                  onClick={() => {
-                    // The same field accepts single-use backup codes.
-                    setError('')
-                    setTotpCode('')
-                  }}
-                >
-                  Tip: you can enter a backup code here
-                </button>
-
-                <button
-                  type="button"
-                  className="w-full text-center text-xs font-medium text-brand transition-colors hover:text-brand-dark"
-                  onClick={() => {
-                    setStep('credentials')
-                    setTotpCode('')
-                    setError('')
-                  }}
-                >
-                  Back to sign in
-                </button>
-              </form>
-            </>
-          )}
+            <p className="mt-9 flex items-center justify-center gap-1.5 text-xs text-muted">
+              <ShieldCheck className="size-3.5" aria-hidden />
+              Managed by the SAS Office — contact staff for account access
+            </p>
+          </div>
         </div>
-
-        <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-muted">
-          <ShieldCheck className="size-3.5" aria-hidden />
-          Managed by the SAS Office — contact staff for account access
-        </p>
-      </div>
+      </main>
     </div>
   )
-}
+}
