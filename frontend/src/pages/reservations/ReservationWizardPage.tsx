@@ -96,8 +96,12 @@ export function ReservationWizardPage() {
   const [details, setDetails] = useState<EventDetails>(EMPTY_DETAILS)
   const [items, setItems] = useState<Record<number, number>>({})
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null)
+  const [recommendationsFetchedFor, setRecommendationsFetchedFor] = useState<string | null>(null)
   const [recommendationDismissed, setRecommendationDismissed] = useState(false)
   const [recommendationsApplied, setRecommendationsApplied] = useState(false)
+  // Equipment ids the requester has manually adjusted. Their quantity is kept
+  // across recalculations — new recommendations never overwrite user edits.
+  const [userEditedItems, setUserEditedItems] = useState<Set<number>>(new Set())
   const [stepError, setStepError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState<ReservationDetail | null>(null)
 
@@ -118,6 +122,8 @@ export function ReservationWizardPage() {
     Boolean(isAdmin && requesterType === 'CAMPUS' && stepKey === 'requester'),
   )
   const dateISO = date ? format(date, 'yyyy-MM-dd') : ''
+  const participantsRaw = Number(details.expected_participants)
+  const participants = Number.isFinite(participantsRaw) && participantsRaw > 0 ? participantsRaw : 0
   const equipmentParams = useMemo(() => {
     const params: Record<string, string> = {}
     if (dateISO) params.date = dateISO
@@ -169,26 +175,59 @@ export function ReservationWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facilityId, dateISO, startTime, endTime, itemsList, dateInvalid])
 
-  // Smart recommendations on the Resources step, using the completed event
-  // details plus the proposed schedule so quantities are availability-capped.
+  // Smart recommendations, recalculated live whenever the event details that
+  // drive the rules change (event type, participants, facility, purpose,
+  // special requirements, schedule). A fingerprint of those inputs guards the
+  // effect so each change triggers exactly one fetch.
+  const recommendationInputs = `${stepKey}|${details.event_type}|${participants}|${facilityId ?? ''}|${details.purpose.trim()}|${details.special_requirements.trim()}|${dateISO}|${startTime}|${endTime}`
   useEffect(() => {
-    if (stepKey === 'resources' && !recommendationDismissed && recommendations === null && scheduleComplete && !dateInvalid) {
-      recommendResources.mutate(
-        {
-          event_type: details.event_type,
-          expected_participants: Number(details.expected_participants) || 0,
-          facility_id: facilityId ?? undefined,
-          purpose: details.purpose,
-          special_requirements: details.special_requirements,
-          date: dateISO,
-          start_time: startTime,
-          end_time: endTime,
+    const hasInputs =
+      scheduleComplete && !dateInvalid && participants >= 1 && details.event_type
+    const isFresh = recommendationsFetchedFor === recommendationInputs
+    if (stepKey !== 'resources' || recommendationDismissed || !hasInputs || isFresh) return
+
+    let cancelled = false
+    recommendResources.mutate(
+      {
+        event_type: details.event_type,
+        expected_participants: participants,
+        facility_id: facilityId ?? undefined,
+        purpose: details.purpose,
+        special_requirements: details.special_requirements,
+        date: dateISO,
+        start_time: startTime,
+        end_time: endTime,
+      },
+      {
+        onSuccess: (data) => {
+          if (cancelled) return
+          setRecommendations(data.recommendations)
+          setRecommendationsFetchedFor(recommendationInputs)
+          setRecommendationsApplied(false)
+          // Auto-populate requested quantities (requirement 11): prefill each
+          // recommendation with the availability-capped quantity, but never
+          // overwrite a quantity the requester has manually edited.
+          setItems((current) => {
+            const next = { ...current }
+            for (const recommendation of data.recommendations) {
+              if (userEditedItems.has(recommendation.equipment_id)) continue
+              if (recommendation.recommended > 0) {
+                next[recommendation.equipment_id] = recommendation.recommended
+              } else {
+                // Zero/missing recommendation and never user-edited: clear it.
+                delete next[recommendation.equipment_id]
+              }
+            }
+            return next
+          })
         },
-        { onSuccess: (data) => setRecommendations(data.recommendations) },
-      )
+      },
+    )
+    return () => {
+      cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step])
+  }, [recommendationInputs, recommendationDismissed])
 
   function applyRecommendations() {
     if (!recommendations) return
@@ -202,6 +241,7 @@ export function ReservationWizardPage() {
   }
 
   function setQuantity(equipmentId: number, quantity: number, available: number) {
+    setUserEditedItems((current) => new Set(current).add(equipmentId))
     setItems((current) => {
       const next = { ...current }
       if (quantity <= 0) delete next[equipmentId]
@@ -216,7 +256,6 @@ export function ReservationWizardPage() {
     setEndTime(alternative.end_time)
   }
 
-  const participants = Number(details.expected_participants) || 0
   const missingDetails = useMemo(() => {
     const missing: string[] = []
     if (!details.event_name.trim()) missing.push('Event name')

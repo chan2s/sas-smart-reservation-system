@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from equipment.models import Equipment, EquipmentCategory, MaintenanceRecord
 from facilities.models import Facility, OperatingHour
-from .models import Reservation, ReservationItem
+from .models import RecommendationRule, Reservation, ReservationItem
 from .services.availability import check_availability, find_alternatives
 from .services.recommendations import recommend_resources
 
@@ -222,6 +222,103 @@ class AvailabilityServiceTests(TestCase):
         ceremony = recommend_resources("SPORTS", 300, facility_id=gym.id, purpose="Recognition ceremony")
         self.assertIn("Projectors", {r["category"] for r in ceremony})
 
+    def _recommendation_by_category(self, recommendations, name):
+        return {r["category"]: r for r in recommendations}[name]
+
+    def test_ceiling_table_quantities(self):
+        """ceil(participants / 10): 10→1, 11→2, 29→3, 30→3, 31→4."""
+        for name in ["Chairs", "Tables"]:
+            EquipmentCategory.objects.get_or_create(name=name)
+        Equipment.objects.create(name="Chair", category=EquipmentCategory.objects.get(name="Chairs"), total_quantity=500)
+        Equipment.objects.create(name="Table", category=EquipmentCategory.objects.get(name="Tables"), total_quantity=100)
+
+        cases = [(10, 1), (11, 2), (29, 3), (30, 3), (31, 4)]
+        for participants, expected_tables in cases:
+            recommendations = recommend_resources("SEMINAR", participants)
+            by_category = {r["category"]: r for r in recommendations}
+            self.assertEqual(by_category["Tables"]["quantity"], expected_tables, participants)
+            self.assertEqual(by_category["Chairs"]["quantity"], participants, participants)
+
+    def test_recommendation_quantity_is_not_inventory(self):
+        """Recommendation stays rule-based even when inventory is far larger."""
+        for name in ["Chairs", "Tables", "Microphones"]:
+            EquipmentCategory.objects.get_or_create(name=name)
+        Equipment.objects.create(name="Folding Chair", category=EquipmentCategory.objects.get(name="Chairs"), total_quantity=200)
+        Equipment.objects.create(name="Folding Table (6 ft)", category=EquipmentCategory.objects.get(name="Tables"), total_quantity=40)
+        Equipment.objects.create(name="Wired Microphone", category=EquipmentCategory.objects.get(name="Microphones"), total_quantity=6)
+
+        recommendations = recommend_resources("SEMINAR", 29)
+        by_category = {r["category"]: r for r in recommendations}
+
+        # Rule quantity is independent of the 200 in inventory.
+        self.assertEqual(by_category["Chairs"]["quantity"], 29)
+        self.assertEqual(by_category["Chairs"]["available"], 200)
+        self.assertEqual(by_category["Chairs"]["reason"], "1 chair per participant")
+        self.assertEqual(by_category["Chairs"]["calculation"], "29 × 1")
+        self.assertTrue(by_category["Chairs"]["can_fulfill"])
+
+        self.assertEqual(by_category["Tables"]["quantity"], 3)
+        self.assertEqual(by_category["Tables"]["reason"], "1 table per 10 participants, rounded up")
+        self.assertEqual(by_category["Tables"]["calculation"], "ceil(29 / 10) = 3")
+
+        # Seminar with 29 participants → 1 microphone (small-events tier).
+        self.assertEqual(by_category["Microphones"]["quantity"], 1)
+        self.assertEqual(
+            by_category["Microphones"]["reason"],
+            "1 microphone for small events (up to 60 participants)",
+        )
+        self.assertTrue(all(r["warning"] is None for r in recommendations))
+
+    def test_shortage_produces_warning_without_overwriting_rule_quantity(self):
+        """When stock cannot cover the rule, quantity stays rule-based and a warning explains it."""
+        EquipmentCategory.objects.get_or_create(name="Chairs")
+        Equipment.objects.create(name="Chair", category=EquipmentCategory.objects.get(name="Chairs"), total_quantity=20)
+
+        recommendations = recommend_resources("SEMINAR", 29)
+        chairs = self._recommendation_by_category(recommendations, "Chairs")
+        self.assertEqual(chairs["quantity"], 29)  # rule output, uncapped
+        self.assertEqual(chairs["recommended"], 20)  # capped prefill
+        self.assertEqual(chairs["available"], 20)
+        self.assertFalse(chairs["can_fulfill"])
+        self.assertEqual(chairs["status"], "PARTIAL")
+        self.assertIn("Only 20 of the recommended 29", chairs["warning"])
+
+    def test_missing_participants_returns_no_recommendations(self):
+        """No participant count → no participant-based quantities, ever."""
+        EquipmentCategory.objects.get_or_create(name="Chairs")
+        Equipment.objects.create(name="Chair", category=EquipmentCategory.objects.get(name="Chairs"), total_quantity=100)
+
+        for participants in (0, None):
+            self.assertEqual(recommend_resources("SEMINAR", participants), [])
+
+    def test_missing_event_type_falls_back_to_generic_profile(self):
+        """Unknown/blank event type uses the safest generic (OTHER) profile."""
+        for name in ["Chairs", "Tables", "Microphones"]:
+            EquipmentCategory.objects.get_or_create(name=name)
+        Equipment.objects.create(name="Chair", category=EquipmentCategory.objects.get(name="Chairs"), total_quantity=100)
+        Equipment.objects.create(name="Table", category=EquipmentCategory.objects.get(name="Tables"), total_quantity=20)
+        Equipment.objects.create(name="Microphone", category=EquipmentCategory.objects.get(name="Microphones"), total_quantity=6)
+
+        recommendations = recommend_resources("", 29)
+        by_category = {r["category"]: r for r in recommendations}
+        self.assertEqual(by_category["Chairs"]["quantity"], 29)
+        self.assertEqual(by_category["Tables"]["quantity"], 3)
+        self.assertEqual(by_category["Microphones"]["quantity"], 1)
+
+    def test_fixed_quantity_rules(self):
+        """MEETING asks for exactly 1 microphone and 1 table regardless of size."""
+        for name in ["Chairs", "Tables", "Microphones"]:
+            EquipmentCategory.objects.get_or_create(name=name)
+        Equipment.objects.create(name="Chair", category=EquipmentCategory.objects.get(name="Chairs"), total_quantity=100)
+        Equipment.objects.create(name="Table", category=EquipmentCategory.objects.get(name="Tables"), total_quantity=20)
+        Equipment.objects.create(name="Microphone", category=EquipmentCategory.objects.get(name="Microphones"), total_quantity=8)
+
+        recommendations = recommend_resources("MEETING", 20)
+        by_category = {r["category"]: r for r in recommendations}
+        self.assertEqual(by_category["Microphones"]["quantity"], 1)
+        self.assertEqual(by_category["Tables"]["quantity"], 1)
+        self.assertEqual(by_category["Microphones"]["calculation"], "1 × 1")
+
 
 class ReservationApiTests(TestCase):
     def setUp(self):
@@ -282,6 +379,77 @@ class ReservationApiTests(TestCase):
         self._auth(self.requester)
         response = self.client.get("/api/reservations/")
         self.assertEqual(response.json()["count"], 0)
+
+    def test_admin_sees_all_reservations_regardless_of_status(self):
+        """Admins see every reservation, not just their own (admin list bug)."""
+        # One reservation created by a plain requester.
+        self._auth(self.requester)
+        created = self.client.post("/api/reservations/", self._payload(), format="json").json()
+        # One created by the admin on behalf of an external requester
+        # (different day so the two bookings do not conflict).
+        self._auth(self.admin)
+        self.client.post(
+            "/api/reservations/",
+            self._payload(
+                event_name="External booking",
+                date="2026-10-05",
+                requester_type="EXTERNAL",
+                organization="ABC School",
+                contact_person="Juan",
+                contact_email="juan@example.com",
+                requester_id=self.requester.id,
+            ),
+            format="json",
+        )
+
+        response = self.client.get("/api/reservations/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 2)
+        returned_ids = {row["reservation_id"] for row in body["results"]}
+        self.assertIn(created["reservation_id"], returned_ids)
+
+    def test_admin_status_filter_tabs(self):
+        """status= values match the backend canonical statuses for tab filters."""
+        self._auth(self.requester)
+        created = self.client.post("/api/reservations/", self._payload(), format="json").json()
+        self._auth(self.admin)
+        self.client.post(f"/api/reservations/{created['id']}/approve/", {}, format="json")
+
+        for status_value, expected in (("PENDING", 0), ("APPROVED", 1), ("COMPLETED", 0)):
+            response = self.client.get(f"/api/reservations/?status={status_value}")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["count"], expected)
+
+    def test_admin_requester_type_filter(self):
+        """requester_type=CAMPUS/EXTERNAL filter without hiding everything."""
+        self._auth(self.admin)
+        self.client.post(
+            "/api/reservations/",
+            self._payload(
+                event_name="External booking",
+                requester_type="EXTERNAL",
+                organization="ABC School",
+                contact_person="Juan",
+                contact_email="juan@example.com",
+                requester_id=self.requester.id,
+            ),
+            format="json",
+        )
+
+        campus = self.client.get("/api/reservations/?requester_type=CAMPUS").json()
+        external = self.client.get("/api/reservations/?requester_type=EXTERNAL").json()
+        self.assertEqual(campus["count"], 0)
+        self.assertEqual(external["count"], 1)
+
+    def test_garbage_optional_filters_do_not_hide_everything(self):
+        """'undefined'/'null'/'' facility values are ignored, not fatal."""
+        self._auth(self.admin)
+        self.client.post("/api/reservations/", self._payload(), format="json")
+        for garbage in ("undefined", "null", "", "not-a-number"):
+            response = self.client.get(f"/api/reservations/?facility={garbage}")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["count"], 1, garbage)
 
     def test_conflicting_reservation_returns_409(self):
         self._auth(self.requester)
@@ -1007,3 +1175,169 @@ class AuthenticationRequiredTests(TestCase):
         ):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 404, f"{path} should return 404")
+
+
+class RecommendationRuleTests(TestCase):
+    """Staff-configured RecommendationRule rows override the built-in engine."""
+
+    def setUp(self):
+        self.facility = Facility.objects.create(
+            name="Cafeteria",
+            facility_type=Facility.FacilityType.CAFETERIA,
+            capacity=120,
+        )
+        self.chairs = EquipmentCategory.objects.create(name="Chairs")
+        self.tables = EquipmentCategory.objects.create(name="Tables")
+        self.microphones = EquipmentCategory.objects.create(name="Microphones")
+        Equipment.objects.create(
+            name="Folding Chair", category=self.chairs, total_quantity=200
+        )
+        Equipment.objects.create(
+            name="Folding Table (6 ft)", category=self.tables, total_quantity=40
+        )
+        Equipment.objects.create(
+            name="Wired Microphone", category=self.microphones, total_quantity=6
+        )
+
+    def _recommend(self, event_type="SEMINAR", participants=29, **kwargs):
+        return {
+            r["category"]: r
+            for r in recommend_resources(
+                event_type, participants, facility_id=self.facility.id, **kwargs
+            )
+        }
+
+    def test_no_rules_means_builtin_behavior(self):
+        """Without DB rules the engine behaves exactly as before."""
+        by_category = self._recommend()
+        self.assertEqual(by_category["Chairs"]["quantity"], 29)
+        self.assertEqual(by_category["Tables"]["quantity"], 3)
+        self.assertEqual(by_category["Microphones"]["quantity"], 1)
+
+    def test_per_group_rule_overrides_builtin(self):
+        """1 per 2 participants, ceiling: 29 people → 15 chairs, not 29."""
+        RecommendationRule.objects.create(
+            category=self.chairs,
+            calculation_type=RecommendationRule.CalculationType.PER_GROUP,
+            participants_per_unit=2,
+        )
+        by_category = self._recommend()
+        self.assertEqual(by_category["Chairs"]["quantity"], 15)
+        self.assertEqual(by_category["Chairs"]["calculation"], "ceil(29 / 2) = 15")
+        # Untouched categories keep built-in quantities.
+        self.assertEqual(by_category["Tables"]["quantity"], 3)
+
+    def test_threshold_rule_and_custom_explanation(self):
+        """Tiered mic rule for seminars + staff-written explanation text."""
+        RecommendationRule.objects.create(
+            category=self.microphones,
+            event_type="SEMINAR",
+            calculation_type=RecommendationRule.CalculationType.THRESHOLD,
+            threshold_tier_1=60,
+            threshold_quantity_1=2,
+            threshold_tier_2=200,
+            threshold_quantity_2=3,
+            threshold_quantity_3=4,
+            explanation="Seminar AV rule configured by SAS staff",
+        )
+        by_category = self._recommend()
+        self.assertEqual(by_category["Microphones"]["quantity"], 2)
+        self.assertEqual(
+            by_category["Microphones"]["reason"],
+            "Seminar AV rule configured by SAS staff",
+        )
+
+    def test_specificity_and_priority_ordering(self):
+        """Exact event type beats a generic rule even with lower priority."""
+        RecommendationRule.objects.create(
+            category=self.microphones,
+            event_type="SEMINAR",
+            calculation_type=RecommendationRule.CalculationType.THRESHOLD,
+            threshold_tier_1=60,
+            threshold_quantity_1=2,
+            priority=50,
+        )
+        RecommendationRule.objects.create(
+            category=self.microphones,
+            calculation_type=RecommendationRule.CalculationType.FIXED,
+            quantity_value=9,
+            priority=1,
+        )
+        by_category = self._recommend()
+        self.assertEqual(by_category["Microphones"]["quantity"], 2)
+        # A different event type falls through to the generic fixed rule.
+        by_meeting = self._recommend(event_type="MEETING")
+        self.assertEqual(by_meeting["Microphones"]["quantity"], 9)
+
+    def test_participant_range_and_facility_scope(self):
+        """Rules only apply inside their participant range and facility type."""
+        RecommendationRule.objects.create(
+            category=self.chairs,
+            min_participants=50,
+            calculation_type=RecommendationRule.CalculationType.FIXED,
+            quantity_value=60,
+        )
+        # 29 participants: below the range → built-in per-participant rule.
+        by_category = self._recommend()
+        self.assertEqual(by_category["Chairs"]["quantity"], 29)
+        # 80 participants: inside the range → DB rule wins.
+        by_large = self._recommend(participants=80)
+        self.assertEqual(by_large["Chairs"]["quantity"], 60)
+
+    def test_inactive_rules_are_ignored(self):
+        RecommendationRule.objects.create(
+            category=self.chairs,
+            calculation_type=RecommendationRule.CalculationType.FIXED,
+            quantity_value=99,
+            is_active=False,
+        )
+        by_category = self._recommend()
+        self.assertEqual(by_category["Chairs"]["quantity"], 29)
+
+    def test_db_rule_can_introduce_new_category(self):
+        """A category absent from the built-in profile can be recommended."""
+        projector = EquipmentCategory.objects.create(name="Projectors")
+        Equipment.objects.create(name="Projector", category=projector, total_quantity=3)
+        RecommendationRule.objects.create(
+            category=projector,
+            event_type="SPORTS",  # built-in profile has no projector for SPORTS
+            calculation_type=RecommendationRule.CalculationType.FIXED,
+            quantity_value=1,
+        )
+        by_category = self._recommend(event_type="SPORTS")
+        self.assertIn("Projectors", by_category)
+        self.assertEqual(by_category["Projectors"]["quantity"], 1)
+
+    def test_recommendation_still_capped_by_availability(self):
+        """DB rule quantities are prefilled capped by window availability."""
+        RecommendationRule.objects.create(
+            category=self.microphones,
+            calculation_type=RecommendationRule.CalculationType.FIXED,
+            quantity_value=5,
+        )
+        mics = Equipment.objects.get(category=self.microphones)
+        blocking = Reservation.objects.create(
+            event_name="Blocking",
+            event_type=Reservation.EventType.MEETING,
+            facility=self.facility,
+            date=date(2026, 9, 15),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            expected_participants=10,
+            contact_person="x",
+        )
+        ReservationItem.objects.create(reservation=blocking, equipment=mics, quantity=4)
+
+        recommendations = recommend_resources(
+            "SEMINAR",
+            29,
+            facility_id=self.facility.id,
+            target_date=date(2026, 9, 15),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+        )
+        mic = next(r for r in recommendations if r["category"] == "Microphones")
+        self.assertEqual(mic["quantity"], 5)  # DB rule, uncapped
+        self.assertEqual(mic["available"], 2)  # 4 of 6 reserved
+        self.assertEqual(mic["recommended"], 2)  # capped prefill
+        self.assertIn("Only 2 of the recommended 5", mic["warning"])

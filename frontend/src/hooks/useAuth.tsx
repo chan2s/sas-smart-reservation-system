@@ -53,6 +53,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // A failed token refresh clears the stored tokens (see api.ts). Without
+  // this, React state would keep a stale user and the UI would look logged
+  // in while every request 401s — surfacing as bogus "no data" states.
+  useEffect(() => {
+    const onExpired = () => {
+      tokenStore.clear()
+      setUser(null)
+    }
+    window.addEventListener('sas:auth-expired', onExpired)
+    return () => window.removeEventListener('sas:auth-expired', onExpired)
+  }, [])
+
   const login = useCallback(async (username: string, password: string) => {
     const user = await api.login(username, password)
     setUser(user)

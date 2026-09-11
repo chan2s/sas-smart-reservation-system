@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Plus, Search } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Plus, Search } from 'lucide-react'
 import { format } from 'date-fns'
 import { useFacilities, useReservationCounts, useReservations } from '@/hooks/queries'
 import { PageHeader, Skeleton, EmptyState } from '@/components/ui/Misc'
@@ -32,7 +32,13 @@ export function ReservationsPage() {
   const { data: counts } = useReservationCounts()
   const { data: facilities } = useFacilities()
 
-  const { data, isLoading, isFetching } = useReservations({
+  const {
+    data,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+  } = useReservations({
     status: status === 'ALL' ? undefined : (status as ReservationStatus),
     requester_type: requesterType === 'ALL' ? undefined : requesterType,
     search: search || undefined,
@@ -52,6 +58,43 @@ export function ReservationsPage() {
   )
 
   const reservations = data?.results ?? []
+
+  // Distinguish LOADING / ERROR / EMPTY / DATA. An API failure (401, 403,
+  // 500, network) must never render as "No reservations found" — that would
+  // falsely tell an administrator the records do not exist.
+  if (error) {
+    const apiError = error as { status?: number; message?: string }
+    return (
+      <div>
+        <PageHeader
+          eyebrow="SAS Reservations"
+          title="Reservations"
+          description="Review, approve, and manage every reservation request across the campus."
+          actions={
+            <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
+              Create Reservation
+            </Button>
+          }
+        />
+        <Card className="mt-8">
+          <EmptyState
+            icon={<AlertTriangle className="size-5 text-orange-500" />}
+            title="Could not load reservations"
+            description={
+              apiError.status
+                ? `The server returned an error (${apiError.status}). ${apiError.message ?? ''}`.trim()
+                : 'The reservations service could not be reached. Check your connection and try again.'
+            }
+            action={
+              <Button variant="secondary" onClick={() => void refetch()}>
+                Try again
+              </Button>
+            }
+          />
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div>

@@ -129,14 +129,27 @@ async function refreshAccessToken(): Promise<boolean> {
           body: JSON.stringify({ refresh }),
         })
         if (!response.ok) {
-          tokenStore.clear()
+          // Only drop the session when the token itself is invalid/expired.
+          // Network blips (5xx, offline) must not log the user out.
+          if ([401, 403].includes(response.status)) {
+            tokenStore.clear()
+            // The session is unrecoverable. Broadcast so the auth provider can
+            // drop the stale user instead of leaving a "zombie" logged-in
+            // session where every request fails behind a normal-looking UI.
+            window.dispatchEvent(new Event('sas:auth-expired'))
+          }
           return false
         }
-        const data = (await response.json()) as { access: string }
+        const data = (await response.json()) as { access: string; refresh?: string }
         localStorage.setItem(ACCESS_KEY, data.access)
+        // The backend rotates refresh tokens (ROTATE_REFRESH_TOKENS=True):
+        // each refresh returns a NEW refresh token and invalidates the old
+        // one. Persist it, or the next 401 would try to refresh with a dead
+        // token and the session would die after ~60 minutes.
+        if (data.refresh) localStorage.setItem(REFRESH_KEY, data.refresh)
         return true
       } catch {
-        tokenStore.clear()
+        // Network failure — keep tokens and let the request error surface.
         return false
       } finally {
         refreshPromise = null

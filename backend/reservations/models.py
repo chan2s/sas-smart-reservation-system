@@ -6,6 +6,136 @@ from django.db import models
 from django.utils import timezone
 
 
+class RecommendationRule(models.Model):
+    """A DB-editable override for the recommendation engine's built-in rules.
+
+    Each row redefines how one equipment category is recommended for a slice
+    of events. Which row "wins" for an event is decided by specificity:
+
+    1. Rules scoped to the event's exact type beat generic ones.
+    2. Then rules scoped to the facility's exact type.
+    3. Then rules with a participant range containing the headcount.
+    4. Then higher priority (lower number).
+    5. Then the most recently updated row.
+
+    Calculation types:
+
+    * ``FIXED``               — always ``quantity_value`` units.
+    * ``PER_PARTICIPANT``     — ``participants * quantity_value``.
+    * ``PER_GROUP``           — ``ceil(participants / participants_per_unit)``
+      with a minimum of one unit.
+    * ``THRESHOLD``           — tiered lookup on participants:
+      ``<= t1 -> q1; <= t2 -> q2; else -> q3`` (empty tier -> quantity_value).
+
+    When no active rule matches an event, the engine falls back to its
+    built-in category rules, so a fresh deployment behaves exactly like the
+    pre-model engine until staff add overrides.
+    """
+
+    class CalculationType(models.TextChoices):
+        FIXED = "FIXED", "Fixed quantity"
+        PER_PARTICIPANT = "PER_PARTICIPANT", "Units per participant"
+        PER_GROUP = "PER_GROUP", "Units per group of participants"
+        THRESHOLD = "THRESHOLD", "Threshold tiers"
+
+    category = models.ForeignKey(
+        "equipment.EquipmentCategory",
+        on_delete=models.CASCADE,
+        related_name="recommendation_rules",
+        help_text="Equipment category this rule recommends.",
+    )
+    event_type = models.CharField(
+        max_length=32,
+        blank=True,
+        help_text="Leave blank to apply to all event types.",
+    )
+    facility_type = models.CharField(
+        max_length=32,
+        blank=True,
+        help_text="Leave blank to apply to all facility types.",
+    )
+    min_participants = models.PositiveIntegerField(
+        default=0,
+        blank=True,
+        help_text="Rule applies when participants >= this value. Leave empty for no minimum.",
+    )
+    max_participants = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Rule applies when participants <= this value. Blank = no upper limit.",
+    )
+    calculation_type = models.CharField(
+        max_length=20,
+        choices=CalculationType.choices,
+        default=CalculationType.PER_GROUP,
+    )
+    quantity_value = models.PositiveIntegerField(
+        default=1,
+        help_text=(
+            "Meaning depends on the calculation type: fixed quantity, "
+            "multiplier per participant, or units per group."
+        ),
+    )
+    participants_per_unit = models.PositiveIntegerField(
+        default=10,
+        help_text="For 'units per group': one unit covers this many participants (ceiling division).",
+    )
+    threshold_tier_1 = models.PositiveIntegerField(null=True, blank=True, help_text="Threshold tiers: participants <= tier 1 → tier 1 quantity.")
+    threshold_quantity_1 = models.PositiveIntegerField(null=True, blank=True)
+    threshold_tier_2 = models.PositiveIntegerField(null=True, blank=True, help_text="Threshold tiers: participants <= tier 2 → tier 2 quantity.")
+    threshold_quantity_2 = models.PositiveIntegerField(null=True, blank=True)
+    threshold_quantity_3 = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Threshold tiers: quantity when participants exceed tier 2. Blank = use 'Fixed quantity' value.",
+    )
+    priority = models.IntegerField(
+        default=100,
+        help_text="Tie-breaker when several rules match: lower number wins.",
+    )
+    explanation = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text=(
+            "Custom reason shown to requesters, e.g. '1 table per 10 "
+            "participants, rounded up'. Leave blank to auto-generate one."
+        ),
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "id"]
+        indexes = [
+            models.Index(fields=["event_type", "facility_type"]),
+            models.Index(fields=["is_active"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=~models.Q(min_participants__lt=0),
+                name="recommendation_rule_min_participants_nonnegative",
+            ),
+            models.CheckConstraint(
+                check=models.Q(
+                    models.Q(max_participants__isnull=True)
+                    | models.Q(max_participants__gte=models.F("min_participants"))
+                ),
+                name="recommendation_rule_participant_range_valid",
+            ),
+            models.CheckConstraint(
+                check=models.Q(participants_per_unit__gte=1),
+                name="recommendation_rule_group_size_positive",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        scope = self.event_type or "All events"
+        if self.facility_type:
+            scope += f" · {self.get_facility_type_display()}"
+        return f"{scope}: {self.get_calculation_type_display()} for {self.category.name}"
+
+
 class Reservation(models.Model):
     class RequesterType(models.TextChoices):
         """Who the reservation is FOR — independent of who created it."""

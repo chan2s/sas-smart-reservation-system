@@ -292,11 +292,14 @@ export interface Recommendation {
   equipment_id: number
   name: string
   category: string
-  quantity: number // rule-based recommendation
+  quantity: number // rule-based recommendation (uncapped by inventory)
   available: number // units available during the proposed schedule
   recommended: number // min(quantity, available) — safe prefill
   status: 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE'
-  reason: string
+  can_fulfill: boolean // true when available >= quantity
+  reason: string // why this quantity, e.g. "1 chair per participant"
+  calculation: string // exact arithmetic, e.g. "ceil(29 / 10) = 3"
+  warning: string | null // only when the rule quantity exceeds stock
 }
 
 export interface ReservationDetail extends ReservationSummary {

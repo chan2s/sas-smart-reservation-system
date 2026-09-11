@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from equipment.models import Equipment
+
 from .models import InspectionReport, Reservation, ReservationEvent, ReservationItem
 from .services.availability import check_availability
 
@@ -278,11 +280,30 @@ class _ReservationCreateMixin:
                 {"expected_participants": "Expected participants must be at least 1."}
             )
 
+        # Item quantities are never trusted from the client: they must be
+        # positive integers referencing active equipment. The availability
+        # check below additionally rejects requests beyond what the window
+        # can actually supply (409), so a forged "quantity: 99999" cannot
+        # slip through by manipulating the recommendation prefill.
         for item in attrs.get("items", []):
-            if item.get("quantity", 1) < 1:
+            try:
+                quantity = int(item.get("quantity", 1))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"items": "Quantities must be whole numbers."}
+                )
+            if quantity < 1:
                 raise serializers.ValidationError(
                     {"items": "Quantities must be at least 1."}
                 )
+            equipment_id = item.get("equipment_id")
+            if not equipment_id or not Equipment.objects.filter(
+                pk=equipment_id, is_active=True
+            ).exists():
+                raise serializers.ValidationError(
+                    {"items": "One of the requested resources is not available for reservation."}
+                )
+            item["quantity"] = quantity
 
         report = check_availability(
             facility_id, target_date, start, end, attrs.get("items", [])

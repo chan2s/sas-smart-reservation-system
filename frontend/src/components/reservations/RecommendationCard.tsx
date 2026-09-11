@@ -1,4 +1,4 @@
-import { Sparkles, Check, Minus, Plus } from 'lucide-react'
+import { Sparkles, Check, Minus, Plus, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import type { Equipment, Recommendation } from '@/lib/types'
@@ -62,7 +62,7 @@ export function RecommendationCard({
           <div>
             <p className="text-sm font-semibold text-ink">Recommended for your event</p>
             <p className="text-[13px] text-body">
-              Based on your event details, these resources are recommended:
+              Quantities are calculated from your event details — adjust them as needed.
             </p>
           </div>
         </div>
@@ -99,47 +99,85 @@ export function RecommendationCard({
           const equipmentItem = equipment.find((item) => item.id === recommendation.equipment_id)
           const available = equipmentItem?.availability.available ?? recommendation.available
           const requested = items[recommendation.equipment_id] ?? 0
-          const partial = recommendation.status === 'PARTIAL' || recommendation.status === 'UNAVAILABLE'
+          const shortage = !recommendation.can_fulfill
           return (
             <li
               key={recommendation.equipment_id}
               className={cn(
-                'flex items-center gap-3 rounded-lg bg-surface/70 px-3.5 py-2.5',
+                'rounded-lg bg-surface/70 px-3.5 py-3',
                 requested > 0 && 'border border-brand/30',
+                shortage && requested === 0 && 'border-status-pending/30',
               )}
             >
-              <EquipmentImage src={equipmentItem?.image} size="md" className="shrink-0 rounded-lg" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-ink">{recommendation.name}</p>
-                <p className={cn('truncate text-xs', partial ? 'text-status-pending' : 'text-muted')}>
-                  {partial
-                    ? `Only ${available} available during your selected time.`
-                    : `${recommendation.reason} ${available} available.`}
+              <div className="flex items-center gap-3">
+                <EquipmentImage src={equipmentItem?.image} size="md" className="shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <p className="text-sm font-medium text-ink">{recommendation.name}</p>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                        shortage ? 'bg-status-pending-bg text-status-pending' : 'bg-status-available-bg text-status-available',
+                      )}
+                    >
+                      Recommended {recommendation.quantity}{' '}
+                      {recommendation.quantity === 1 ? 'unit' : 'units'}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted">
+                    {recommendation.reason}
+                    {recommendation.calculation ? ` · ${recommendation.calculation}` : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onQuantity(recommendation.equipment_id, requested - 1, available)}
+                    disabled={requested === 0}
+                    className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={`Decrease ${recommendation.name} quantity`}
+                  >
+                    <Minus className="size-3.5" />
+                  </button>
+                  <span className="w-8 text-center text-sm font-semibold tabular-nums text-ink" aria-live="polite">
+                    {requested}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onQuantity(recommendation.equipment_id, requested + 1, available)}
+                    disabled={requested >= available || available === 0}
+                    className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={`Increase ${recommendation.name} quantity`}
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:pl-12">
+                <p className="text-xs text-body">
+                  <span className="font-medium text-ink">{available}</span> available during your
+                  schedule
                 </p>
+                {recommendation.recommended > 0 && requested !== recommendation.recommended && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onQuantity(recommendation.equipment_id, recommendation.recommended, available)
+                    }
+                    className="text-xs font-semibold text-brand underline-offset-2 transition-colors hover:underline"
+                  >
+                    Use {recommendation.recommended}
+                  </button>
+                )}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onQuantity(recommendation.equipment_id, requested - 1, available)}
-                  disabled={requested === 0}
-                  className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
-                  aria-label={`Decrease ${recommendation.name} quantity`}
-                >
-                  <Minus className="size-3.5" />
-                </button>
-                <span className="w-8 text-center text-sm font-semibold tabular-nums text-ink" aria-live="polite">
-                  {requested}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onQuantity(recommendation.equipment_id, requested + 1, available)}
-                  disabled={requested >= available || available === 0}
-                  className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
-                  aria-label={`Increase ${recommendation.name} quantity`}
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              </div>
+
+              {recommendation.warning && (
+                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-status-pending sm:pl-12">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  {recommendation.warning}
+                </p>
+              )}
             </li>
           )
         })}

@@ -462,7 +462,7 @@ export function StepResources({
     <section aria-label="Choose resources">
       <h2 className="text-lg font-semibold text-ink">Resources</h2>
       <p className="mt-1 text-sm text-body">
-        Based on your event details, we recommend the resources below. Adjust quantities as needed — they are capped by availability.
+        Quantities below are pre-filled from rules based on your event details. Adjust freely — your changes are kept even if details change.
       </p>
 
       {recommendations && recommendations.length > 0 && (
@@ -473,7 +473,7 @@ export function StepResources({
             items={items}
             onQuantity={onQuantity}
             eventContext={eventContext}
-            loading={recommendationLoading}
+            loading={recommendationLoading && !recommendations}
             applied={recommendationApplied}
             onAccept={onAcceptRecommendations}
             onDismiss={onDismissRecommendations}
