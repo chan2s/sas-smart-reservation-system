@@ -93,6 +93,24 @@
   /* Radius */
   --radius-card: 0.875rem; /* 14px */
   --radius-control: 0.5rem; /* 8px */
+  --radius-pill: 9999px;
+
+  /* Landing section spacing */
+  --section-pad-y: clamp(5rem, 8vw, 8rem);
+  --section-pad-y-lg: clamp(6rem, 10vw, 10rem);
+  --container-max: 1200px;
+  --container-max-wide: 1400px;
+
+  /* Elevated surface for premium cards */
+  --color-elevated: #ffffff;
+  --shadow-elevated:
+    0 0 0 1px rgb(16 24 40 / 0.04),
+    0 2px 4px -1px rgb(16 24 40 / 0.04),
+    0 8px 24px -4px rgb(16 24 40 / 0.08);
+  --shadow-elevated-hover:
+    0 0 0 1px rgb(16 24 40 / 0.06),
+    0 4px 8px -2px rgb(16 24 40 / 0.06),
+    0 16px 40px -8px rgb(16 24 40 / 0.12);
 }
 
 /* ==========================================================================
@@ -231,6 +249,23 @@
   [data-cta-background] {
     clip-path: none !important;
     transform: none !important;
+  }
+}
+
+/* Landing page elevated card utility */
+@utility landing-card {
+  background: var(--color-elevated);
+  border: 1px solid var(--color-line);
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow-elevated);
+  transition:
+    box-shadow 280ms var(--ease-out-soft),
+    border-color 280ms var(--ease-out-soft),
+    transform 280ms var(--ease-out-soft);
+  &:hover {
+    box-shadow: var(--shadow-elevated-hover);
+    border-color: var(--color-line-strong);
+    transform: translateY(-2px);
   }
 }
 

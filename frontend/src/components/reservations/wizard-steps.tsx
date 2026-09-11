@@ -133,6 +133,10 @@ export interface ScheduleProps {
   facility?: { id: number; name: string; status: string; operating_hours?: { day_of_week: number; open_time: string | null; close_time: string | null; is_closed: boolean }[] }
   date: Date | null
   onDateChange: (date: Date) => void
+  /** When true, the caller still considers this schedule slot valid for
+   *  availability purposes (used to clear stale availability state on the
+   *  parent when the date becomes invalid). */
+  dateInvalid?: boolean
   startTime: string
   endTime: string
   onStartTime: (value: string) => void
@@ -140,6 +144,23 @@ export interface ScheduleProps {
   report: AvailabilityCheckResult | null
   checking: boolean
   onUseAlternative: (alternative: AlternativeSlot) => void
+}
+
+/**
+ * Calendar-date comparison in Asia/Manila so "today" matches the backend's
+ * notion of today (the server rejects past/today reservations using its local
+ * Asia/Manila clock).
+ */
+export function manilaCalendarDate(): Date {
+  const now = new Date()
+  const tz = Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const [y, m, d] = tz.formatToParts(now).filter((p) => p.type !== 'literal').map((p) => p.value)
+  return new Date(Number(y), Number(m) - 1, Number(d))
 }
 
 export function StepSchedule({
@@ -153,9 +174,9 @@ export function StepSchedule({
   report,
   checking,
   onUseAlternative,
+  dateInvalid,
 }: ScheduleProps) {
   const [month, setMonth] = useState(() => new Date())
-  const today = new Date()
 
   const dayIndex = date ? (date.getDay() === 0 ? 6 : date.getDay() - 1) : -1
   const hours = facility?.operating_hours?.find((hour) => hour.day_of_week === dayIndex)
@@ -265,16 +286,18 @@ export function StepSchedule({
           )}
         </Card>
 
-        {date && date < today && (
+        {dateInvalid && (
           <div className="rounded-xl border border-status-rejected/25 bg-status-rejected-bg p-4 text-sm text-status-rejected">
             Please choose a future date.
           </div>
         )}
 
-        {report && (
+        {report && !dateInvalid && (
           <AvailabilityCheck report={report} onUseAlternative={onUseAlternative} />
         )}
-        {checking && !report && <div className="h-24 animate-pulse rounded-xl bg-soft" aria-hidden />}
+        {checking && !dateInvalid && !report && (
+          <div className="h-24 animate-pulse rounded-xl bg-soft" aria-hidden />
+        )}
       </div>
     </section>
   )
@@ -589,7 +612,7 @@ export function StepReview({
       </div>
 
       {report && <AvailabilityCheck report={report} onUseAlternative={onUseAlternative} />}
-      {checking && <div className="h-24 animate-pulse rounded-xl bg-soft" aria-hidden />}
+      {checking && !report && <div className="h-24 animate-pulse rounded-xl bg-soft" aria-hidden />}
 
       {requesterSection}
 

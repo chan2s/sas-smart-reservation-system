@@ -27,7 +27,7 @@ export interface NavigationItem {
 
 /** Primary pages shown in the centered pill navigation. */
 export const primaryNavigation: NavigationItem[] = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
+  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/reservations', label: 'Reservations', icon: CalendarCheck },
   { to: '/facilities', label: 'Facilities', icon: Building2 },
   { to: '/equipment', label: 'Equipment', icon: Package },

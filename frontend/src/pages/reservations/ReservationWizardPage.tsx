@@ -35,6 +35,7 @@ import {
 } from '@/components/reservations/wizard-steps'
 import { useAuth } from '@/hooks/useAuth'
 import { cn, formatTime } from '@/lib/utils'
+import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
@@ -130,16 +131,31 @@ export function ReservationWizardPage() {
   const recommendResources = useRecommendResources()
   const createReservation = useCreateReservation()
 
+  const today = manilaCalendarDate()
+  const dateInvalid = date != null && date <= today
+  const scheduleComplete = Boolean(facilityId && date && startTime && endTime)
+  // Only the final submission is gated on a clean availability report. Step
+  // navigation stays clickable on every step and validates inline via goNext(),
+  // so Continue can never silently dead-end the wizard as a disabled button.
+  const canSubmit =
+    scheduleComplete && !dateInvalid && availabilityCheck.data != null && availabilityCheck.data.overall.ok
+
   const facility = facilities?.find((item) => item.id === facilityId)
-  const hasSchedule = Boolean(facilityId && dateISO && startTime && endTime)
   const itemsList = useMemo(
     () => Object.entries(items).map(([equipmentId, quantity]) => ({ equipment_id: Number(equipmentId), quantity })),
     [items],
   )
 
   // Live availability check whenever the proposal changes.
+  // Stale results are cleared the moment the schedule becomes invalid so the
+  // UI never shows "Availability confirmed" for an unusable date/time.
   useEffect(() => {
-    if (!hasSchedule) return
+    if (!scheduleComplete || dateInvalid) {
+      if (dateInvalid) {
+        availabilityCheck.reset()
+      }
+      return
+    }
     const timer = window.setTimeout(() => {
       availabilityCheck.mutate({
         facility_id: facilityId!,
@@ -151,12 +167,12 @@ export function ReservationWizardPage() {
     }, 350)
     return () => window.clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facilityId, dateISO, startTime, endTime, itemsList])
+  }, [facilityId, dateISO, startTime, endTime, itemsList, dateInvalid])
 
   // Smart recommendations on the Resources step, using the completed event
   // details plus the proposed schedule so quantities are availability-capped.
   useEffect(() => {
-    if (stepKey === 'resources' && !recommendationDismissed && recommendations === null && hasSchedule) {
+    if (stepKey === 'resources' && !recommendationDismissed && recommendations === null && scheduleComplete && !dateInvalid) {
       recommendResources.mutate(
         {
           event_type: details.event_type,
@@ -234,8 +250,16 @@ export function ReservationWizardPage() {
       setStepError('Select a facility to continue.')
       return
     }
-    if (stepKey === 'schedule' && !hasSchedule) {
+    if (stepKey === 'schedule' && !scheduleComplete) {
       setStepError('Choose a date, start time, and end time to continue.')
+      return
+    }
+    if (stepKey === 'schedule' && dateInvalid) {
+      setStepError('Please choose a future date.')
+      return
+    }
+    if (stepKey === 'schedule' && availabilityCheck.data == null) {
+      setStepError('Check availability before continuing.')
       return
     }
     if (stepKey === 'details' && missingDetails.length > 0) {
@@ -253,7 +277,7 @@ export function ReservationWizardPage() {
   }
 
   async function submit() {
-    if (!facilityId || !hasSchedule) return
+    if (!facilityId || !scheduleComplete || dateInvalid || availabilityCheck.data == null || !availabilityCheck.data.overall.ok) return
     const requesterPayload = isAdmin
       ? requesterType === 'EXTERNAL'
         ? {
@@ -439,6 +463,7 @@ export function ReservationWizardPage() {
             report={availabilityCheck.data ?? null}
             checking={availabilityCheck.isPending}
             onUseAlternative={useAlternative}
+            dateInvalid={dateInvalid}
           />
         )}
 
@@ -540,7 +565,7 @@ export function ReservationWizardPage() {
        * the fixed bottom navigation. Solid background + top border + z-index
        * keep it from overlapping content visually.
        */}
-      <div className="sticky bottom-[calc(3.5rem_+_env(safe-area-inset-bottom))] z-10 -mx-4 mt-6 border-t border-line bg-soft px-4 py-4 sm:-mx-6 sm:px-6 lg:bottom-0 lg:-mx-10 lg:px-10">
+      <div className="sticky bottom-[calc(4rem_+_env(safe-area-inset-bottom))] z-10 -mx-4 mt-6 border-t border-line bg-soft px-4 py-4 sm:-mx-6 sm:px-6 lg:bottom-0 lg:-mx-10 lg:px-10">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
           {stepError && (
             <p
@@ -566,7 +591,7 @@ export function ReservationWizardPage() {
               <Button
                 onClick={submit}
                 loading={createReservation.isPending}
-                disabled={availabilityCheck.data && !availabilityCheck.data.overall.ok}
+                disabled={!canSubmit || createReservation.isPending}
                 title={
                   availabilityCheck.data && !availabilityCheck.data.overall.ok
                     ? 'Resolve the conflicts above before submitting'
