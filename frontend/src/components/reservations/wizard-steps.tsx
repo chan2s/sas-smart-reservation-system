@@ -11,6 +11,7 @@ import { MonthGrid } from '@/components/calendar/MonthGrid'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { EmptyState } from '@/components/ui/Misc'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
+import { EquipmentImageViewer } from '@/components/equipment/EquipmentImageViewer'
 import { cn, formatTime } from '@/lib/utils'
 import type {
   AlternativeSlot,
@@ -446,6 +447,9 @@ export function StepResources({
     () => new Set((recommendations ?? []).map((recommendation) => recommendation.equipment_id)),
     [recommendations],
   )
+  // Clicking an equipment item opens its image so requesters can identify
+  // the physical resource before reserving it.
+  const [viewingItem, setViewingItem] = useState<Equipment | null>(null)
   const otherEquipment = useMemo(() => equipment.filter((item) => !recommendedIds.has(item.id)), [equipment, recommendedIds])
 
   const byCategory = useMemo(() => {
@@ -513,16 +517,38 @@ export function StepResources({
                         requested > 0 && 'border-brand/40 bg-brand-soft/40',
                       )}
                     >
-                      <EquipmentImage src={item.image} size="md" className="shrink-0 rounded-lg" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-ink">{item.name}</p>
+                      <button
+                        type="button"
+                        onClick={() => setViewingItem(item)}
+                        className="group relative shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        aria-label={`View image of ${item.name}`}
+                        title="Click to view image"
+                      >
+                        <EquipmentImage src={item.image} size="md" className="rounded-lg" alt={item.name} />
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-ink/0 text-[11px] font-medium text-white opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100"
+                        >
+                          View
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewingItem(item)}
+                        className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        aria-label={`View details of ${item.name}`}
+                      >
+                        <p className="truncate text-sm font-medium text-ink group-hover:text-brand">{item.name}</p>
                         <p className="mt-0.5 text-xs text-body">
                           {available} of {item.total_quantity} units available
                           {item.availability.status !== 'AVAILABLE' && item.availability.status !== 'PARTIAL' && (
                             <span className="text-status-rejected"> · unavailable now</span>
                           )}
                         </p>
-                      </div>
+                        <span className="mt-0.5 inline-block text-[11px] font-medium text-brand">
+                          View image →
+                        </span>
+                      </button>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -554,6 +580,8 @@ export function StepResources({
           ))}
         </div>
       )}
+
+      <EquipmentImageViewer equipment={viewingItem} onClose={() => setViewingItem(null)} />
     </section>
   )
 }

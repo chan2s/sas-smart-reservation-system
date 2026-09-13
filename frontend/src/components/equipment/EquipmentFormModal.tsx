@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
-import { ImagePlus, Image, Trash2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ImagePlus, Image, Package, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import { Modal } from '@/components/ui/Modal'
+import { getEquipmentImageUrl } from '@/lib/utils'
 import type { Equipment, EquipmentCategory, EquipmentCondition, EquipmentStatus } from '@/lib/types'
 
 export interface EquipmentFormValues {
@@ -35,6 +36,32 @@ const STATUSES: { value: EquipmentStatus; label: string }[] = [
   { value: 'UNAVAILABLE', label: 'Unavailable' },
   { value: 'RETIRED', label: 'Retired' },
 ]
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5 MB
+
+/** Display-only filename derived from a stored image URL (never an <img src>). */
+function filenameFromImageUrl(url: string | null): string | null {
+  if (!url) return null
+  const last = url.split('?')[0].split('/').filter(Boolean).pop()
+  if (!last) return null
+  try {
+    return decodeURIComponent(last)
+  } catch {
+    return last
+  }
+}
+
+/** Why a picked file cannot be used as an equipment image, or null if valid. */
+function imageFileError(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type) || !/\.(jpe?g|png|webp)$/i.test(file.name)) {
+    return 'Please upload a JPG, PNG, or WEBP image smaller than 5 MB.'
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    return `Please upload a JPG, PNG, or WEBP image smaller than 5 MB. The selected file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`
+  }
+  return null
+}
 
 function initialValues(equipment: Equipment | null): EquipmentFormValues {
   return {
@@ -82,37 +109,71 @@ export function EquipmentFormModal({
   onSubmit: (payload: FormData) => Promise<unknown>
 }) {
   const [values, setValues] = useState<EquipmentFormValues>(() => initialValues(equipment))
-  const [image, setImage] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Reset the form every time the modal opens (create vs edit vs another item).
-  useEffect(() => {
-    if (open) {
-      setValues(initialValues(equipment))
-      setImage(null)
-      setPreviewUrl(null)
-      setError(null)
+  // --- Equipment image state -----------------------------------------------
+  // These values are kept strictly separate, because each one means something
+  // different and they must never stand in for one another:
+  //   selectedImageFile         the real File the browser handed us
+  //   selectedImagePreviewUrl   the temporary blob: URL for that File
+  //   imageLoadState            whether that preview has actually rendered
+  //   existingImageUrl          the permanent URL Django returned (derived)
+  //   existingImageFilename     display-only text (derived)
+  // A filename is display text only — it is never used as an <img src>.
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null)
+  const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null)
+  const [imageLoadState, setImageLoadState] = useState<
+    'idle' | 'loading' | 'loaded' | 'failed'
+  >('idle')
+  const previewUrlRef = useRef<string | null>(null)
+
+  // Derived from the equipment prop (the authoritative "what the server has"),
+  // so they can never drift out of sync with the saved record.
+  const existingImageUrl = getEquipmentImageUrl(equipment?.image ?? null)
+  const existingImageFilename = filenameFromImageUrl(existingImageUrl)
+
+  /**
+   * Point the preview at a real File object, or clear it.
+   *
+   * The object URL is created synchronously here (before the next render) and
+   * the *previous* URL is revoked only once it has been replaced — so the URL
+   * currently rendered by the <img> is never revoked out from under it.
+   * Anything that is not an actual File (a filename string, undefined, a
+   * stale value) means "no image selected".
+   */
+  function selectImageFile(file: File | null) {
+    const next = file instanceof File ? file : null
+
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+      previewUrlRef.current = null
     }
+    const nextUrl = next ? URL.createObjectURL(next) : null
+    previewUrlRef.current = nextUrl
+
+    setSelectedImageFile(next)
+    setSelectedImagePreviewUrl(nextUrl)
+    setImageLoadState(next ? 'loading' : 'idle')
+  }
+
+  // Reset the form whenever the modal opens (create vs edit vs another item)
+  // or closes. A blob URL from a previous edit session is never reused: the
+  // selection is dropped and its object URL revoked up front.
+  useEffect(() => {
+    setValues(initialValues(equipment))
+    setError(null)
+    selectImageFile(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, equipment])
+  }, [open, equipment?.id])
 
-  // Keep the object URL in sync with the selected file, and revoke it when it
-  // is no longer needed (new selection, modal close, or component unmount).
-  useEffect(() => {
-    if (!image) {
-      setPreviewUrl(null)
-      return
-    }
-    const url = URL.createObjectURL(image)
-    setPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
-  }, [image])
-
+  // Revoke the live preview URL when this modal component goes away.
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current)
+        previewUrlRef.current = null
+      }
     }
   }, [])
 
@@ -148,7 +209,10 @@ export function EquipmentFormModal({
     form.append('storage_location', values.storage_location)
     form.append('asset_code', values.asset_code)
     form.append('notes', values.notes)
-    if (image) form.append('image', image)
+    // Send the actual File object under the serializer's field name. Nothing
+    // is appended when no new image was picked, so Django preserves whatever
+    // image is already stored.
+    if (selectedImageFile) form.append('image', selectedImageFile)
 
     setSubmitting(true)
     try {
@@ -162,19 +226,40 @@ export function EquipmentFormModal({
   }
 
   function removeImage() {
-    setImage(null)
+    selectImageFile(null)
+  }
+
+  /**
+   * Client-side mirror of the backend's authoritative image validation.
+   *
+   * An invalid pick must never look "selected": the File and its preview URL
+   * are cleared and only the validation message is shown.
+   */
+  function handleImageSelection(file: File | null) {
+    setError(null)
+    if (!file) {
+      selectImageFile(null)
+      return
+    }
+    const problem = imageFileError(file)
+    if (problem) {
+      selectImageFile(null)
+      setError(problem)
+      return
+    }
+    selectImageFile(file)
   }
 
   const isEditing = equipment != null
 
-  const hasExistingImage = Boolean(equipment?.image)
-  const hasSelectedImage = image != null
-  const hasImage = hasExistingImage || hasSelectedImage
+  const hasSelectedImage = selectedImageFile != null && selectedImagePreviewUrl != null
+  const hasExistingImage = existingImageUrl != null
   const canRemoveImage = isEditing && hasExistingImage && !hasSelectedImage
 
-  const currentImageSource = hasSelectedImage
-    ? previewUrl
-    : equipment?.image ?? null
+  // The preview only ever uses a blob URL that belongs to the File selected in
+  // this session; otherwise it falls back to the permanent Django URL.
+  const currentImageSource = hasSelectedImage ? selectedImagePreviewUrl : existingImageUrl
+  const hasImage = currentImageSource != null
 
   return (
     <Modal
@@ -319,33 +404,52 @@ export function EquipmentFormModal({
           label="Equipment image"
           htmlFor="equipment-image"
           className="sm:col-span-2"
-          hint={hasImage ? 'JPG, PNG or WEBP, smaller than 5 MB.' : 'Optional photo of the equipment.'}
+          hint={
+            hasSelectedImage
+              ? 'JPG, PNG or WEBP, smaller than 5 MB.'
+              : existingImageFilename
+                ? `Current image: ${existingImageFilename}`
+                : 'Optional photo of the equipment.'
+          }
         >
           <div className="flex flex-col gap-3">
-            {hasImage ? (
-              <div className="relative rounded-lg border border-line overflow-hidden bg-soft">
-                <EquipmentImage src={currentImageSource} size="preview" className="w-full" />
-                <div className="absolute right-2 top-2 flex gap-2">
-                  <label
-                    htmlFor="equipment-image-change"
-                    className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg bg-soft/90 px-2.5 py-1.5 text-xs font-medium text-body transition-colors hover:bg-soft"
-                  >
-                    <Image className="size-3.5" aria-hidden />
-                    Change
-                  </label>
-                  {canRemoveImage && (
-                    <button
-                      type="button"
-                      onClick={removeImage}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-body transition-colors hover:bg-soft hover:text-status-rejected"
-                    >
-                      <Trash2 className="size-3.5" aria-hidden />
-                      Remove
-                    </button>
-                  )}
+            <div className="relative rounded-lg border border-line overflow-hidden bg-soft">
+              {hasImage && (
+                <EquipmentImage
+                  src={currentImageSource}
+                  size="preview"
+                  className="w-full"
+                  alt={values.name || equipment?.name || ''}
+                  onLoad={() => setImageLoadState('loaded')}
+                  onError={() => setImageLoadState('failed')}
+                />
+              )}
+              {!hasImage && (
+                <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+                  <Package className="size-7 text-muted" aria-hidden />
+                  <span className="text-sm text-muted">No image selected</span>
                 </div>
+              )}
+              <div className="absolute right-2 top-2 flex gap-2">
+                <label
+                  htmlFor="equipment-image"
+                  className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg bg-soft/90 px-2.5 py-1.5 text-xs font-medium text-body transition-colors hover:bg-soft"
+                >
+                  <Image className="size-3.5" aria-hidden />
+                  Change
+                </label>
+                {canRemoveImage && (
+                  <button
+                    type="button"
+                    onClick={removeImage}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-body transition-colors hover:bg-soft hover:text-status-rejected"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden />
+                    Remove
+                  </button>
+                )}
               </div>
-            ) : null}
+            </div>
             <label
               htmlFor="equipment-image"
               className={cn(
@@ -354,15 +458,29 @@ export function EquipmentFormModal({
               )}
             >
               <ImagePlus className="size-4 text-muted" aria-hidden />
-              {image ? image.name : hasImage ? 'Upload a different image…' : 'Choose an image…'}
+              {selectedImageFile
+                ? selectedImageFile.name
+                : hasImage
+                  ? 'Upload a different image…'
+                  : 'Choose an image…'}
               <input
                 id="equipment-image"
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
                 className="sr-only"
-                onChange={(event) => setImage(event.target.files?.[0] ?? null)}
+                onChange={(event) => {
+                  // Capture the real File before clearing the input value.
+                  handleImageSelection(event.target.files?.[0] ?? null)
+                  // Allow re-selecting the same file after a validation error.
+                  event.target.value = ''
+                }}
               />
             </label>
+            {hasSelectedImage && imageLoadState === 'failed' && (
+              <p role="alert" className="text-xs text-status-rejected">
+                That image could not be previewed. Please choose the file again.
+              </p>
+            )}
           </div>
         </Field>
       </div>

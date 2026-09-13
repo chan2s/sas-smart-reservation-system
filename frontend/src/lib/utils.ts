@@ -6,7 +6,9 @@ export function cn(...classes: (string | false | null | undefined)[]): string {
 }
 
 /**
- * Convert a backend equipment image value into a URL the frontend can render.
+ * Convert a backend media/equipment image value into a URL the frontend can
+ * render. This is the ONE centralized resolver for uploaded Django media —
+ * do not construct media URLs in components.
  *
  * The Django API returns either:
  *   - a relative path like "/media/equipment/sound-system.jpg" or
@@ -16,18 +18,38 @@ export function cn(...classes: (string | false | null | undefined)[]): string {
  * relative "/media/..." path works as-is from the browser. In production the
  * frontend and media may share a host. If the backend returns an absolute URL
  * on a different host, we trust it as-is.
+ *
+ * Defensive normalization: a misconfigured MEDIA_URL (historically "media/"
+ * without a leading slash) can make the API emit URLs like
+ * "/api/equipment/media/...". The /media/ segment is salvaged from such
+ * paths so images still render instead of showing a broken icon.
+ *
+ * Already-renderable browser URLs are returned untouched: a ``blob:`` URL is
+ * the local preview of a newly picked File (it has no media path and the URL
+ * parser reports its whole value as the pathname), and a ``data:`` URL is
+ * inline bytes. Rewriting either one produces an unusable URL.
  */
 export function getEquipmentImageUrl(image: string | null | undefined): string | null {
   if (!image) return null
 
-  try {
-    const url = new URL(image, window.location.origin)
+  const value = image.trim()
+  if (!value) return null
 
-    // If the backend already returned an absolute media URL, use it as-is.
-    // This keeps the frontend working when the API/backend and frontend run
-    // on different hosts/ports.
+  if (/^(blob:|data:)/i.test(value)) return value
+
+  try {
+    const url = new URL(value, window.location.origin)
+
+    // If the backend already returned a correct media URL, use it as-is.
     if (url.pathname.startsWith('/media/')) {
       return url.origin + url.pathname
+    }
+
+    // Salvage a mangled media path (bad MEDIA_URL era): keep everything from
+    // the /media/ segment onward.
+    const mediaIndex = url.pathname.indexOf('/media/')
+    if (mediaIndex !== -1) {
+      return url.origin + url.pathname.slice(mediaIndex)
     }
 
     // Some deployments may already return an absolute asset URL. Trust it.
