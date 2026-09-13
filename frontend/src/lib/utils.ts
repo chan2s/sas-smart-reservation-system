@@ -1,5 +1,5 @@
 import { format, parseISO } from 'date-fns'
-import type { ReservationStatus } from './types'
+import type { Equipment, ReservationStatus } from './types'
 
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ')
@@ -63,6 +63,42 @@ export function getEquipmentImageUrl(image: string | null | undefined): string |
   } catch {
     return null
   }
+}
+
+/**
+ * Every image for an equipment item, resolved to browser-usable URLs with the
+ * primary image first — the single place that decides "which pictures does this
+ * item have".
+ *
+ * The gallery is the source of truth; the legacy single `image` field is only
+ * used when the gallery is empty (which the backend also guarantees, so old
+ * records and old cached payloads both work). Filenames are never used here.
+ */
+export function equipmentImageUrls(
+  equipment: Pick<Equipment, 'image' | 'images'> | null | undefined,
+): string[] {
+  if (!equipment) return []
+
+  const gallery = [...(equipment.images ?? [])]
+    .sort((a, b) => {
+      if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1
+      if (a.display_order !== b.display_order) return a.display_order - b.display_order
+      return 0
+    })
+    .map((image) => getEquipmentImageUrl(image.url))
+    .filter((url): url is string => Boolean(url))
+
+  if (gallery.length > 0) return gallery
+
+  const legacy = getEquipmentImageUrl(equipment.image)
+  return legacy ? [legacy] : []
+}
+
+/** The image an equipment item leads with, or null when it has none. */
+export function equipmentPrimaryImageUrl(
+  equipment: Pick<Equipment, 'image' | 'images'> | null | undefined,
+): string | null {
+  return equipmentImageUrls(equipment)[0] ?? null
 }
 
 export function formatDate(date: string | Date): string {

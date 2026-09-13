@@ -2,7 +2,7 @@ import { Sparkles, Check, Minus, Plus, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import type { Equipment, Recommendation } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import { cn, equipmentPrimaryImageUrl } from '@/lib/utils'
 
 interface EventContext {
   eventName: string
@@ -110,7 +110,11 @@ export function RecommendationCard({
               )}
             >
               <div className="flex items-center gap-3">
-                <EquipmentImage src={equipmentItem?.image} size="md" className="shrink-0 rounded-lg" />
+                <EquipmentImage
+                  src={equipmentPrimaryImageUrl(equipmentItem)}
+                  size="md"
+                  className="shrink-0 rounded-lg"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <p className="text-sm font-medium text-ink">{recommendation.name}</p>

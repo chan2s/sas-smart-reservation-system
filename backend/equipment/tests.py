@@ -12,7 +12,7 @@ from reservations.models import Reservation, ReservationItem
 from reservations.services.availability import check_availability
 from reservations.services.recommendations import recommend_resources
 
-from .models import Equipment, EquipmentCategory, MaintenanceRecord
+from .models import Equipment, EquipmentCategory, EquipmentImage, MaintenanceRecord
 from .services import equipment_stats
 
 PNG = "image/png"
@@ -625,3 +625,459 @@ class EquipmentManagementApiTests(TestCase):
         self.assertFalse(Equipment.objects.filter(pk=item.id).exists())
         # The model instance still references the old path, but the file must be gone.
         self.assertFalse(item.image.storage.exists(saved_name))
+
+
+class EquipmentGalleryApiTests(TestCase):
+    """Multiple images per equipment item: upload, ordering, primary, delete."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="gallery-admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.requester = User.objects.create_user(
+            username="gallery-requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.category = EquipmentCategory.objects.create(name="Signage")
+        self.item = Equipment.objects.create(
+            name="Event Signage Stand", category=self.category
+        )
+        self._auth(self.admin)
+
+    def _auth(self, user):
+        self.client.force_authenticate(user)
+
+    def _upload(self, files, equipment=None):
+        """POST files the way the admin form does: one `images` key per file."""
+        target = equipment or self.item
+        return self.client.post(
+            f"/api/equipment/{target.id}/images/",
+            {"images": files},
+            format="multipart",
+        )
+
+    def _gallery(self, equipment=None):
+        target = equipment or self.item
+        response = self.client.get(f"/api/equipment/{target.id}/images/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()["images"]
+
+    # ------------------------------------------------------------------
+    # Upload
+    # ------------------------------------------------------------------
+
+    def test_upload_single_image_creates_primary_entry(self):
+        response = self._upload([_png()])
+        self.assertEqual(response.status_code, 201, response.content)
+        created = response.json()["images"]
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0]["is_primary"])
+        self.assertEqual(created[0]["display_order"], 0)
+        self.assertTrue(created[0]["url"].startswith("http"), created[0]["url"])
+        self.assertIn("/media/equipment/", created[0]["url"])
+        self.assertEqual(EquipmentImage.objects.filter(equipment=self.item).count(), 1)
+
+    def test_upload_multiple_images_in_one_request_keeps_order(self):
+        response = self._upload([_png(), _jpeg(), _webp()])
+        self.assertEqual(response.status_code, 201, response.content)
+        created = response.json()["images"]
+        self.assertEqual(len(created), 3)
+        self.assertEqual(
+            [image["display_order"] for image in created], [0, 1, 2]
+        )
+        # Only the first image of an empty gallery is primary.
+        self.assertEqual(
+            [image["is_primary"] for image in created], [True, False, False]
+        )
+
+    def test_second_upload_appends_and_keeps_existing_primary(self):
+        self._upload([_png()])
+        primary_id = EquipmentImage.objects.get(equipment=self.item, is_primary=True).id
+
+        response = self._upload([_jpeg()])
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertFalse(response.json()["images"][0]["is_primary"])
+
+        gallery = self._gallery()
+        self.assertEqual(len(gallery), 2)
+        self.assertTrue(gallery[0]["is_primary"])
+        self.assertEqual(gallery[0]["id"], primary_id)
+        self.assertEqual([image["display_order"] for image in gallery], [0, 1])
+
+    def test_upload_without_files_is_rejected(self):
+        response = self.client.post(
+            f"/api/equipment/{self.item.id}/images/", {}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("images", response.json())
+
+    def test_upload_rejects_unsupported_type(self):
+        gif = ContentFile(b"not an image", name="signage.gif")
+        gif.content_type = "image/gif"
+        response = self._upload([gif])
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("JPG, PNG, or WEBP", response.json()["images"][0])
+        self.assertEqual(EquipmentImage.objects.filter(equipment=self.item).count(), 0)
+
+    def test_upload_rejects_oversized_image(self):
+        data = BytesIO()
+        PilImage.new("RGB", (4, 4), color=(0, 0, 0)).save(data, format="PNG")
+        giant = ContentFile(data.getvalue() + b"0" * (MAX_SIZE + 1), name="huge.png")
+        giant.content_type = PNG
+        response = self._upload([giant])
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("smaller than 5 MB", response.json()["images"][0])
+
+    def test_upload_rejects_a_non_image_with_an_image_extension(self):
+        fake = ContentFile(b"definitely not a jpeg", name="fake.jpg")
+        fake.content_type = JPEG
+        response = self._upload([fake])
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("could not be read as an image", response.json()["images"][0])
+
+    # ------------------------------------------------------------------
+    # Ordering and primary
+    # ------------------------------------------------------------------
+
+    def test_primary_image_is_returned_first(self):
+        self._upload([_png(), _jpeg()])
+        first, second = list(EquipmentImage.objects.filter(equipment=self.item).order_by("id"))
+
+        response = self.client.post(
+            f"/api/equipment/{self.item.id}/images/{second.id}/primary/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        gallery = response.json()["images"]
+        self.assertEqual(gallery[0]["id"], second.id)
+        self.assertEqual(
+            EquipmentImage.objects.filter(equipment=self.item, is_primary=True).count(), 1
+        )
+        self.assertFalse(
+            EquipmentImage.objects.get(pk=first.id).is_primary
+        )
+
+    def test_reorder_sets_display_order(self):
+        self._upload([_png(), _jpeg(), _webp()])
+        images = list(EquipmentImage.objects.filter(equipment=self.item).order_by("id"))
+        ids = [image.id for image in images]
+
+        # Reverse everything; the primary is pinned first by the API ordering.
+        response = self.client.post(
+            f"/api/equipment/{self.item.id}/images/order/",
+            {"order": list(reversed(ids))},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        # display_order follows the request exactly...
+        self.assertEqual(
+            list(
+                EquipmentImage.objects.filter(equipment=self.item)
+                .order_by("display_order")
+                .values_list("id", flat=True)
+            ),
+            list(reversed(ids)),
+        )
+        # ...while the API still pins the primary image (ids[0], now order 2)
+        # in front of the rest, which keep their relative order.
+        self.assertEqual(
+            [image["id"] for image in response.json()["images"]],
+            [ids[0], ids[2], ids[1]],
+        )
+        self.assertEqual(
+            [image["display_order"] for image in response.json()["images"]],
+            [2, 0, 1],
+        )
+        self.assertEqual(
+            list(
+                EquipmentImage.objects.filter(equipment=self.item)
+                .order_by("display_order")
+                .values_list("id", flat=True)
+            ),
+            list(reversed(ids)),
+        )
+
+    def test_reorder_requires_every_id_exactly_once(self):
+        self._upload([_png(), _jpeg()])
+        ids = list(EquipmentImage.objects.filter(equipment=self.item).values_list("id", flat=True))
+        for bad_order in ([ids[0]], [ids[0], ids[0]], [ids[0], 99999], "nope", ["x"]):
+            response = self.client.post(
+                f"/api/equipment/{self.item.id}/images/order/",
+                {"order": bad_order},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 400, (bad_order, response.content))
+
+    # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
+    def test_delete_image_removes_row_and_file(self):
+        created = self._upload([_png(), _jpeg()]).json()["images"]
+        keep_id = created[0]["id"]
+        doomed_id = created[1]["id"]
+        doomed_name = EquipmentImage.objects.get(pk=doomed_id).image.name
+        keep_name = EquipmentImage.objects.get(pk=keep_id).image.name
+        storage = EquipmentImage.objects.get(pk=doomed_id).image.storage
+
+        response = self.client.delete(
+            f"/api/equipment/{self.item.id}/images/{doomed_id}/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        gallery = response.json()["images"]
+        self.assertEqual([image["id"] for image in gallery], [keep_id])
+        self.assertFalse(EquipmentImage.objects.filter(pk=doomed_id).exists())
+        self.assertFalse(storage.exists(doomed_name))
+        self.assertTrue(storage.exists(keep_name))
+
+    def test_delete_primary_promotes_the_next_image(self):
+        created = self._upload([_png(), _jpeg(), _webp()]).json()["images"]
+        primary_id = created[0]["id"]
+        next_id = created[1]["id"]
+
+        response = self.client.delete(
+            f"/api/equipment/{self.item.id}/images/{primary_id}/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["images"][0]["id"], next_id)
+        self.assertTrue(response.json()["images"][0]["is_primary"])
+        self.assertEqual(
+            EquipmentImage.objects.filter(equipment=self.item, is_primary=True).count(), 1
+        )
+
+    def test_emptying_the_gallery_clears_the_legacy_image(self):
+        """A deleted legacy picture must not reappear through the fallback."""
+        self.item.image = _png()
+        self.item.save()
+        self.item.refresh_from_db()
+        legacy_name = self.item.image.name
+        legacy_storage = self.item.image.storage
+
+        # The upload adopts the legacy image, so the gallery holds both.
+        self._upload([_jpeg()])
+        gallery = self._gallery()
+        self.assertEqual(len(gallery), 2)
+        adopted_id, added_id = gallery[0]["id"], gallery[1]["id"]
+        added_name = EquipmentImage.objects.get(pk=added_id).image.name
+        added_storage = EquipmentImage.objects.get(pk=added_id).image.storage
+
+        # Deleting the adopted entry clears the legacy field with it.
+        response = self.client.delete(
+            f"/api/equipment/{self.item.id}/images/{adopted_id}/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.image)
+        self.assertFalse(legacy_storage.exists(legacy_name))
+
+        # Emptying the gallery for good leaves no images and no file.
+        response = self.client.delete(
+            f"/api/equipment/{self.item.id}/images/{added_id}/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["images"], [])
+        self.assertFalse(added_storage.exists(added_name))
+
+        # The API must report no images at all, not a resurrected legacy one.
+        detail = self.client.get(f"/api/equipment/{self.item.id}/")
+        self.assertEqual(detail.json()["images"], [])
+
+    def test_deleting_unknown_image_returns_404(self):
+        response = self.client.delete(f"/api/equipment/{self.item.id}/images/99999/")
+        self.assertEqual(response.status_code, 404, response.content)
+
+    # ------------------------------------------------------------------
+    # Backward compatibility
+    # ------------------------------------------------------------------
+
+    def test_legacy_single_image_is_exposed_as_a_gallery_entry(self):
+        item = Equipment.objects.create(
+            name="Legacy Stand", category=self.category, image=_png()
+        )
+        detail = self.client.get(f"/api/equipment/{item.id}/")
+        self.assertEqual(detail.status_code, 200, detail.content)
+        images = detail.json()["images"]
+        self.assertEqual(len(images), 1)
+        self.assertIsNone(images[0]["id"])
+        self.assertTrue(images[0]["is_primary"])
+        self.assertTrue(images[0]["url"].startswith("http"))
+        # The legacy field itself is untouched.
+        self.assertEqual(detail.json()["image"], images[0]["url"])
+
+    def test_equipment_without_images_reports_an_empty_gallery(self):
+        self.assertEqual(self._gallery(), [])
+        detail = self.client.get(f"/api/equipment/{self.item.id}/")
+        self.assertEqual(detail.json()["images"], [])
+        self.assertIsNone(detail.json()["image"])
+
+    def test_upload_adopts_a_legacy_image_into_the_gallery(self):
+        """A pre-gallery image must not disappear when the first upload lands."""
+        self.item.image = _png()
+        self.item.save()
+        self.item.refresh_from_db()
+        legacy_name = self.item.image.name
+        legacy_storage = self.item.image.storage
+
+        response = self._upload([_jpeg()])
+        self.assertEqual(response.status_code, 201, response.content)
+
+        gallery = self._gallery()
+        self.assertEqual(len(gallery), 2)
+        # The adopted legacy image stays first and keeps the primary flag.
+        self.assertTrue(gallery[0]["is_primary"])
+        self.assertTrue(gallery[0]["url"].endswith(legacy_name.split("/")[-1]))
+        self.assertTrue(legacy_storage.exists(legacy_name))
+
+    def test_legacy_single_image_upload_still_works(self):
+        response = self.client.patch(
+            f"/api/equipment/{self.item.id}/", {"image": _jpeg()}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(len(response.json()["images"]), 1)
+        self.assertIsNone(response.json()["images"][0]["id"])
+
+    def test_editing_notes_does_not_touch_the_gallery(self):
+        created = self._upload([_png(), _jpeg()]).json()["images"]
+        response = self.client.patch(
+            f"/api/equipment/{self.item.id}/",
+            {"name": "Event Signage Stand", "category_id": self.category.id, "notes": "Only notes"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            [image["id"] for image in response.json()["images"]],
+            [image["id"] for image in created],
+        )
+
+    # ------------------------------------------------------------------
+    # End-to-end admin workflow
+    # ------------------------------------------------------------------
+
+    def test_admin_gallery_workflow_end_to_end(self):
+        """The exact request sequence the admin form performs, start to finish."""
+        # 1. Create the item with the fields-only multipart body the form sends.
+        created = self.client.post(
+            "/api/equipment/",
+            {
+                "name": "Event Signage Stand",
+                "category_id": self.category.id,
+                "description": "Stand for event signage.",
+                "total_quantity": "2",
+                "unit": "unit",
+                "condition": "GOOD",
+                "status": "AVAILABLE",
+                "storage_location": "SAS Storage Room",
+                "asset_code": "SAS-SGN-001",
+                "notes": "",
+            },
+            format="multipart",
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        item = Equipment.objects.get(pk=created.json()["id"])
+        self.assertEqual(created.json()["images"], [])
+
+        # 2. Upload three images in one action.
+        response = self._upload([_png(), _jpeg(), _webp()], equipment=item)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(len(response.json()["images"]), 3)
+
+        # 3. Add one more in a second action.
+        response = self._upload([_png()], equipment=item)
+        self.assertEqual(response.status_code, 201, response.content)
+
+        # 4. Reopening the item shows all four, primary first.
+        detail = self.client.get(f"/api/equipment/{item.id}/")
+        images = detail.json()["images"]
+        self.assertEqual(len(images), 4)
+        self.assertTrue(images[0]["is_primary"])
+        self.assertEqual([image["display_order"] for image in images], [0, 1, 2, 3])
+
+        # 5. Editing other fields must not disturb the gallery.
+        response = self.client.patch(
+            f"/api/equipment/{item.id}/",
+            {
+                "name": "Event Signage Stand",
+                "category_id": self.category.id,
+                "total_quantity": "2",
+                "unit": "unit",
+                "condition": "GOOD",
+                "status": "AVAILABLE",
+                "storage_location": "SAS Storage Room",
+                "asset_code": "SAS-SGN-001",
+                "notes": "Only notes changed",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            [image["id"] for image in response.json()["images"]],
+            [image["id"] for image in images],
+        )
+
+        # 6. Promote the last image.
+        last_id = images[-1]["id"]
+        response = self.client.post(
+            f"/api/equipment/{item.id}/images/{last_id}/primary/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["images"][0]["id"], last_id)
+
+        # 7. Reorder the survivors (primary stays pinned in front).
+        ids = [image["id"] for image in response.json()["images"]]
+        order = [ids[0], ids[3], ids[2], ids[1]]
+        response = self.client.post(
+            f"/api/equipment/{item.id}/images/order/", {"order": order}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual([image["id"] for image in response.json()["images"]], order)
+
+        # 8. Delete one image and confirm its file is gone.
+        doomed_id = ids[1]
+        doomed = EquipmentImage.objects.get(pk=doomed_id)
+        doomed_name, doomed_storage = doomed.image.name, doomed.image.storage
+        response = self.client.delete(
+            f"/api/equipment/{item.id}/images/{doomed_id}/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(doomed_storage.exists(doomed_name))
+
+        # 9. The final state survives a fresh read ("refresh the browser").
+        final = self.client.get(f"/api/equipment/{item.id}/").json()["images"]
+        self.assertEqual([image["id"] for image in final], [ids[0], ids[3], ids[2]])
+        self.assertTrue(final[0]["is_primary"])
+        for image in final:
+            self.assertTrue(image["url"].startswith("http"))
+            self.assertIn("/media/equipment/", image["url"])
+
+    # ------------------------------------------------------------------
+    # Permissions
+    # ------------------------------------------------------------------
+
+    def test_requester_can_read_but_not_change_the_gallery(self):
+        gallery_id = self._upload([_png()]).json()["images"][0]["id"]
+        self._auth(self.requester)
+
+        self.assertEqual(self._gallery()[0]["id"], gallery_id)
+        self.assertEqual(self._upload([_jpeg()]).status_code, 403)
+        self.assertEqual(
+            self.client.delete(
+                f"/api/equipment/{self.item.id}/images/{gallery_id}/"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/api/equipment/{self.item.id}/images/{gallery_id}/primary/"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/api/equipment/{self.item.id}/images/order/",
+                {"order": [gallery_id]},
+                format="json",
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            EquipmentImage.objects.filter(equipment=self.item).count(), 1
+        )

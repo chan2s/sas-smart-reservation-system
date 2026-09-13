@@ -2,7 +2,10 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import {
   api,
   endpoints,
+  galleryChangeIsEmpty,
   type CreateReservationPayload,
+  type EquipmentGalleryChange,
+  type EquipmentImageRef,
   type EquipmentPayload,
   type ReservationFilters,
 } from '@/lib/api'
@@ -129,6 +132,66 @@ export function useRestoreEquipment(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['summary'] })
     },
   })
+}
+
+/**
+ * Applies an admin's gallery edits to an equipment item.
+ *
+ * The work is split across the gallery endpoints because a multipart PATCH
+ * cannot express "delete this one, reorder the rest, and promote that one":
+ *   1. delete the images the admin removed,
+ *   2. upload the new Files (the field name is `images`, repeated per File),
+ *   3. reorder the surviving images (ids only known after the upload),
+ *   4. promote the chosen primary image.
+ *
+ * Every step is awaited in order and any failure rejects, so the modal can
+ * report a real error instead of pretending the images were saved. Caches are
+ * invalidated only after the whole change set succeeds.
+ */
+export function useSaveEquipmentGallery() {
+  const queryClient = useQueryClient()
+
+  return async (equipmentId: number, change: EquipmentGalleryChange) => {
+    if (galleryChangeIsEmpty(change)) return
+
+    for (const imageId of change.deleteIds) {
+      await endpoints.deleteEquipmentImage(equipmentId, imageId)
+    }
+
+    // New files are addressed by index until the backend assigns ids; the
+    // upload response returns the created images in the order they were sent.
+    const uploadedIds: number[] = []
+    if (change.files.length > 0) {
+      const response = await endpoints.uploadEquipmentImages(equipmentId, change.files)
+      for (const image of response.images) {
+        if (image.id != null) uploadedIds.push(image.id)
+      }
+    }
+
+    const resolve = (ref: EquipmentImageRef): number | null =>
+      'id' in ref ? ref.id : uploadedIds[ref.fileIndex] ?? null
+
+    const order = change.order
+      .map(resolve)
+      .filter((id): id is number => id != null)
+    // Only reorder when every image resolved — a partial list would be
+    // rejected by the backend (it must name every gallery image exactly once).
+    if (order.length > 0 && order.length === change.order.length) {
+      await endpoints.reorderEquipmentImages(equipmentId, order)
+    }
+
+    if (change.primary) {
+      const primaryId = resolve(change.primary)
+      if (primaryId != null) {
+        await endpoints.setPrimaryEquipmentImage(equipmentId, primaryId)
+      }
+    }
+
+    await queryClient.invalidateQueries({ queryKey: ['equipment'] })
+    await queryClient.invalidateQueries({ queryKey: ['equipment-item', equipmentId] })
+    await queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+    await queryClient.invalidateQueries({ queryKey: ['summary'] })
+  }
 }
 
 export function useEquipmentHistory(id: number | null) {

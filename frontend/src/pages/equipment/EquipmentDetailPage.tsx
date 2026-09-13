@@ -19,10 +19,12 @@ import {
   useReportEquipmentIssue,
   useResolveMaintenance,
   useRestoreEquipment,
+  useSaveEquipmentGallery,
   useSetEquipmentMaintenance,
   useUpdateEquipment,
 } from '@/hooks/queries'
-import { EquipmentImage } from '@/components/equipment/EquipmentImage'
+import { EquipmentCarousel } from '@/components/equipment/EquipmentCarousel'
+import { EquipmentImageViewer } from '@/components/equipment/EquipmentImageViewer'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
@@ -35,7 +37,7 @@ import { EquipmentFormModal } from '@/components/equipment/EquipmentFormModal'
 import { MaintenanceModal } from '@/components/equipment/MaintenanceModal'
 import { RemoveEquipmentModal } from '@/components/equipment/RemoveEquipmentModal'
 import { ConditionBadge, EquipmentStatusBadge } from '@/components/equipment/EquipmentBadges'
-import { cn, formatDateTime } from '@/lib/utils'
+import { cn, equipmentImageUrls, formatDateTime } from '@/lib/utils'
 
 const ISSUE_TYPES = [
   { value: 'DAMAGE', label: 'Damage' },
@@ -57,6 +59,7 @@ export function EquipmentDetailPage() {
   const updateEquipment = useUpdateEquipment(equipmentId)
   const setMaintenance = useSetEquipmentMaintenance(equipmentId)
   const restoreEquipment = useRestoreEquipment(equipmentId)
+  const saveGallery = useSaveEquipmentGallery()
 
   const [issueOpen, setIssueOpen] = useState(false)
   const [issueType, setIssueType] = useState('DAMAGE')
@@ -66,6 +69,8 @@ export function EquipmentDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [maintenanceOpen, setMaintenanceOpen] = useState(false)
   const [removeOpen, setRemoveOpen] = useState(false)
+  /** Index of the image opened in the lightbox, or null when it is closed. */
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null)
 
   if (isLoading || !item) {
     return (
@@ -381,7 +386,11 @@ export function EquipmentDetailPage() {
           <Card>
             <CardHeader title="Details" />
             <div className="mt-4">
-              <EquipmentImage src={item.image} size="lg" className="mx-auto" />
+              <EquipmentCarousel
+                images={equipmentImageUrls(item)}
+                alt={item.name}
+                onOpenImage={(index) => setViewerIndex(index)}
+              />
             </div>
             <dl className="mt-4 space-y-3 text-sm">
               <div className="flex justify-between gap-4">
@@ -486,6 +495,14 @@ export function EquipmentDetailPage() {
         </div>
       </Modal>
 
+      {/* Image lightbox */}
+      <EquipmentImageViewer
+        equipment={viewerIndex == null ? null : item}
+        images={equipmentImageUrls(item)}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
+
       {/* Edit modal */}
       <EquipmentFormModal
         open={editOpen}
@@ -493,10 +510,12 @@ export function EquipmentDetailPage() {
         equipment={item}
         categories={categories ?? []}
         onSubmit={(payload) =>
-          updateEquipment.mutateAsync(payload).then(() => {
+          updateEquipment.mutateAsync(payload).then((saved) => {
             toast(`${item.name} updated.`)
+            return saved
           })
         }
+        onSaveGallery={(id, change) => saveGallery(id, change)}
       />
 
       {/* Maintenance modal */}

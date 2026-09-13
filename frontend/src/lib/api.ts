@@ -5,6 +5,7 @@ import type {
   DashboardSummary,
   Equipment,
   EquipmentCategory,
+  EquipmentImage,
   EquipmentCondition,
   EquipmentHistoryItem,
   EquipmentStats,
@@ -304,6 +305,42 @@ export interface EquipmentPayload {
   image?: File | string | null
 }
 
+/**
+ * One gallery change set, produced by the admin image manager and applied by
+ * `useSaveEquipmentGallery`.
+ *
+ * Images are addressed either by their existing gallery id or by their index in
+ * `files` (a brand-new image only receives an id once the backend stores it).
+ */
+export type EquipmentImageRef = { id: number } | { fileIndex: number }
+
+export interface EquipmentGalleryChange {
+  /** Every new File to upload, in the order they should appear. Real Files only. */
+  files: File[]
+  /** Existing gallery image ids the admin removed. */
+  deleteIds: number[]
+  /** Display order of every surviving image. */
+  order: EquipmentImageRef[]
+  /** The image that should become primary, if the admin changed it. */
+  primary: EquipmentImageRef | null
+}
+
+export const EMPTY_GALLERY_CHANGE: EquipmentGalleryChange = {
+  files: [],
+  deleteIds: [],
+  order: [],
+  primary: null,
+}
+
+export function galleryChangeIsEmpty(change: EquipmentGalleryChange): boolean {
+  return (
+    change.files.length === 0 &&
+    change.deleteIds.length === 0 &&
+    change.order.length === 0 &&
+    change.primary === null
+  )
+}
+
 export interface CreateReservationPayload {
   facility_id: number
   date: string
@@ -358,6 +395,29 @@ export const endpoints = {
   },
   equipmentItem: (id: number) => api.get<Equipment>(`/api/equipment/${id}/`),
   equipmentStats: () => api.get<EquipmentStats>('/api/equipment/stats/'),
+  // --- Image gallery -------------------------------------------------
+  equipmentImages: (id: number) =>
+    api.get<{ images: EquipmentImage[] }>(`/api/equipment/${id}/images/`),
+  /**
+   * Uploads one or more new gallery images.
+   *
+   * The backend field name is `images`, repeated once per file — never a
+   * filename string. Resolves with the images that were just created, in the
+   * order they were sent.
+   */
+  uploadEquipmentImages: (id: number, files: File[]) => {
+    const form = new FormData()
+    for (const file of files) form.append('images', file)
+    return api.postForm<{ images: EquipmentImage[] }>(`/api/equipment/${id}/images/`, form)
+  },
+  deleteEquipmentImage: (id: number, imageId: number) =>
+    api.delete<{ images: EquipmentImage[] }>(`/api/equipment/${id}/images/${imageId}/`),
+  setPrimaryEquipmentImage: (id: number, imageId: number) =>
+    api.post<{ images: EquipmentImage[] }>(
+      `/api/equipment/${id}/images/${imageId}/primary/`,
+    ),
+  reorderEquipmentImages: (id: number, order: number[]) =>
+    api.post<{ images: EquipmentImage[] }>(`/api/equipment/${id}/images/order/`, { order }),
   equipmentCategories: () => api.get<EquipmentCategory[]>('/api/equipment-categories/'),
   equipmentMaintenance: (id: number) =>
     api.get<MaintenanceRecord[]>(`/api/equipment/${id}/maintenance/`),

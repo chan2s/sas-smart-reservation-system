@@ -12,7 +12,7 @@ import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { EmptyState } from '@/components/ui/Misc'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import { EquipmentImageViewer } from '@/components/equipment/EquipmentImageViewer'
-import { cn, formatTime } from '@/lib/utils'
+import { cn, equipmentImageUrls, equipmentPrimaryImageUrl, formatTime } from '@/lib/utils'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
@@ -524,7 +524,12 @@ export function StepResources({
                         aria-label={`View image of ${item.name}`}
                         title="Click to view image"
                       >
-                        <EquipmentImage src={item.image} size="md" className="rounded-lg" alt={item.name} />
+                        <EquipmentImage
+                          src={equipmentPrimaryImageUrl(item)}
+                          size="md"
+                          className="rounded-lg"
+                          alt={item.name}
+                        />
                         <span
                           aria-hidden
                           className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-ink/0 text-[11px] font-medium text-white opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100"
@@ -581,7 +586,11 @@ export function StepResources({
         </div>
       )}
 
-      <EquipmentImageViewer equipment={viewingItem} onClose={() => setViewingItem(null)} />
+      <EquipmentImageViewer
+        equipment={viewingItem}
+        images={equipmentImageUrls(viewingItem)}
+        onClose={() => setViewingItem(null)}
+      />
     </section>
   )
 }
@@ -675,7 +684,11 @@ export function StepReview({
                 if (!entry.equipment) return null
                 return (
                   <div key={entry.equipment.id} className="flex items-center gap-4 py-3">
-                    <EquipmentImage src={entry.equipment.image} size="sm" className="shrink-0 rounded-lg" />
+                    <EquipmentImage
+                      src={equipmentPrimaryImageUrl(entry.equipment)}
+                      size="sm"
+                      className="shrink-0 rounded-lg"
+                    />
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-ink">{entry.equipment.name}</p>
                       <p className="text-xs text-body">{entry.equipment.category.name}</p>

@@ -1,6 +1,8 @@
+from django.db import transaction
 from django.db.models import Exists, OuterRef
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -9,13 +11,16 @@ from reservations.models import ReservationItem
 from accounts.models import AuditLog
 from accounts.permissions import IsSasStaff, IsSasStaffOrReadOnly
 
-from .models import Equipment, EquipmentCategory, MaintenanceRecord
+from .models import Equipment, EquipmentCategory, EquipmentImage, MaintenanceRecord
 from .serializers import (
+    MAX_IMAGES_PER_UPLOAD,
     EquipmentCategorySerializer,
     EquipmentDetailSerializer,
+    EquipmentImageSerializer,
     EquipmentSerializer,
     EquipmentStatsSerializer,
     MaintenanceRecordSerializer,
+    validate_equipment_image,
 )
 from .services import (
     equipment_stats,
@@ -31,7 +36,11 @@ class EquipmentCategoryViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class EquipmentViewSet(viewsets.ModelViewSet):
-    queryset = Equipment.objects.select_related("category").prefetch_related("maintenance_records").all()
+    queryset = (
+        Equipment.objects.select_related("category")
+        .prefetch_related("maintenance_records", "equipment_images")
+        .all()
+    )
     serializer_class = EquipmentSerializer
     permission_classes = [IsSasStaffOrReadOnly]
     pagination_class = None
@@ -99,6 +108,234 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                     f"Image replaced ({previous_image or 'none'} → {new_image or 'none'})"
                 ),
             )
+
+    # ------------------------------------------------------------------
+    # Image gallery
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _gallery(equipment):
+        """The gallery as it is stored right now.
+
+        Deliberately a fresh query rather than ``equipment.equipment_images``:
+        the equipment queryset is prefetched, so the related manager would
+        return rows cached before this request's mutations (deleted images
+        included) and every gallery response would be one step behind.
+        """
+        return EquipmentImage.objects.filter(equipment=equipment)
+
+    def _gallery_response(self, equipment, images=None, status_code=status.HTTP_200_OK):
+        """Serialize a gallery (or a subset of it) as ``{"images": [...]}``."""
+        payload = self._gallery(equipment) if images is None else images
+        data = EquipmentImageSerializer(
+            payload, many=True, context={"request": self.request}
+        ).data
+        return Response({"images": data}, status=status_code)
+
+    def _ensure_primary(self, equipment):
+        """Keep exactly one primary image whenever the gallery is non-empty."""
+        gallery = self._gallery(equipment)
+        if gallery.filter(is_primary=True).exists():
+            return
+        promoted = gallery.first()
+        if promoted is not None:
+            promoted.is_primary = True
+            promoted.save(update_fields=["is_primary", "updated_at"])
+
+    def _adopt_legacy_image(self, equipment):
+        """Move a legacy single image into the gallery.
+
+        Returns the new gallery entry, or None when there is nothing to adopt
+        (no legacy image, or the gallery already has images). Keeping this in
+        the gallery keeps the API response complete for records whose image was
+        set through the legacy field after the backfill migration ran.
+        """
+        if self._gallery(equipment).exists() or not equipment.image:
+            return None
+        return EquipmentImage.objects.create(
+            equipment=equipment,
+            # Same stored file: a reference, never a copy.
+            image=equipment.image.name,
+            display_order=0,
+            is_primary=True,
+        )
+
+    def _log_image_change(self, equipment, detail):
+        AuditLog.record(
+            self.request.user,
+            AuditLog.Action.EQUIPMENT_IMAGE,
+            object_type="equipment",
+            object_id=equipment.id,
+            object_repr=equipment.name,
+            detail=detail,
+        )
+
+    @action(detail=True, methods=["get", "post"], url_path="images")
+    def images(self, request, pk=None):
+        """GET the image gallery; POST one or more new gallery images.
+
+        Uploads are multipart/form-data and repeat the ``images`` key once per
+        file — ``formData.append("images", file)`` for each File. Every file
+        goes through the same validator as the legacy single-image field
+        (JPG/PNG/WEBP, at most 5 MB, verified bytes).
+
+        Writes require SAS staff; any authenticated user may read the gallery.
+        """
+        equipment = self.get_object()
+
+        if request.method == "GET":
+            return self._gallery_response(equipment)
+
+        files = request.FILES.getlist("images")
+        if not files:
+            return Response(
+                {
+                    "images": [
+                        "No files were uploaded. Send one or more images under the 'images' field."
+                    ]
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(files) > MAX_IMAGES_PER_UPLOAD:
+            return Response(
+                {"images": [f"Upload at most {MAX_IMAGES_PER_UPLOAD} images at a time."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate everything before storing anything: a bad file must not
+        # leave a half-finished gallery behind.
+        errors = []
+        for index, file in enumerate(files, start=1):
+            try:
+                validate_equipment_image(file)
+            except serializers.ValidationError as exc:
+                label = f"Image {index}" if len(files) > 1 else "Image"
+                messages = " ".join(str(item) for item in exc.detail)
+                errors.append(f"{label}: {messages}")
+        if errors:
+            return Response({"images": errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        self._adopt_legacy_image(equipment)
+
+        gallery = self._gallery(equipment)
+        last_order = gallery.order_by("-display_order").values_list(
+            "display_order", flat=True
+        ).first()
+        next_order = 0 if last_order is None else last_order + 1
+        has_primary = gallery.filter(is_primary=True).exists()
+
+        with transaction.atomic():
+            created = [
+                EquipmentImage.objects.create(
+                    equipment=equipment,
+                    image=file,
+                    display_order=next_order + offset,
+                    # The very first image of a gallery becomes its primary one.
+                    is_primary=not has_primary and offset == 0,
+                )
+                for offset, file in enumerate(files)
+            ]
+
+        self._log_image_change(
+            equipment,
+            f"Added {len(created)} gallery image(s)",
+        )
+        return self._gallery_response(
+            equipment, images=created, status_code=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["delete"], url_path=r"images/(?P<image_id>\d+)")
+    def delete_image(self, request, pk=None, image_id=None):
+        """Remove one gallery image (staff only) and clean up its stored file."""
+        equipment = self.get_object()
+        image = get_object_or_404(equipment.equipment_images, pk=image_id)
+        stored_name = image.image.name
+        storage = image.image.storage
+
+        with transaction.atomic():
+            image.delete()
+
+            # The gallery owns the file now. Delete it only once nothing else
+            # references the same stored name, and clear the legacy single
+            # image field when it mirrored this picture — otherwise the
+            # backward-compatibility fallback would resurrect a deleted image.
+            gallery = self._gallery(equipment)
+            if stored_name and not gallery.filter(image=stored_name).exists():
+                if equipment.image and equipment.image.name == stored_name:
+                    equipment.image = None
+                    equipment.save(update_fields=["image", "updated_at"])
+                storage.delete(stored_name)
+
+            # Emptying the gallery is an explicit "this item has no images"
+            # action, so a legacy image must not resurface through the
+            # backward-compatibility fallback.
+            if not gallery.exists() and equipment.image:
+                legacy_name = equipment.image.name
+                legacy_storage = equipment.image.storage
+                equipment.image = None
+                equipment.save(update_fields=["image", "updated_at"])
+                if legacy_name and legacy_name != stored_name:
+                    legacy_storage.delete(legacy_name)
+
+            self._ensure_primary(equipment)
+
+        self._log_image_change(equipment, "Removed a gallery image")
+        return self._gallery_response(equipment)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"images/(?P<image_id>\d+)/primary",
+    )
+    def set_primary_image(self, request, pk=None, image_id=None):
+        """Make one gallery image the primary one (staff only)."""
+        equipment = self.get_object()
+        image = get_object_or_404(equipment.equipment_images, pk=image_id)
+
+        with transaction.atomic():
+            equipment.equipment_images.exclude(pk=image.pk).update(is_primary=False)
+            image.is_primary = True
+            image.save(update_fields=["is_primary", "updated_at"])
+
+        self._log_image_change(equipment, "Changed the primary gallery image")
+        return self._gallery_response(equipment)
+
+    @action(detail=True, methods=["post"], url_path="images/order")
+    def reorder_images(self, request, pk=None):
+        """Reorder the gallery. Body: ``{"order": [image_id, ...]}`` (staff only).
+
+        The list must contain every current gallery image id exactly once.
+        Missing ids are rejected rather than silently reordered, so a stale
+        client can never scramble the gallery.
+        """
+        equipment = self.get_object()
+        raw_order = request.data.get("order")
+        if not isinstance(raw_order, (list, tuple)):
+            return Response(
+                {"order": ["Send the gallery image ids as a list."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            order = [int(item) for item in raw_order]
+        except (TypeError, ValueError):
+            return Response(
+                {"order": ["Image ids must be whole numbers."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing_ids = set(self._gallery(equipment).values_list("id", flat=True))
+        if len(order) != len(set(order)) or set(order) != existing_ids:
+            return Response(
+                {"order": ["Send every gallery image id exactly once."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            for position, image_id in enumerate(order):
+                EquipmentImage.objects.filter(pk=image_id).update(display_order=position)
+
+        self._log_image_change(equipment, "Reordered the gallery images")
+        return self._gallery_response(equipment)
 
     def destroy(self, request, *args, **kwargs):
         """Safe deletion: archive equipment with history, hard-delete fresh items.

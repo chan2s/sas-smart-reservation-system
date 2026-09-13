@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Equipment, EquipmentCategory, MaintenanceRecord
+from .models import Equipment, EquipmentCategory, EquipmentImage, MaintenanceRecord
 from .services import (
     committed_quantity,
     equipment_availability,
@@ -14,33 +14,57 @@ ALLOWED_IMAGE_TYPES = {
 }
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 
+#: Most files a single gallery upload request may carry.
+MAX_IMAGES_PER_UPLOAD = 20
 
-def _validate_image_file(file):
-    """Validate an uploaded equipment image.
 
-    Returns ``(cleaned_file, original_name)`` on success, or raises
-    ``serializers.ValidationError`` with a user-facing message.
+def validate_equipment_image(value):
+    """Validate one uploaded equipment image.
+
+    The single shared validator for every image entry point (the legacy
+    ``Equipment.image`` field and the gallery upload endpoint), so both paths
+    accept exactly the same formats and reject with the same messages.
+
+    Returns the file unchanged, or raises ``serializers.ValidationError``.
+    Never trusts the client-provided content type on its own: the bytes are
+    verified with Pillow so a renamed non-image file is rejected too.
     """
-    if file is None:
-        return None, None
+    if value is None:
+        return None
 
-    img_type = getattr(file, "content_type", None)
-    allowed = img_type in ALLOWED_IMAGE_TYPES
-    if not allowed:
-        accepted = ", ".join(
-            sorted(ext for _, ext in ALLOWED_IMAGE_TYPES.values())
-        )
+    img_type = getattr(value, "content_type", None)
+    if img_type not in ALLOWED_IMAGE_TYPES:
         raise serializers.ValidationError(
             f"Image must be JPG, PNG, or WEBP. The uploaded file uses ``{img_type or 'unknown'}``."
         )
 
-    size = getattr(file, "size", 0)
+    size = getattr(value, "size", 0)
     if size and size > MAX_IMAGE_SIZE:
         raise serializers.ValidationError(
             f"Image must be smaller than 5 MB. The uploaded file is {size / 1024 / 1024:.1f} MB."
         )
 
-    return file, getattr(file, "name", None)
+    try:
+        import PIL.Image as _Image
+
+        with _Image.open(value) as img:
+            img.verify()
+    except Exception as exc:
+        raise serializers.ValidationError(
+            "Image must be JPG, PNG, or WEBP. The uploaded file could not be read as an image."
+        ) from exc
+
+    return value
+
+
+def _absolute_image_url(image, request):
+    """Browser-usable URL for a stored image, or None when there is none."""
+    if not image:
+        return None
+    url = image.url
+    if request is not None:
+        return request.build_absolute_uri(url)
+    return url
 
 
 class EquipmentCategorySerializer(serializers.ModelSerializer):
@@ -49,12 +73,26 @@ class EquipmentCategorySerializer(serializers.ModelSerializer):
         fields = ("id", "name", "icon", "description")
 
 
+class EquipmentImageSerializer(serializers.ModelSerializer):
+    """One gallery image, as the frontend consumes it."""
+
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EquipmentImage
+        fields = ("id", "url", "caption", "display_order", "is_primary")
+
+    def get_url(self, obj):
+        return _absolute_image_url(obj.image, self.context.get("request"))
+
+
 class EquipmentSerializer(serializers.ModelSerializer):
     category = EquipmentCategorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
         source="category", queryset=EquipmentCategory.objects.all(), write_only=True
     )
     image = serializers.FileField(required=False, allow_null=True)
+    images = serializers.SerializerMethodField()
     condition_label = serializers.CharField(source="get_condition_display", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     availability = serializers.SerializerMethodField()
@@ -78,6 +116,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "storage_location",
             "asset_code",
             "image",
+            "images",
             "notes",
             "is_active",
             "has_history",
@@ -87,43 +126,42 @@ class EquipmentSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("availability", "has_history")
 
-    def validate_image(self, value):
-        """Validate image format, size, and integrity.
+    def get_images(self, obj):
+        """The gallery, ordered by the model's ordering.
 
-        Accepts JPG, PNG, or WEBP and enforces a 5 MB limit. The file is also
-        opened with Pillow to reject non-image or corrupt uploads, which gives a
-        clear user-facing error rather than a generic Django message.
+        Backward compatibility: equipment whose only picture lives in the
+        legacy single-image field is exposed as a one-entry gallery (with a
+        null id, because there is no gallery row to act on) instead of
+        returning an empty collection. The frontend never has to special-case
+        old records, and an empty list always means "no images at all".
         """
-        if value is None:
-            return None
+        gallery = list(obj.equipment_images.all())
+        if gallery:
+            return EquipmentImageSerializer(
+                gallery, many=True, context=self.context
+            ).data
 
-        img_type = getattr(value, "content_type", None)
-        allowed = img_type in ALLOWED_IMAGE_TYPES
-        if not allowed:
-            accepted = ", ".join(
-            sorted(ext for _, ext in ALLOWED_IMAGE_TYPES.values())
-        )
-            raise serializers.ValidationError(
-                f"Image must be JPG, PNG, or WEBP. The uploaded file uses ``{img_type or 'unknown'}``."
-            )
+        legacy_url = _absolute_image_url(getattr(obj, "image", None), self.context.get("request"))
+        if not legacy_url:
+            return []
+        return [
+            {
+                "id": None,
+                "url": legacy_url,
+                "caption": "",
+                "display_order": 0,
+                "is_primary": True,
+            }
+        ]
 
-        size = getattr(value, "size", 0)
-        if size and size > MAX_IMAGE_SIZE:
-            raise serializers.ValidationError(
-                f"Image must be smaller than 5 MB. The uploaded file is {size / 1024 / 1024:.1f} MB."
-            )
+    def validate_image(self, value):
+        """Validate the legacy single-image field.
 
-        try:
-            import PIL.Image as _Image
-
-            with _Image.open(value) as img:
-                img.verify()
-        except Exception as exc:
-            raise serializers.ValidationError(
-                f"Image must be JPG, PNG, or WEBP. The uploaded file could not be read as an image."
-            ) from exc
-
-        return value
+        Accepts JPG, PNG, or WEBP up to 5 MB and verifies the bytes with
+        Pillow, so a renamed non-image file gets a clear error instead of a
+        generic Django failure.
+        """
+        return validate_equipment_image(value)
 
     def get_availability(self, obj):
         request = self.context.get("request")

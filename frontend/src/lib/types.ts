@@ -80,6 +80,21 @@ export interface EquipmentCategory {
   description: string
 }
 
+/**
+ * One image in an equipment item's gallery.
+ *
+ * `id` is null for a legacy single image that has no gallery row yet (the
+ * backend synthesizes that entry): such an image is display-only and cannot be
+ * reordered, made primary, or deleted through the gallery endpoints.
+ */
+export interface EquipmentImage {
+  id: number | null
+  url: string
+  caption: string
+  display_order: number
+  is_primary: boolean
+}
+
 export interface Equipment {
   id: number
   name: string
@@ -93,7 +108,10 @@ export interface Equipment {
   status_label: string
   storage_location: string
   asset_code: string
+  /** Legacy single image. Prefer `images`; kept for backward compatibility. */
   image: string | null
+  /** The gallery, primary first. Absent on old cached payloads — never assume. */
+  images?: EquipmentImage[]
   notes: string
   is_active: boolean
   /** True when the item must be archived rather than hard-deleted on removal. */

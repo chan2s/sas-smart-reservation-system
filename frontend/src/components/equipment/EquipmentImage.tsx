@@ -5,7 +5,7 @@ import { getEquipmentImageUrl } from '@/lib/utils'
 
 interface EquipmentImageProps {
   src: string | null | undefined
-  size?: 'sm' | 'md' | 'lg' | 'preview'
+  size?: 'sm' | 'md' | 'lg' | 'preview' | 'gallery'
   className?: string
   /**
    * Meaningful alt text (typically the equipment name). Falls back to an
@@ -24,6 +24,8 @@ const sizes = {
   md: 'h-30 w-30',
   lg: 'max-h-[400px] max-w-[400px]',
   preview: 'aspect-video max-h-[180px] w-full',
+  /** Full-width card/gallery tile; keeps its shape while loading. */
+  gallery: 'aspect-[4/3] w-full',
 } as const
 
 /**

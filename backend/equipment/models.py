@@ -57,6 +57,35 @@ class Equipment(models.Model):
         return self.name
 
 
+class EquipmentImage(models.Model):
+    """One image in an equipment item's gallery.
+
+    The gallery is the source of truth for image display. ``Equipment.image``
+    is retained for backward compatibility with older records and API
+    consumers; the serializer falls back to it whenever the gallery is empty.
+
+    Ordering is always: primary image first, then ``display_order``, then the
+    oldest image. None of this is stored on ``Equipment`` itself, so gallery
+    changes never touch the equipment row.
+    """
+
+    equipment = models.ForeignKey(
+        Equipment, on_delete=models.CASCADE, related_name="equipment_images"
+    )
+    image = models.ImageField(upload_to="equipment/")
+    caption = models.CharField(max_length=160, blank=True)
+    display_order = models.PositiveIntegerField(default=0)
+    is_primary = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-is_primary", "display_order", "created_at", "id")
+
+    def __str__(self) -> str:
+        return f"{self.equipment.name} — image {self.pk or 'unsaved'}"
+
+
 class MaintenanceRecord(models.Model):
     class IssueType(models.TextChoices):
         DAMAGE = "DAMAGE", "Damage"

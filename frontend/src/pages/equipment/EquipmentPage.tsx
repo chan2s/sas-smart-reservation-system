@@ -21,6 +21,7 @@ import {
   useEquipmentCategories,
   useEquipmentStats,
   useRestoreEquipment,
+  useSaveEquipmentGallery,
   useSetEquipmentMaintenance,
   useUpdateEquipment,
 } from '@/hooks/queries'
@@ -35,7 +36,7 @@ import { EquipmentFormModal } from '@/components/equipment/EquipmentFormModal'
 import { MaintenanceModal } from '@/components/equipment/MaintenanceModal'
 import { RemoveEquipmentModal } from '@/components/equipment/RemoveEquipmentModal'
 import { ConditionBadge, EquipmentStatusBadge } from '@/components/equipment/EquipmentBadges'
-import { cn } from '@/lib/utils'
+import { cn, equipmentPrimaryImageUrl } from '@/lib/utils'
 import type { Equipment } from '@/lib/types'
 
 type StatusFilter = 'ALL' | 'AVAILABLE' | 'IN_USE' | 'MAINTENANCE' | 'UNAVAILABLE' | 'ARCHIVED'
@@ -75,6 +76,7 @@ export function EquipmentPage() {
   const updateEquipment = useUpdateEquipment(editing?.id ?? 0)
   const setMaintenance = useSetEquipmentMaintenance(maintaining?.id ?? 0)
   const restoreEquipment = useRestoreEquipment(removing?.id ?? 0)
+  const saveGallery = useSaveEquipmentGallery()
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -302,14 +304,17 @@ export function EquipmentPage() {
         categories={categories ?? []}
         onSubmit={(payload) => {
           if (editing) {
-            return updateEquipment.mutateAsync(payload).then(() => {
+            return updateEquipment.mutateAsync(payload).then((saved) => {
               toast(`${editing.name} updated.`)
+              return saved
             })
           }
-          return createEquipment.mutateAsync(payload).then(() => {
+          return createEquipment.mutateAsync(payload).then((saved) => {
             toast('Equipment added to the inventory.')
+            return saved
           })
         }}
+        onSaveGallery={(id, change) => saveGallery(id, change)}
       />
 
       {/* Maintenance modal */}
@@ -352,7 +357,11 @@ function EquipmentTableRow({
     <tr className="transition-colors hover:bg-soft/70">
       <td className="px-5 py-4">
         <div className="flex items-center gap-3">
-          <EquipmentImage src={item.image} size="sm" className="shrink-0 rounded-full" />
+          <EquipmentImage
+            src={equipmentPrimaryImageUrl(item)}
+            size="sm"
+            className="shrink-0 rounded-full"
+          />
           <div>
             <Link to={`/equipment/${item.id}`} className="text-sm font-medium text-ink hover:text-brand">
               {item.name}
@@ -462,7 +471,11 @@ function EquipmentMobileRow({
     <li className="px-5 py-4">        <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
-            <EquipmentImage src={item.image} size="sm" className="shrink-0 rounded-full" />
+            <EquipmentImage
+              src={equipmentPrimaryImageUrl(item)}
+              size="sm"
+              className="shrink-0 rounded-full"
+            />
             <div className="min-w-0">
               <Link to={`/equipment/${item.id}`} className="text-sm font-medium text-ink hover:text-brand">
                 {item.name}
