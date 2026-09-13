@@ -265,3 +265,87 @@ class DashboardEmptyDatabaseTests(TestCase):
         self.client.force_authenticate(None)
         response = self.client.get("/api/analytics/summary/")
         self.assertEqual(response.status_code, 401)
+
+
+class AnalyticsAccessControlTests(TestCase):
+    """Analytics/administrative endpoints are staff-only.
+
+    Requesters keep the role-scoped summary (their own dashboard) but must be
+    denied the organization-wide analytics and report endpoints.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="access-admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.staff = User.objects.create_user(
+            username="access-staff", password="pass12345", role=User.Role.STAFF
+        )
+        self.requester = User.objects.create_user(
+            username="access-requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.facility = Facility.objects.create(
+            name="Access Hall", facility_type=Facility.FacilityType.OTHER, is_active=True
+        )
+        Reservation.objects.create(
+            requester=self.admin,
+            event_name="Access Event",
+            facility=self.facility,
+            date=date.today(),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=Reservation.Status.APPROVED,
+        )
+
+    STAFF_ENDPOINTS = (
+        "/api/analytics/trends/",
+        "/api/analytics/utilization/",
+        "/api/analytics/requester-breakdown/",
+        "/api/analytics/insights/",
+        "/api/reports/",
+        "/api/reports/reservations/",
+        "/api/reports/reservations/export/csv/",
+    )
+
+    def test_requester_is_denied_admin_analytics(self):
+        self.client.force_authenticate(self.requester)
+        for endpoint in self.STAFF_ENDPOINTS:
+            response = self.client.get(endpoint)
+            self.assertEqual(
+                response.status_code,
+                403,
+                msg=f"{endpoint} should be denied for requesters, got {response.status_code}",
+            )
+
+    def test_requester_summary_still_scoped(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.get("/api/analytics/summary/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total_reservations"], 0)
+
+    def test_staff_can_access_admin_analytics(self):
+        self.client.force_authenticate(self.staff)
+        for endpoint in self.STAFF_ENDPOINTS:
+            response = self.client.get(endpoint)
+            self.assertNotEqual(
+                response.status_code,
+                403,
+                msg=f"{endpoint} should be allowed for staff, got {response.status_code}",
+            )
+
+    def test_admin_can_access_admin_analytics(self):
+        self.client.force_authenticate(self.admin)
+        for endpoint in self.STAFF_ENDPOINTS:
+            response = self.client.get(endpoint)
+            self.assertNotEqual(
+                response.status_code,
+                403,
+                msg=f"{endpoint} should be allowed for admins, got {response.status_code}",
+            )
+
+    def test_anonymous_is_denied_admin_analytics(self):
+        self.client.force_authenticate(None)
+        for endpoint in self.STAFF_ENDPOINTS:
+            response = self.client.get(endpoint)
+            self.assertEqual(response.status_code, 401)

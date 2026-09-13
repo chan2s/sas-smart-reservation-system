@@ -32,8 +32,22 @@ export const primaryNavigation: NavigationItem[] = [
   { to: '/facilities', label: 'Facilities', icon: Building2 },
   { to: '/equipment', label: 'Equipment', icon: Package },
   { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+]
+
+/** Staff-only additions to the primary navigation (kept out of requester UI). */
+export const staffPrimaryNavigation: NavigationItem[] = [
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
 ]
+
+/**
+ * Primary navigation for a signed-in role. Only administrators and SAS staff
+ * receive the Analytics entry — requesters never see it.
+ */
+export function primaryNavigationFor(isStaff: boolean): NavigationItem[] {
+  return isStaff
+    ? [...primaryNavigation, ...staffPrimaryNavigation]
+    : primaryNavigation
+}
 
 /** Secondary pages, reachable from the user menu and mobile drawer. */
 export const secondaryNavigation: NavigationItem[] = [

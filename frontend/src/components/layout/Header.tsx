@@ -14,7 +14,12 @@ import { useUnreadCount } from '@/hooks/queries'
 import { Avatar } from '@/components/ui/Misc'
 import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
 import { cn } from '@/lib/utils'
-import { primaryNavigation, secondaryNavigation, staffNavigation } from './navigation'
+import {
+  primaryNavigation,
+  primaryNavigationFor,
+  secondaryNavigation,
+  staffNavigation,
+} from './navigation'
 
 // ---------------------------------------------------------------------------
 // Brand
@@ -41,12 +46,13 @@ export function Brand() {
 // ---------------------------------------------------------------------------
 
 export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
+  const { isStaff } = useAuth()
   return (
     <nav
       aria-label="Primary"
       className="hidden items-center rounded-full border border-line bg-soft p-1 lg:inline-flex"
     >
-      {primaryNavigation.map((item) => (
+      {primaryNavigationFor(isStaff).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -160,7 +166,7 @@ function HeaderActions() {
               </p>
             </div>
             <div className="my-1 h-px bg-line md:hidden" aria-hidden />
-            {primaryNavigation.map((item) => (
+            {primaryNavigationFor(isStaff).map((item) => (
               <MenuItem key={`m-${item.to}`} onClick={() => { close(); navigate(item.to) }}>
                 <item.icon className="size-4" />
                 {item.label}
@@ -211,6 +217,7 @@ function HeaderActions() {
 // ---------------------------------------------------------------------------
 
 function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { isStaff } = useAuth()
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
@@ -241,7 +248,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav aria-label="Mobile" className="space-y-1 border-t border-line pt-3">
-          {primaryNavigation.map((item) => (
+          {primaryNavigationFor(isStaff).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

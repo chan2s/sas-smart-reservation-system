@@ -5,6 +5,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.permissions import IsSasStaff
+
 from .services import (
     REPORTS,
     cancellation_rate,
@@ -48,14 +50,14 @@ def analytics_summary(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def analytics_trends(request):
     months = int(request.query_params.get("months", 6))
     return Response(reservation_trends(months))
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def analytics_utilization(request):
     days = int(request.query_params.get("days", 30))
     return Response(
@@ -67,7 +69,7 @@ def analytics_utilization(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def analytics_requester_breakdown(request):
     """Campus vs external reservation usage."""
     try:
@@ -78,7 +80,7 @@ def analytics_requester_breakdown(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def analytics_insights(request):
     return Response(
         {
@@ -91,13 +93,13 @@ def analytics_insights(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def reports_list(request):
     return Response(REPORTS)
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def report_detail(request, slug):
     match = next((r for r in REPORTS if r["slug"] == slug), None)
     if not match:
@@ -115,7 +117,7 @@ def report_detail(request, slug):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsSasStaff])
 def report_export(request, slug, fmt):
     match = next((r for r in REPORTS if r["slug"] == slug), None)
     if not match:

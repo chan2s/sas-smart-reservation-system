@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { useAuth } from '@/hooks/useAuth'
@@ -99,6 +99,21 @@ function Protected() {
   return <AppShell />
 }
 
+/** Blocks access for requesters; only administrators and SAS staff pass. */
+function RequireStaff({ children }: { children: ReactNode }) {
+  const { user, loading, isStaff } = useAuth()
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-soft">
+        <Spinner />
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (!isStaff) return <Navigate to="/dashboard" replace />
+  return children
+}
+
 export default function App() {
   return (
     <Suspense fallback={<PageLoader />}>
@@ -120,7 +135,7 @@ export default function App() {
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/equipment" element={<EquipmentPage />} />
           <Route path="/equipment/:id" element={<EquipmentDetailPage />} />
-          <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/analytics" element={<RequireStaff><AnalyticsPage /></RequireStaff>} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
