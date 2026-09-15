@@ -815,6 +815,144 @@ class ReservationApiTests(TestCase):
         self.assertEqual(admin_event["created_by"], "admin")
 
 
+class CancellationWindowTests(TestCase):
+    """Reservations within the next 2 calendar days cannot be cancelled by
+    the requester.
+
+    The rule keys off the reservation's event date (not its creation date):
+    today and tomorrow are locked, 2+ days out is cancellable. Staff/admin
+    retain cancellation rights.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.requester = User.objects.create_user(
+            username="requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.facility = Facility.objects.create(
+            name="AVR", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        self.today = timezone.localdate()
+        self.tomorrow = self.today + timedelta(days=1)
+        self.in_two_days = self.today + timedelta(days=2)
+        self.in_three_days = self.today + timedelta(days=3)
+        self._reservation_counter = 0
+
+    def _auth(self, user):
+        self.client.force_authenticate(user)
+
+    def _make_reservation(self, event_date, status=Reservation.Status.PENDING):
+        self._reservation_counter += 1
+        return Reservation.objects.create(
+            requester=self.requester,
+            event_name=f"Window event {self._reservation_counter}",
+            facility=self.facility,
+            date=event_date,
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=status,
+        )
+
+    def test_requester_cannot_cancel_today_reservation(self):
+        """Direct API cancellation of a today-reservation is rejected (403)."""
+        reservation = self._make_reservation(self.today)
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertEqual(
+            response.json()["detail"],
+            "Reservations scheduled within the next 2 days cannot be cancelled.",
+        )
+        self.assertEqual(response.json()["code"], "cancellation_window")
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.PENDING)
+
+    def test_requester_cannot_cancel_tomorrow_reservation(self):
+        reservation = self._make_reservation(self.tomorrow)
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 403, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.PENDING)
+
+    def test_requester_can_cancel_reservation_exactly_two_days_out(self):
+        """The boundary: 2 days from today is cancellable again."""
+        reservation = self._make_reservation(self.in_two_days)
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 200, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CANCELLED)
+
+    def test_requester_can_cancel_reservation_three_days_out(self):
+        reservation = self._make_reservation(self.in_three_days)
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_reservation_created_yesterday_for_today_is_locked(self):
+        """Event date — not creation date — determines the restriction."""
+        reservation = self._make_reservation(self.today)
+        # Simulate a booking created before today: backdate the timestamps.
+        Reservation.objects.filter(pk=reservation.pk).update(
+            created_at=timezone.now() - timedelta(days=2),
+            updated_at=timezone.now() - timedelta(days=2),
+        )
+        reservation.refresh_from_db()
+        self.assertLess(reservation.created_at.date(), timezone.localdate())
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 403, response.content)
+
+    def test_reservation_created_today_for_tomorrow_is_locked(self):
+        """Created today, event tomorrow → still within the window."""
+        reservation = self._make_reservation(self.tomorrow)
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 403, response.content)
+
+    def test_reservation_created_today_for_two_days_out_is_cancellable(self):
+        """Created today, event in 2 days → cancellable."""
+        reservation = self._make_reservation(self.in_two_days)
+        self._auth(self.requester)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_admin_can_cancel_reservation_in_window(self):
+        """Admin management functions are not restricted by the window rule."""
+        reservation = self._make_reservation(self.today)
+        self._auth(self.admin)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 200, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CANCELLED)
+
+    def test_staff_can_cancel_tomorrow_reservation(self):
+        staff = User.objects.create_user(
+            username="staffer", password="pass12345", role=User.Role.STAFF
+        )
+        reservation = self._make_reservation(self.tomorrow)
+        self._auth(staff)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_cannot_cancel_other_users_reservation(self):
+        """Another requester cannot cancel (or even see) someone else's booking:
+        the non-staff queryset is scoped to the caller's own reservations."""
+        other = User.objects.create_user(
+            username="other", password="pass12345", role=User.Role.REQUESTER
+        )
+        reservation = self._make_reservation(self.in_two_days)
+        self._auth(other)
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 404, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.PENDING)
+
+
 class RequesterTypeApiTests(TestCase):
     """Campus vs external requester flows + created-by semantics."""
 

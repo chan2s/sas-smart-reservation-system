@@ -118,6 +118,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     resources = serializers.SerializerMethodField()
     check_in_open_time = serializers.SerializerMethodField()
     check_in_window_open = serializers.SerializerMethodField()
+    approval_email_status = serializers.CharField(read_only=True)
+    approval_email_status_label = serializers.CharField(
+        source="get_approval_email_status_display", read_only=True
+    )
 
     class Meta:
         model = Reservation
@@ -151,6 +155,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "checked_in_at",
             "checked_out_at",
             "resources",
+            "approval_email_status",
+            "approval_email_status_label",
             "created_at",
         )
 
@@ -190,6 +196,11 @@ class ReservationListSerializer(serializers.ModelSerializer):
         )
         if not (is_staff or is_own):
             data["contact_email"] = ""
+        # Approval-email delivery state is a staff diagnostic: never shown to
+        # requesters or unauthenticated viewers.
+        if not is_staff:
+            data["approval_email_status"] = ""
+            data["approval_email_status_label"] = ""
         return data
 
 

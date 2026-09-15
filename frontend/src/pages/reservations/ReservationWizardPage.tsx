@@ -138,7 +138,12 @@ export function ReservationWizardPage() {
   const createReservation = useCreateReservation()
 
   const today = manilaCalendarDate()
-  const dateInvalid = date != null && date <= today
+  // Only past dates are invalid. Today IS bookable, but dates within the
+  // 2-day cancellation window (today/tomorrow) trigger a non-cancellable
+  // policy notice (the backend enforces the same rule).
+  const dateInvalid = date != null && date < today
+  const dayDiff = date != null ? Math.round((date.getTime() - today.getTime()) / 86_400_000) : -1
+  const inCancellationWindow = dayDiff >= 0 && dayDiff <= 1
   const scheduleComplete = Boolean(facilityId && date && startTime && endTime)
   // Only the final submission is gated on a clean availability report. Step
   // navigation stays clickable on every step and validates inline via goNext(),
@@ -503,6 +508,7 @@ export function ReservationWizardPage() {
             checking={availabilityCheck.isPending}
             onUseAlternative={useAlternative}
             dateInvalid={dateInvalid}
+            isCancellationRestricted={inCancellationWindow}
           />
         )}
 
@@ -549,6 +555,7 @@ export function ReservationWizardPage() {
             checking={availabilityCheck.isPending}
             onUseAlternative={useAlternative}
             isAdmin={isAdmin}
+            isCancellationRestricted={inCancellationWindow}
             requesterSection={
               isAdmin ? (
                 <Card>

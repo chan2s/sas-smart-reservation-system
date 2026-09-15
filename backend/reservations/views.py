@@ -211,6 +211,31 @@ class ReservationViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    def retry_approval_email(self, request, pk=None):
+        """Re-send the approval notification email for an approved reservation.
+
+        Staff-only diagnostic/retry helper. Only ever sends when the
+        reservation is APPROVED and the approval email was not already
+        delivered successfully. SMTP details are never returned.
+        """
+        reservation = self.get_object()
+        try:
+            status_code = workflow.resend_approval_email(reservation, request.user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "detail": (
+                    "Approval email sent."
+                    if status_code == Reservation.ApprovalEmailStatus.SENT
+                    else "Approval email not sent."
+                ),
+                "approval_email_status": status_code,
+                "approval_email_status_label": reservation.get_approval_email_status_display(),
+            }
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
     def reject(self, request, pk=None):
         reservation = self.get_object()
         try:
@@ -252,6 +277,11 @@ class ReservationViewSet(viewsets.ModelViewSet):
         try:
             workflow.cancel_reservation(
                 reservation, request.user, request.data.get("reason", "")
+            )
+        except workflow.CancellationWindowError as exc:
+            return Response(
+                {"detail": str(exc), "code": "cancellation_window"},
+                status=status.HTTP_403_FORBIDDEN,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

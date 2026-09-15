@@ -253,6 +253,9 @@ export interface ReservationSummary {
   checked_in_at: string | null
   checked_out_at: string | null
   resources: string[]
+  /** Staff-only diagnostic: delivery state of the approval email. */
+  approval_email_status: string
+  approval_email_status_label: string
   created_at: string
 }
 

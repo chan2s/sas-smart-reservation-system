@@ -213,10 +213,47 @@ class ReservationAdmin(admin.ModelAdmin):
         "start_time",
         "status",
         "requester",
+        "approval_email",
     )
     list_filter = ("status", "event_type", "date")
     search_fields = ("reservation_id", "event_name", "organization")
     inlines = [ReservationItemInline, ReservationEventInline]
+    readonly_fields = ("approval_email_status",)
+    actions = ["retry_approval_email"]
+
+    @admin.display(description="Approval email")
+    def approval_email(self, obj):
+        if obj.status != "APPROVED":
+            return "—"
+        return obj.get_approval_email_status_display()
+
+    @admin.action(description="Retry approval email for selected approved reservations")
+    def retry_approval_email(self, request, queryset):
+        from .services.workflow import resend_approval_email
+
+        sent = failed = skipped = already = 0
+        for reservation in queryset.select_related("requester", "created_by"):
+            if reservation.status != Reservation.Status.APPROVED:
+                continue
+            if reservation.approval_email_status == Reservation.ApprovalEmailStatus.SENT:
+                already += 1
+                continue
+            try:
+                resend_approval_email(reservation, request.user)
+            except Exception:
+                failed += 1
+                continue
+            if reservation.approval_email_status == Reservation.ApprovalEmailStatus.SENT:
+                sent += 1
+            elif reservation.approval_email_status == Reservation.ApprovalEmailStatus.NO_EMAIL:
+                skipped += 1
+            else:
+                failed += 1
+        self.message_user(
+            request,
+            f"Approval email retry: {sent} sent, {failed} failed, "
+            f"{skipped} skipped (no requester email), {already} already sent.",
+        )
 
 
 @admin.register(InspectionReport)

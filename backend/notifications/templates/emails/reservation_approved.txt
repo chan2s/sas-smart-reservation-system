@@ -1,0 +1,33 @@
+{% autoescape off %}
+SAS RESERVE
+========================================
+
+Hello, {{ requester_name }},
+
+Your reservation has been approved.
+
+Status: {{ status_label }}
+
+DETAILS
+-------
+Reference number: {{ reservation_id }}
+Event: {{ event_name }}
+Facility: {{ facility_name }}
+Date: {{ date|date:"F j, Y" }}
+Time: {{ start_time|time:"g:i A" }} - {{ end_time|time:"g:i A" }}
+{% if resources %}Requested resources: {{ resources|join:", " }}
+{% endif %}Approved by: {{ approved_by }}
+
+{{ message }}
+
+NEXT STEPS
+----------
+{{ next_action }}
+
+View your reservation in SAS RESERVE:
+{{ view_url }}
+
+---
+This is an automated notification from {{ site_name }}.
+If you have questions, please contact the SAS Office.
+{% endautoescape %}

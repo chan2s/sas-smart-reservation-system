@@ -161,6 +161,18 @@ class Reservation(models.Model):
         REJECTED = "REJECTED", "Rejected"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    class ApprovalEmailStatus(models.TextChoices):
+        """Delivery state of the approval notification email.
+
+        Only meaningful once a reservation has been approved; other statuses
+        keep the default ``NOT_SENT``.
+        """
+
+        NOT_SENT = "NOT_SENT", "Not sent"
+        SENT = "SENT", "Sent"
+        FAILED = "FAILED", "Failed"
+        NO_EMAIL = "NO_EMAIL", "No requester email"
+
     class EventType(models.TextChoices):
         SEMINAR = "SEMINAR", "Seminar"
         MEETING = "MEETING", "Meeting"
@@ -251,6 +263,12 @@ class Reservation(models.Model):
         related_name="reservations_approved",
     )
     approved_at = models.DateTimeField(null=True, blank=True)
+    approval_email_status = models.CharField(
+        max_length=16,
+        choices=ApprovalEmailStatus.choices,
+        default=ApprovalEmailStatus.NOT_SENT,
+        help_text="Delivery state of the approval notification email (staff diagnostic).",
+    )
 
     checkin_code = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     checked_in_at = models.DateTimeField(null=True, blank=True)

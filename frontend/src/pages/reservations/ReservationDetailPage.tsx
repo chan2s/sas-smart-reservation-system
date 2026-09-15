@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -20,6 +20,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Textarea } from '@/components/ui/Form'
+import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatDateTime, formatTime } from '@/lib/utils'
 import type { ReservationDetail, ReservationEvent } from '@/lib/types'
@@ -89,13 +90,25 @@ export function ReservationDetailPage() {
       setModal(null)
       setReason('')
     } catch (error) {
-      toast('Action failed — please try again.', 'error')
+      toast(
+        error instanceof ApiError && error.message
+          ? error.message
+          : 'Action failed — please try again.',
+        'error',
+      )
     }
   }
 
   const canApprove = isStaff && reservation.status === 'PENDING'
   const canReject = isStaff && reservation.status === 'PENDING'
   const canRequestChanges = isStaff && reservation.status === 'PENDING'
+  // Cancellation-window policy: a requester cannot cancel a reservation whose
+  // event date is today or tomorrow (the backend enforces this too). Staff
+  // keep full cancellation rights — their management functions are unchanged.
+  const daysUntilEvent = Math.round(
+    (new Date(`${reservation.date}T00:00:00`).getTime() - manilaCalendarDate().getTime()) / 86_400_000,
+  )
+  const cancelWindowBlocked = isOwner && !isStaff && daysUntilEvent >= 0 && daysUntilEvent <= 1
   const canCancel =
     (isOwner || isStaff) &&
     !['COMPLETED', 'CANCELLED', 'REJECTED'].includes(reservation.status)
@@ -217,11 +230,26 @@ export function ReservationDetailPage() {
             </Button>
           )}
           {canCancel && (
-            <Button variant="ghost" onClick={() => setModal('cancel')}>
+            <Button
+              variant="ghost"
+              onClick={() => setModal('cancel')}
+              disabled={cancelWindowBlocked}
+              title={
+                cancelWindowBlocked
+                  ? 'Reservations scheduled within the next 2 days cannot be cancelled.'
+                  : undefined
+              }
+            >
               Cancel reservation
             </Button>
           )}
         </div>
+        {cancelWindowBlocked && (
+          <p className="mt-2 flex items-center gap-1.5 text-[13px] text-status-maintenance">
+            <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+            Reservations scheduled within the next 2 days cannot be cancelled.
+          </p>
+        )}
       </div>
 
       {/* Check-in window notice for non-admin users before the window opens */}
@@ -350,6 +378,23 @@ export function ReservationDetailPage() {
                 <DetailItem
                   label="Approved by"
                   value={`${reservation.approved_by_name} · ${formatDateTime(reservation.approved_at)}`}
+                />
+              )}
+              {isStaff && reservation.status === 'APPROVED' && (
+                <DetailItem
+                  label="Approval email"
+                  wide
+                  value={
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
+                        approvalEmailBadgeClass(reservation.approval_email_status)
+                      )}
+                    >
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {reservation.approval_email_status_label || reservation.approval_email_status}
+                    </span>
+                  }
                 />
               )}
               {reservation.checked_in_at && (
@@ -512,7 +557,28 @@ export function ReservationDetailPage() {
 
 // ---------------------------------------------------------------------------
 
-function DetailItem({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
+function approvalEmailBadgeClass(status: string) {
+  switch (status) {
+    case 'SENT':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    case 'FAILED':
+      return 'border-red-200 bg-red-50 text-red-700'
+    case 'NO_EMAIL':
+      return 'border-stone-200 bg-stone-50 text-stone-500'
+    default:
+      return 'border-amber-200 bg-amber-50 text-amber-700'
+  }
+}
+
+function DetailItem({
+  label,
+  value,
+  wide,
+}: {
+  label: string
+  value: ReactNode
+  wide?: boolean
+}) {
   return (
     <div className={cn(wide && 'sm:col-span-2')}>
       <dt className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">{label}</dt>

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { CalendarDays, CheckCircle2, Minus, Plus } from 'lucide-react'
+import { CalendarDays, CheckCircle2, Minus, Plus, AlertTriangle } from 'lucide-react'
 import { format } from 'date-fns'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -138,6 +138,10 @@ export interface ScheduleProps {
    *  availability purposes (used to clear stale availability state on the
    *  parent when the date becomes invalid). */
   dateInvalid?: boolean
+  /** True when the selected date is within the 2-day cancellation window
+   *  (today/tomorrow) — shows the policy notice (such reservations cannot
+   *  be cancelled once submitted). */
+  isCancellationRestricted?: boolean
   startTime: string
   endTime: string
   onStartTime: (value: string) => void
@@ -176,6 +180,7 @@ export function StepSchedule({
   checking,
   onUseAlternative,
   dateInvalid,
+  isCancellationRestricted,
 }: ScheduleProps) {
   const [month, setMonth] = useState(() => new Date())
 
@@ -290,6 +295,22 @@ export function StepSchedule({
         {dateInvalid && (
           <div className="rounded-xl border border-status-rejected/25 bg-status-rejected-bg p-4 text-sm text-status-rejected">
             Please choose a future date.
+          </div>
+        )}
+
+        {isCancellationRestricted && !dateInvalid && (
+          <div
+            role="alert"
+            className="rounded-xl border border-status-maintenance/30 bg-status-maintenance-bg p-4"
+          >
+            <p className="flex items-center gap-2 text-sm font-semibold text-status-maintenance">
+              <AlertTriangle className="size-4 shrink-0" aria-hidden />
+              Cancellation Policy Notice
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-status-maintenance">
+              Reservations scheduled within the next <strong>2 days cannot be cancelled once submitted.</strong>{' '}
+              Please make sure that all reservation details are correct before submitting.
+            </p>
           </div>
         )}
 
@@ -614,6 +635,7 @@ export function StepReview({
   onUseAlternative,
   isAdmin,
   requesterSection,
+  isCancellationRestricted,
 }: {
   facilityName: string
   facilityType: string
@@ -630,6 +652,10 @@ export function StepReview({
   isAdmin: boolean
   /** Requester identity block (campus summary or external contact details). */
   requesterSection?: ReactNode
+  /** True when the event date falls within the 2-day cancellation window
+   *  (today/tomorrow) — such reservations cannot be cancelled once
+   *  submitted. */
+  isCancellationRestricted?: boolean
 }) {
   const reviewItems = Object.entries(items)
     .map(([equipmentId, quantity]) => ({
@@ -704,6 +730,17 @@ export function StepReview({
           {details.notes && <ReviewRow label="Notes" value={details.notes} />}
         </dl>
       </Card>
+
+      {isCancellationRestricted && !isAdmin && (
+        <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-status-maintenance/30 bg-status-maintenance-bg px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-status-maintenance" aria-hidden />
+          <p className="leading-relaxed text-status-maintenance">
+            <span className="font-semibold">Cancellation Policy Notice.</span> Reservations scheduled
+            within the next <strong>2 days cannot be cancelled once submitted.</strong>{' '}
+            Please make sure all details are correct before submitting.
+          </p>
+        </div>
+      )}
 
       {isAdmin && (
         <div className="flex items-start gap-2.5 rounded-xl border border-brand/20 bg-brand-soft/50 px-4 py-3 text-sm text-brand">
