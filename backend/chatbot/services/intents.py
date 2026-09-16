@@ -28,6 +28,11 @@ class Intent:
     RESERVATION_POLICY = "RESERVATION_POLICY"
     CANCELLATION_POLICY = "CANCELLATION_POLICY"
     BOOKING_GUIDE = "BOOKING_GUIDE"
+    REGISTRATION_HELP = "REGISTRATION_HELP"
+    LOGIN_HELP = "LOGIN_HELP"
+    PUBLIC_ANNOUNCEMENT = "PUBLIC_ANNOUNCEMENT"
+    MY_UPCOMING_RESERVATIONS = "MY_UPCOMING_RESERVATIONS"
+    MY_CANCELLED_RESERVATIONS = "MY_CANCELLED_RESERVATIONS"
     SYSTEM_HELP = "SYSTEM_HELP"
     UNKNOWN = "UNKNOWN"
 
@@ -66,6 +71,24 @@ _RULES: tuple[IntentRule, ...] = (
         (("how do i book",), ("how do i reserve",), ("how to book",), ("how to reserve",), ("how can i book",), ("how can i reserve",), ("steps", "book"), ("book", "instructions"), ("reserve", "instructions")),
         weight=92,
     ),
+    # --- Public onboarding help (weight 93: above BOOKING_GUIDE's 92 so
+    #     "how do I register" wins over generic booking vocabulary; must be
+    #     public so landing/login/register visitors get answers) ------------
+    IntentRule(
+        Intent.REGISTRATION_HELP,
+        (("register",), ("registration",), ("sign up",), ("create", "account"), ("create an account",)),
+        weight=93,
+    ),
+    IntentRule(
+        Intent.LOGIN_HELP,
+        (("log in",), ("log in to",), ("sign in",), ("forgot", "password"), ("forgot", "username"), ("reset", "password"), ("password",), ("can t log in",), ("cannot log in",), ("access", "reservation system")),
+        weight=93,
+    ),
+    IntentRule(
+        Intent.PUBLIC_ANNOUNCEMENT,
+        (("announcement",), ("announcements",), ("any news",), ("latest news",), ("what s new",), ("advisory",)),
+        weight=91,
+    ),
     # --- Reservation lookups -------------------------------------------------
     IntentRule(
         Intent.VIEW_RESERVATION,
@@ -76,6 +99,16 @@ _RULES: tuple[IntentRule, ...] = (
         Intent.MY_RESERVATIONS,
         (("my reservations",), ("my bookings",), ("my booking",), ("reservations i made",), ("bookings i made",), ("my pending",), ("my upcoming",)),
         weight=86,
+    ),
+    IntentRule(
+        Intent.MY_UPCOMING_RESERVATIONS,
+        (("upcoming", "reservations"), ("upcoming", "bookings"), ("future", "reservations"), ("reservations", "coming up")),
+        weight=87,
+    ),
+    IntentRule(
+        Intent.MY_CANCELLED_RESERVATIONS,
+        (("cancelled", "reservations"), ("canceled", "reservations"), ("cancelled", "bookings"), ("my", "cancelled")),
+        weight=87,
     ),
     IntentRule(
         Intent.CANCEL_RESERVATION,
@@ -142,15 +175,27 @@ def _normalize(message: str) -> str:
     return re.sub(r"[^\w\s-]", " ", message.lower())
 
 
+def _keyword_matches(keyword: str, normalized: str) -> bool:
+    """Match a rule keyword against the normalized message.
+
+    Multi-word phrases and ID prefixes ("sas-") stay substring-based, but
+    single words require a word boundary — otherwise "cancel" would also
+    match inside "cancelled" and steal MY_CANCELLED_RESERVATIONS questions
+    ("show my cancelled reservations") as cancellation *requests*.
+    """
+    if " " in keyword or "-" in keyword:
+        return keyword in normalized
+    return re.search(rf"\b{re.escape(keyword)}\b", normalized) is not None
+
+
 def detect_intent(message: str) -> IntentMatch:
     """Return the highest-weight rule whose keywords all match."""
     normalized = _normalize(message)
-    words = set(normalized.split())
 
     best: IntentRule | None = None
     for rule in sorted(_RULES, key=lambda r: r.weight, reverse=True):
         for group in rule.any_of_groups:
-            if all(kw in normalized for kw in group):
+            if all(_keyword_matches(kw, normalized) for kw in group):
                 best = rule
                 break
         if best is not None:

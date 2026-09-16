@@ -18,6 +18,9 @@ class KnowledgeBaseEntry(models.Model):
         CANCELLATION_POLICY = "CANCELLATION_POLICY", "Cancellation Policy"
         FACILITY_RULES = "FACILITY_RULES", "Facility Rules"
         BOOKING_GUIDE = "BOOKING_GUIDE", "Booking Instructions"
+        REGISTRATION_HELP = "REGISTRATION_HELP", "Registration Help"
+        LOGIN_HELP = "LOGIN_HELP", "Login Help"
+        ANNOUNCEMENT = "ANNOUNCEMENT", "Announcement"
         FAQ = "FAQ", "Frequently Asked Questions"
         GENERAL = "GENERAL", "General Information"
 
@@ -25,6 +28,14 @@ class KnowledgeBaseEntry(models.Model):
         DRAFT = "DRAFT", "Draft"
         PUBLISHED = "PUBLISHED", "Published"
         ARCHIVED = "ARCHIVED", "Archived"
+
+    class Visibility(models.TextChoices):
+        # PUBLIC entries are served to unauthenticated visitors too.
+        # AUTHENTICATED entries require a signed-in user.
+        # ADMIN entries are only served to administrators.
+        PUBLIC = "PUBLIC", "Public"
+        AUTHENTICATED = "AUTHENTICATED", "Authenticated only"
+        ADMIN = "ADMIN", "Administrators only"
 
     category = models.CharField(max_length=32, choices=Category.choices)
     title = models.CharField(max_length=200)
@@ -47,6 +58,11 @@ class KnowledgeBaseEntry(models.Model):
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.PUBLISHED
     )
+    # Access control for the chatbot: unauthenticated visitors may only ever
+    # retrieve PUBLIC entries, regardless of which keywords they guess.
+    visibility = models.CharField(
+        max_length=16, choices=Visibility.choices, default=Visibility.PUBLIC
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -54,6 +70,7 @@ class KnowledgeBaseEntry(models.Model):
         ordering = ["category", "title"]
         indexes = [
             models.Index(fields=["category", "status"]),
+            models.Index(fields=["visibility", "status"]),
         ]
 
     def __str__(self) -> str:

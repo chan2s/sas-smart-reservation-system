@@ -1,8 +1,13 @@
 """Seed the chatbot knowledge base with system policies and FAQs.
 
 Only static knowledge lives here — reservation/cancellation policies,
-booking instructions, and FAQs. Dynamic data (reservations, availability)
-is never seeded: the chatbot queries those tables live.
+booking instructions, registration/login help, and FAQs. Dynamic data
+(reservations, availability) is never seeded: the chatbot queries those
+tables live.
+
+Each entry carries a visibility class: PUBLIC entries are also served to
+unauthenticated visitors on the landing/login/register pages;
+AUTHENTICATED entries require a signed-in user.
 
 Run:  python manage.py seed_knowledge_base
 """
@@ -11,11 +16,14 @@ from django.core.management.base import BaseCommand
 
 from chatbot.models import KnowledgeBaseEntry
 
+V = KnowledgeBaseEntry.Visibility
+
 ENTRIES = [
     {
         "category": KnowledgeBaseEntry.Category.RESERVATION_POLICY,
         "title": "Reservation Policy",
         "keywords": "reservation policy booking rules requirements approval process who can book",
+        "visibility": V.PUBLIC,
         "content": (
             "Anyone with a SAS Reserve account may submit a reservation. All "
             "requests are reviewed by the SAS Office before approval; "
@@ -30,6 +38,7 @@ ENTRIES = [
         "category": KnowledgeBaseEntry.Category.CANCELLATION_POLICY,
         "title": "Cancellation Policy",
         "keywords": "cancellation policy cancel deadline window refund",
+        "visibility": V.PUBLIC,
         "content": (
             "Reservations can be cancelled from the reservation detail page. "
             "Requesters cannot cancel a reservation scheduled within the next "
@@ -43,6 +52,7 @@ ENTRIES = [
         "category": KnowledgeBaseEntry.Category.BOOKING_GUIDE,
         "title": "How to Make a Reservation",
         "keywords": "how to book reserve make reservation steps instructions create booking",
+        "visibility": V.PUBLIC,
         "content": (
             "To make a reservation: open the Reservations page and click "
             "\"Create reservation\" (or go to /reservations/new). Choose a "
@@ -57,6 +67,7 @@ ENTRIES = [
         "category": KnowledgeBaseEntry.Category.BOOKING_GUIDE,
         "title": "Check-in and Check-out",
         "keywords": "check in check out qr code checkin window when can i check in",
+        "visibility": V.AUTHENTICATED,
         "content": (
             "Check-in opens 3 hours before the event start time. Open your "
             "reservation detail page and use Check in, or let SAS staff scan "
@@ -66,9 +77,51 @@ ENTRIES = [
         ),
     },
     {
+        "category": KnowledgeBaseEntry.Category.REGISTRATION_HELP,
+        "title": "How to Register",
+        "keywords": "how do i register sign up create account registration activate what information need",
+        "visibility": V.PUBLIC,
+        "content": (
+            "To register: click Register on the home page (or go to "
+            "/register) and fill in your first name, last name, email, "
+            "username, and password. Campus users register with their school "
+            "email; external organizations may add their organization name. "
+            "Once registered, log in with your username and password to "
+            "submit reservations. External guests do not need an account — "
+            "SAS staff can create reservations on their behalf."
+        ),
+    },
+    {
+        "category": KnowledgeBaseEntry.Category.LOGIN_HELP,
+        "title": "How to Log In",
+        "keywords": "how do i log in sign in forgot password reset username cannot log in access reservation system",
+        "visibility": V.PUBLIC,
+        "content": (
+            "To log in: click Login on the home page (or go to /login) and "
+            "enter your username and password. You can also sign in with "
+            "Google using your school account. If you forgot your password, "
+            "contact the SAS Office to have it reset — the system does not "
+            "offer self-service password resets. New accounts can log in "
+            "immediately after registering."
+        ),
+    },
+    {
+        "category": KnowledgeBaseEntry.Category.ANNOUNCEMENT,
+        "title": "Welcome to SAS Reserve",
+        "keywords": "announcement news welcome advisory new",
+        "visibility": V.PUBLIC,
+        "content": (
+            "SAS Reserve is now open to campus organizations and external "
+            "guests. Browse facilities, check availability, and submit "
+            "reservation requests online — the SAS Office reviews every "
+            "request and notifies you by email."
+        ),
+    },
+    {
         "category": KnowledgeBaseEntry.Category.FAQ,
         "title": "Who can use the system?",
         "keywords": "who can use account access requester staff admin external",
+        "visibility": V.PUBLIC,
         "content": (
             "SAS Reserve is for campus users (students and employees with "
             "accounts) and external organizations. External requesters do not "
@@ -81,6 +134,7 @@ ENTRIES = [
         "category": KnowledgeBaseEntry.Category.FAQ,
         "title": "What happens after I submit a reservation?",
         "keywords": "after submit pending approval notification email status what happens",
+        "visibility": V.AUTHENTICATED,
         "content": (
             "New reservations enter the Pending queue and the SAS Office is "
             "notified immediately. You will receive an email and an in-app "
@@ -93,6 +147,7 @@ ENTRIES = [
         "category": KnowledgeBaseEntry.Category.GENERAL,
         "title": "About SAS Reserve",
         "keywords": "about system what is sas reserve purpose",
+        "visibility": V.PUBLIC,
         "content": (
             "SAS Reserve is the campus facility and resource reservation "
             "system operated by the Student Affairs Services (SAS) Office. "
@@ -115,6 +170,7 @@ class Command(BaseCommand):
                     "category": data["category"],
                     "content": data["content"],
                     "keywords": data["keywords"],
+                    "visibility": data["visibility"],
                     "status": KnowledgeBaseEntry.Status.PUBLISHED,
                 },
             )

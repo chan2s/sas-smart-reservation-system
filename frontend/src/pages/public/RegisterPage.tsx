@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
+import { ChatWidget } from '@/components/chatbot/ChatWidget'
 
 export function RegisterPage() {
   const { login } = useAuth()
@@ -223,6 +224,9 @@ export function RegisterPage() {
           </div>
         </div>
       </main>
+
+      {/* Public assistant — public knowledge only until the visitor signs in. */}
+      <ChatWidget />
     </div>
   )
 }

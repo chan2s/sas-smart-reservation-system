@@ -12,6 +12,7 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from chatbot.models import KnowledgeBaseEntry
 from chatbot.services.entities import extract_entities
 from chatbot.services.intents import Intent, detect_intent
 from chatbot.services.pipeline import process_message
@@ -269,10 +270,16 @@ class ChatEndpointTests(TestCase):
         self.api = APIClient()
         self.api.force_authenticate(user=self.user)
 
-    def test_requires_authentication(self):
+    def test_anonymous_gets_public_answer(self):
+        """The endpoint serves visitors on the landing/login/register pages."""
         anon = APIClient()
-        response = anon.post("/api/chatbot/", {"message": "hello"}, format="json")
-        self.assertEqual(response.status_code, 401)
+        response = anon.post(
+            "/api/chatbot/", {"message": "hello"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        for key in ("message", "intent", "source"):
+            self.assertIn(key, body)
 
     def test_response_shape(self):
         response = self.api.post("/api/chatbot/", {"message": "help"}, format="json")
@@ -291,3 +298,185 @@ class ChatEndpointTests(TestCase):
         before = ChatLog.objects.count()
         self.api.post("/api/chatbot/", {"message": "help"}, format="json")
         self.assertEqual(ChatLog.objects.count(), before + 1)
+
+
+class PublicAccessTests(TestCase):
+    """Unauthenticated visitors: public facts yes, personal data never."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.facility = Facility.objects.create(
+            name="Public Hall",
+            facility_type=Facility.FacilityType.OTHER,
+            capacity=30,
+            description="A public hall.",
+        )
+        for day in range(7):
+            OperatingHour.objects.create(
+                facility=cls.facility, day_of_week=day,
+                open_time=time(8, 0), close_time=time(18, 0),
+            )
+        cls.owner = User.objects.create_user(
+            username="pubowner", email="pubowner@example.com", password="testpass1234",
+        )
+        cls.reservation = Reservation.objects.create(
+            requester=cls.owner,
+            event_name="Secret Session",
+            facility=cls.facility,
+            date=date.today() + timedelta(days=4),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=Reservation.Status.APPROVED,
+        )
+
+    def test_public_facility_list(self):
+        result = process_message(None, "What facilities are available?")
+        self.assertIn("Public Hall", result["message"])
+        self.assertEqual(result["source"], "database")
+
+    def test_public_availability_check(self):
+        target = date.today() + timedelta(days=4)
+        result = process_message(None, f"Is Public Hall available on {target.isoformat()} at 10 AM?")
+        self.assertIn("unavailable", result["message"].lower())
+        # Conflict details are facility facts, but never requester names.
+        self.assertNotIn("pubowner", result["message"].lower())
+
+    def test_anonymous_cannot_ask_for_personal_reservations(self):
+        result = process_message(None, "Show my reservations")
+        self.assertIn("log in", result["message"].lower())
+        self.assertNotIn("Secret Session", result["message"])
+
+    def test_anonymous_cannot_lookup_reservation_id(self):
+        result = process_message(
+            None, f"Where is my reservation {self.reservation.reservation_id}?"
+        )
+        self.assertNotIn("Secret Session", result["message"])
+        self.assertIn("log in", result["message"].lower())
+
+    def test_anonymous_cannot_see_other_users_data_by_name(self):
+        result = process_message(None, "Show reservations for pubowner")
+        self.assertNotIn("Secret Session", result["message"])
+
+    def test_anonymous_welcome_mentions_sign_in(self):
+        result = process_message(None, "hello")
+        self.assertIn("sign in", result["message"].lower())
+
+    def test_out_of_scope_for_visitor(self):
+        result = process_message(None, "What is the capital of France?")
+        self.assertIn("only answer questions", result["message"].lower())
+
+
+class KnowledgeVisibilityTests(TestCase):
+    """visibility=PUBLIC/AUTHENTICATED/ADMIN enforced for every viewer."""
+
+    def _make_entry(self, **kwargs):
+        defaults = dict(
+            category=KnowledgeBaseEntry.Category.FAQ,
+            title="Vis Test",
+            content="Visible content marker.",
+            keywords="vis test marker",
+            status=KnowledgeBaseEntry.Status.PUBLISHED,
+        )
+        defaults.update(kwargs)
+        return KnowledgeBaseEntry.objects.create(**defaults)
+
+    def _user(self, username, **kw):
+        return User.objects.create_user(
+            username=username, email=f"{username}@example.com",
+            password="testpass1234", **kw,
+        )
+
+    def test_public_entry_served_to_visitor(self):
+        self._make_entry(visibility=KnowledgeBaseEntry.Visibility.PUBLIC)
+        result = process_message(None, "vis test marker")
+        self.assertIn("Visible content marker", result["message"])
+        self.assertEqual(result["source"], "knowledge")
+
+    def test_authenticated_entry_hidden_from_visitor(self):
+        self._make_entry(visibility=KnowledgeBaseEntry.Visibility.AUTHENTICATED)
+        result = process_message(None, "vis test marker")
+        self.assertNotIn("Visible content marker", result["message"])
+
+    def test_authenticated_entry_served_to_user(self):
+        self._make_entry(visibility=KnowledgeBaseEntry.Visibility.AUTHENTICATED)
+        result = process_message(self._user("visuser1"), "vis test marker")
+        self.assertIn("Visible content marker", result["message"])
+
+    def test_admin_entry_hidden_from_user(self):
+        self._make_entry(visibility=KnowledgeBaseEntry.Visibility.ADMIN)
+        result = process_message(self._user("visuser2"), "vis test marker")
+        self.assertNotIn("Visible content marker", result["message"])
+
+    def test_admin_entry_served_to_admin(self):
+        self._make_entry(visibility=KnowledgeBaseEntry.Visibility.ADMIN)
+        admin = self._user("visadmin", role=User.Role.ADMIN)
+        result = process_message(admin, "vis test marker")
+        self.assertIn("Visible content marker", result["message"])
+
+    def test_registration_help_public(self):
+        self._make_entry(
+            category=KnowledgeBaseEntry.Category.REGISTRATION_HELP,
+            title="How to Register",
+            content="Use the registration page.",
+            keywords="register sign up",
+            visibility=KnowledgeBaseEntry.Visibility.PUBLIC,
+        )
+        result = process_message(None, "How do I register?")
+        self.assertIn("registration page", result["message"].lower())
+
+    def test_login_help_public(self):
+        self._make_entry(
+            category=KnowledgeBaseEntry.Category.LOGIN_HELP,
+            title="How to Log In",
+            content="Use the login page.",
+            keywords="log in sign in forgot password",
+            visibility=KnowledgeBaseEntry.Visibility.PUBLIC,
+        )
+        result = process_message(None, "How do I log in?")
+        self.assertIn("login page", result["message"].lower())
+
+    def test_announcements_public(self):
+        self._make_entry(
+            category=KnowledgeBaseEntry.Category.ANNOUNCEMENT,
+            title="Maintenance Weekend",
+            content="The gym closes Saturday.",
+            keywords="announcement news",
+            visibility=KnowledgeBaseEntry.Visibility.PUBLIC,
+        )
+        result = process_message(None, "Any announcements?")
+        self.assertIn("gym closes Saturday", result["message"])
+
+    def test_upcoming_reservations(self):
+        user = self._user("visuser3")
+        facility = Facility.objects.create(name="Up Hall", capacity=5)
+        Reservation.objects.create(
+            requester=user, event_name="Soon Event", facility=facility,
+            date=date.today() + timedelta(days=2),
+            start_time=time(9, 0), end_time=time(10, 0),
+            status=Reservation.Status.APPROVED,
+        )
+        Reservation.objects.create(
+            requester=user, event_name="Past Event", facility=facility,
+            date=date.today() - timedelta(days=2),
+            start_time=time(9, 0), end_time=time(10, 0),
+            status=Reservation.Status.COMPLETED,
+        )
+        result = process_message(user, "What are my upcoming reservations?")
+        self.assertIn("Soon Event", result["message"])
+        self.assertNotIn("Past Event", result["message"])
+
+    def test_cancelled_reservations(self):
+        user = self._user("visuser4")
+        facility = Facility.objects.create(name="Can Hall", capacity=5)
+        Reservation.objects.create(
+            requester=user, event_name="Dropped Event", facility=facility,
+            date=date.today() + timedelta(days=2),
+            start_time=time(9, 0), end_time=time(10, 0),
+            status=Reservation.Status.CANCELLED,
+        )
+        result = process_message(user, "Show my cancelled reservations")
+        self.assertIn("Dropped Event", result["message"])
+
+    def test_visitor_make_reservation_gets_public_guidance(self):
+        result = process_message(None, "I want to book a facility")
+        self.assertIn("log in", result["message"].lower())

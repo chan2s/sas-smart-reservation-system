@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
+import { ChatWidget } from '@/components/chatbot/ChatWidget'
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   not_configured:
@@ -289,6 +290,9 @@ export function LoginPage() {
           </div>
         </div>
       </main>
+
+      {/* Public assistant — public knowledge only until the visitor signs in. */}
+      <ChatWidget />
     </div>
   )
 }

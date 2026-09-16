@@ -26,13 +26,35 @@ from . import retrieval, templates
 from .entities import Entities, extract_entities
 from .facilities import resolve_facility
 from .intents import Intent, detect_intent
-from .knowledge import search_knowledge_for_intent
+from .knowledge import search_knowledge, search_knowledge_for_intent
 from ..models import ChatLog
 from reservations.models import Reservation
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = Reservation.ACTIVE_STATUSES
+
+# Facts available to signed-in users only, no matter how the question is
+# phrased. Facility/facility-schedule/equipment/policy data stays public.
+_PRIVATE_INTENTS = {
+    Intent.VIEW_RESERVATION,
+    Intent.MY_RESERVATIONS,
+    Intent.MY_UPCOMING_RESERVATIONS,
+    Intent.MY_CANCELLED_RESERVATIONS,
+    Intent.CANCEL_RESERVATION,
+}
+
+_PUBLIC_ONLY_HINT = (
+    " That information is available once you sign in to your account."
+)
+
+# Keywords that mark a question as being about the speaker's own bookings —
+# used to give visitors an honest "sign in" nudge instead of a cold fallback.
+_PERSONAL_RE = re.compile(
+    r"\b(my|me|i)\b.*\b(reservation|reservations|booking|bookings)\b"
+    r"|\b(reservation|reservations|booking|bookings)\b.*\b(my|mine)\b",
+    re.IGNORECASE,
+)
 
 
 def _fmt_date(d: date_cls) -> str:
@@ -304,7 +326,13 @@ def _handle_facility_rules(user, entities: Entities, raw: str) -> tuple[str, str
             [_ref_facility(facility)],
         )
     # Fall back to knowledge-base facility rules.
-    entries = search_knowledge_for_intent(raw, Intent.FACILITY_RULES, facility)
+    entries = search_knowledge_for_intent(
+        raw,
+        Intent.FACILITY_RULES,
+        facility,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+    )
     if entries:
         entry = entries[0]
         return (
@@ -346,6 +374,9 @@ def _handle_list_facilities(user, entities: Entities, raw: str) -> tuple[str, st
     if not facilities:
         return templates.NOT_FOUND, "fallback", []
 
+    if entities.facility_resolved and entities.has_date:
+        return _handle_check_availability(user, entities, raw)
+
     # "What facilities are available tomorrow?" — a cross-facility
     # availability question. Answer per-facility for the extracted date.
     if entities.has_date:
@@ -382,6 +413,93 @@ def _handle_list_facilities(user, entities: Entities, raw: str) -> tuple[str, st
         templates.LIST_FACILITIES.format(facilities="\n".join(lines)),
         "database",
         [_ref_facility(f) for f in facilities],
+    )
+
+
+def _handle_my_upcoming(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    today = timezone.localdate()
+    rows = [
+        r for r in retrieval.user_reservations(user, limit=50)
+        if r.date >= today and r.status in _ACTIVE_STATUSES
+    ]
+    if not rows:
+        return templates.MY_UPCOMING_EMPTY, "database", []
+    return (
+        templates.MY_UPCOMING.format(
+            count=len(rows),
+            reservations="\n".join(_render_reservation_row(r) for r in rows),
+        ),
+        "database",
+        [_ref_reservation(r) for r in rows],
+    )
+
+
+def _handle_my_cancelled(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    rows = [
+        r for r in retrieval.user_reservations(user, limit=50)
+        if r.status == Reservation.Status.CANCELLED
+    ]
+    if not rows:
+        return templates.MY_CANCELLED_EMPTY, "database", []
+    return (
+        templates.MY_CANCELLED.format(
+            reservations="\n".join(_render_reservation_row(r) for r in rows),
+        ),
+        "database",
+        [_ref_reservation(r) for r in rows],
+    )
+
+
+def _handle_registration_help(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    entries = search_knowledge_for_intent(
+        raw,
+        Intent.REGISTRATION_HELP,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+    )
+    if not entries:
+        return templates.REGISTRATION_GUIDE, "help", []
+    entry = entries[0]
+    return (
+        templates.POLICY_ANSWER.format(content=entry.content)
+        + templates.POLICY_SOURCE.format(title=entry.title),
+        "knowledge",
+        [_ref_kb(entry)],
+    )
+
+
+def _handle_login_help(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    entries = search_knowledge_for_intent(
+        raw,
+        Intent.LOGIN_HELP,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+    )
+    if not entries:
+        return templates.LOGIN_GUIDE, "help", []
+    entry = entries[0]
+    return (
+        templates.POLICY_ANSWER.format(content=entry.content)
+        + templates.POLICY_SOURCE.format(title=entry.title),
+        "knowledge",
+        [_ref_kb(entry)],
+    )
+
+
+def _handle_public_announcement(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    entries = search_knowledge_for_intent(
+        raw,
+        Intent.PUBLIC_ANNOUNCEMENT,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+    )
+    if not entries:
+        return templates.NO_ANNOUNCEMENTS, "knowledge", []
+    lines = [f"• {e.title}: {e.content}" for e in entries]
+    return (
+        templates.ANNOUNCEMENTS.format(items="\n".join(lines)),
+        "knowledge",
+        [_ref_kb(e) for e in entries],
     )
 
 
@@ -434,16 +552,20 @@ def _handle_view_reservation(user, entities: Entities, raw: str) -> tuple[str, s
 
 def _handle_make_reservation(user, entities: Entities, raw: str) -> tuple[str, str, list]:
     # Read-only chatbot: guide, plus a grounded availability check when the
-    # user included a facility and date.
+    # user included a facility and date. Availability is public data, so the
+    # grounded check also runs for visitors on the landing/login/register pages.
     if entities.facility_resolved and entities.has_date:
         message, source, refs = _handle_check_availability(user, entities, raw)
         if source == "database":
-            return (
-                templates.MAKE_RESERVATION_GUIDE + "\n\n" + message,
-                "hybrid",
-                refs,
+            guide = (
+                templates.MAKE_RESERVATION_GUIDE
+                if user is not None
+                else templates.MAKE_RESERVATION_PUBLIC
             )
-    return templates.MAKE_RESERVATION_GUIDE, "help", []
+            return guide + "\n\n" + message, "hybrid", refs
+    if user is not None:
+        return templates.MAKE_RESERVATION_GUIDE, "help", []
+    return templates.MAKE_RESERVATION_PUBLIC, "help", []
 
 
 def _handle_cancel_reservation(user, entities: Entities, raw: str) -> tuple[str, str, list]:
@@ -556,7 +678,13 @@ def _handle_maintenance_status(user, entities: Entities, raw: str) -> tuple[str,
 
 
 def _handle_policy(user, entities: Entities, raw: str, intent: str) -> tuple[str, str, list]:
-    entries = search_knowledge_for_intent(raw, intent, entities.facility_resolved)
+    entries = search_knowledge_for_intent(
+        raw,
+        intent,
+        entities.facility_resolved,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+    )
     if not entries:
         return templates.NOT_FOUND, "fallback", []
     entry = entries[0]
@@ -630,12 +758,17 @@ _HANDLERS = {
     Intent.FACILITY_SCHEDULE: _handle_facility_schedule,
     Intent.LIST_FACILITIES: _handle_list_facilities,
     Intent.MY_RESERVATIONS: _handle_my_reservations,
+    Intent.MY_UPCOMING_RESERVATIONS: _handle_my_upcoming,
+    Intent.MY_CANCELLED_RESERVATIONS: _handle_my_cancelled,
     Intent.VIEW_RESERVATION: _handle_view_reservation,
     Intent.MAKE_RESERVATION: _handle_make_reservation,
     Intent.CANCEL_RESERVATION: _handle_cancel_reservation,
     Intent.EQUIPMENT_AVAILABILITY: _handle_equipment_availability,
     Intent.MAINTENANCE_STATUS: _handle_maintenance_status,
     Intent.BOOKING_GUIDE: _handle_booking_guide,
+    Intent.REGISTRATION_HELP: _handle_registration_help,
+    Intent.LOGIN_HELP: _handle_login_help,
+    Intent.PUBLIC_ANNOUNCEMENT: _handle_public_announcement,
 }
 
 
@@ -661,17 +794,26 @@ def process_message(user, message: str) -> dict:
         if match.intent == Intent.SYSTEM_HELP:
             message_out, source, refs = _handle_help(user, entities, raw)
         elif _is_greeting(raw):
-            message_out, source, refs = templates.WELCOME, "help", []
+            message_out, source, refs = (
+                templates.WELCOME if user is not None else templates.WELCOME_PUBLIC
+            ), "help", []
+        elif user is None and match.intent in _PRIVATE_INTENTS:
+            # Unauthenticated visitors never reach personal-data handlers.
+            message_out, source, refs = templates.SIGN_IN_REQUIRED, "fallback", []
+        elif user is None and _PERSONAL_RE.search(raw):
+            # Phrasings the rule table may not have caught ("did the office
+            # approve my request?") — still never leak or guess.
+            message_out, source, refs = templates.SIGN_IN_REQUIRED, "fallback", []
         elif match.intent == Intent.RESERVATION_POLICY:
             message_out, source, refs = _handle_policy(user, entities, raw, Intent.RESERVATION_POLICY)
         elif match.intent == Intent.CANCELLATION_POLICY:
             message_out, source, refs = _handle_policy(user, entities, raw, Intent.CANCELLATION_POLICY)
         elif match.intent == Intent.UNKNOWN:
-            message_out, source, refs = _out_of_scope_or_unknown(raw)
+            message_out, source, refs = _out_of_scope_or_unknown(raw, user)
         elif handler is not None:
             message_out, source, refs = handler(user, entities, raw)
         else:
-            message_out, source, refs = _out_of_scope_or_unknown(raw)
+            message_out, source, refs = _out_of_scope_or_unknown(raw, user)
     except Exception as exc:  # noqa: BLE001 — never leak internals to users
         logger.exception("Chatbot pipeline error")
         message_out, source, refs = templates.DB_UNAVAILABLE, "fallback", []
@@ -687,15 +829,38 @@ def process_message(user, message: str) -> dict:
     )
 
 
-def _out_of_scope_or_unknown(raw: str) -> tuple[str, str, list]:
-    """Distinguish off-topic questions from unrecognized system questions."""
+def _out_of_scope_or_unknown(
+    raw: str, user=None
+) -> tuple[str, str, list]:
+    """Reject off-topic questions; give system questions a KB last chance.
+
+    The knowledge base is searched first: it is keyword-driven, so off-topic
+    questions simply do not match anything. Only when it yields nothing does
+    the system-vocabulary check pick between the two fallback messages.
+    """
+    entries = search_knowledge(
+        raw,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+        require_keyword_hit=True,
+    )
+    if entries:
+        entry = entries[0]
+        return (
+            templates.POLICY_ANSWER.format(content=entry.content)
+            + templates.POLICY_SOURCE.format(title=entry.title),
+            "knowledge",
+            [_ref_kb(entry)],
+        )
     system_words = {
         "facility", "facilities", "room", "reserve", "reservation", "book",
         "booking", "available", "availability", "schedule", "hours", "open",
         "close", "equipment", "maintenance", "cancel", "cancellation",
         "policy", "policies", "capacity", "gym", "gymnasium", "cafeteria",
         "avr", "canteen", "mic", "microphone", "projector", "chair", "table",
-        "status", "approve", "pending", "approved", "sas",
+        "status", "approve", "pending", "approved", "sas", "register",
+        "registration", "log in", "login", "sign in", "sign up",
+        "account", "password", "announcement", "faq", "help",
     }
     lowered = raw.lower()
     if any(word in lowered for word in system_words):

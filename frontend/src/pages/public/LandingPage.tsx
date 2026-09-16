@@ -20,6 +20,7 @@ import {
 import { useEquipment, useEquipmentStats, useFacilities } from '@/hooks/queries'
 import { getEquipmentImageUrl, cn } from '@/lib/utils'
 import { BrandMark } from '@/components/auth/AuthPanel'
+import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import heroVideo from '@/assets/0625.mp4'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -1282,6 +1283,9 @@ export function LandingPage() {
       </footer>
 
       <MobileMenu open={menuOpen} onClose={closeMenu} />
+
+      {/* Public assistant — public knowledge only until the visitor signs in. */}
+      <ChatWidget />
     </div>
   )
 }

@@ -221,8 +221,10 @@ REST_FRAMEWORK = {
         # DRF periods are single-char: s/m/h/d — 10 min = 600 s.
         "otp_verify": "5/600s",
         "otp_resend": "3/600s",
-        # Chatbot Q&A — modest per-user limit.
+        # Chatbot Q&A — modest per-user limit; visitors are IP-limited
+        # because the endpoint also serves the public landing/login pages.
         "chatbot": "30/min",
+        "chatbot_anon": "10/min",
     },
     "DEFAULT_PAGINATION_CLASS":
         "rest_framework.pagination.PageNumberPagination",
