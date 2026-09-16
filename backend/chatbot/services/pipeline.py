@@ -27,6 +27,7 @@ from .entities import Entities, extract_entities
 from .facilities import resolve_facility
 from .intents import Intent, detect_intent
 from .knowledge import search_knowledge, search_knowledge_for_intent
+from . import suggestions
 from ..models import ChatLog
 from reservations.models import Reservation
 
@@ -86,6 +87,7 @@ def _as_response(
     started: float,
     user,
     error: str = "",
+    suggestions: list[dict] | None = None,
 ) -> dict:
     latency = int((time_module.perf_counter() - started) * 1000)
     ChatLog.objects.create(
@@ -105,7 +107,9 @@ def _as_response(
         "intent": intent,
         "confidence": confidence,
         "source": source,
+        "suggestions": suggestions or [],
         "data": {"entities": _serializable_entities(entities), "refs": refs},
+        "latency_ms": latency,
     }
 
 
@@ -823,9 +827,17 @@ def process_message(user, message: str) -> dict:
         )
         raise
 
+    # Deterministic follow-up suggestions built from the same answer's
+    # intent, entities, retrieved records, and auth state — no AI.
+    try:
+        suggested = suggestions.build(match.intent, entities, refs, user)
+    except Exception:  # noqa: BLE001 — suggestions must never break answers
+        logger.exception("Chatbot suggestion error")
+        suggested = []
+
     return _as_response(
         message_out, match.intent, match.confidence, source, entities,
-        refs, started, user,
+        refs, started, user, suggestions=suggested,
     )
 
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bot, SendHorizonal, X } from 'lucide-react'
 import { Spinner } from '@/components/ui/Misc'
 import { useChatbot } from '@/hooks/queries'
-import type { ChatbotResponse } from '@/lib/types'
+import type { ChatbotResponse, ChatbotSuggestion } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /**
@@ -19,6 +19,7 @@ interface ChatEntry {
   role: 'user' | 'bot'
   text: string
   meta?: { intent?: string; source?: string }
+  suggestions?: ChatbotSuggestion[]
 }
 
 let entryId = 0
@@ -63,6 +64,7 @@ export function ChatWidget() {
             role: 'bot',
             text: response.message,
             meta: { intent: response.intent, source: response.source },
+            suggestions: response.suggestions ?? [],
           },
         ])
       },
@@ -164,6 +166,25 @@ export function ChatWidget() {
                     <span className="mt-1 block text-[10px] uppercase tracking-wide text-muted">
                       not found in system
                     </span>
+                  )}
+                  {entry.role === 'bot' && !!entry.suggestions?.length && (
+                    <div className="mt-2.5 border-t border-line/70 pt-2.5">
+                      <p className="text-[10px] font-medium uppercase tracking-wide text-muted">
+                        You may also ask
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {entry.suggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.action + suggestion.text}
+                            type="button"
+                            onClick={() => send(suggestion.text)}
+                            className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-body transition-colors hover:border-brand hover:text-brand"
+                          >
+                            {suggestion.text}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>

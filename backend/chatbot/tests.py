@@ -10,6 +10,7 @@ from datetime import date, time, timedelta
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from chatbot.models import KnowledgeBaseEntry
@@ -299,6 +300,26 @@ class ChatEndpointTests(TestCase):
         self.api.post("/api/chatbot/", {"message": "help"}, format="json")
         self.assertEqual(ChatLog.objects.count(), before + 1)
 
+    def test_suggestions_present_and_capped(self):
+        response = self.api.post(
+            "/api/chatbot/", {"message": "hello"}, format="json"
+        )
+        body = response.json()
+        self.assertIn("suggestions", body)
+        suggestions = body["suggestions"]
+        self.assertTrue(1 <= len(suggestions) <= 4)
+        for item in suggestions:
+            self.assertIn("text", item)
+            self.assertIn("action", item)
+
+    def test_suggestions_exclude_the_asked_question(self):
+        response = self.api.post(
+            "/api/chatbot/", {"message": "What facilities are available?"}, format="json"
+        )
+        body = response.json()
+        texts = [s["text"].lower() for s in body["suggestions"]]
+        self.assertNotIn("what facilities are available?", texts)
+
 
 class PublicAccessTests(TestCase):
     """Unauthenticated visitors: public facts yes, personal data never."""
@@ -480,3 +501,99 @@ class KnowledgeVisibilityTests(TestCase):
     def test_visitor_make_reservation_gets_public_guidance(self):
         result = process_message(None, "I want to book a facility")
         self.assertIn("log in", result["message"].lower())
+
+
+class SuggestionTests(TestCase):
+    """Deterministic next-question suggestions — DB-driven, auth-aware."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.today = timezone.localdate()
+        cls.open_facility = Facility.objects.create(
+            name="Suggestion Hall",
+            facility_type=Facility.FacilityType.OTHER,
+            capacity=40,
+            description="Open all week.",
+        )
+        for day in range(7):
+            OperatingHour.objects.create(
+                facility=cls.open_facility, day_of_week=day,
+                open_time=time(8, 0), close_time=time(18, 0),
+            )
+        cls.user = User.objects.create_user(
+            username="sugguser", email="sugguser@example.com", password="testpass1234",
+        )
+
+    def _ask(self, message, user=None):
+        return process_message(user, message)
+
+    def test_availability_suggests_reserving_returned_facility(self):
+        result = self._ask("What facilities are available tomorrow?")
+        texts = [s["text"] for s in result["suggestions"]]
+        self.assertTrue(
+            any("Can I reserve the Suggestion Hall" in t for t in texts),
+            f"expected a DB-driven reserve suggestion, got {texts}",
+        )
+        self.assertTrue(any("tomorrow" in t for t in texts))
+
+    def test_availability_includes_computed_next_date(self):
+        result = self._ask("What facilities are available tomorrow?")
+        texts = [s["text"] for s in result["suggestions"]]
+        next_day = self.today + timedelta(days=2)
+        expected = f"September {next_day.day}"
+        self.assertTrue(
+            any(expected in t for t in texts),
+            f"expected a computed next-date suggestion containing {expected!r}, got {texts}",
+        )
+
+    def test_availability_suggests_time_question(self):
+        result = self._ask("Is the Suggestion Hall available tomorrow at 2 PM?")
+        texts = [s["text"] for s in result["suggestions"]]
+        self.assertTrue(
+            any(t.startswith("What time is the Suggestion Hall available") for t in texts),
+            f"expected a schedule suggestion, got {texts}",
+        )
+
+    def test_never_suggests_closed_facility(self):
+        closed = Facility.objects.create(
+            name="Shuttered Room",
+            facility_type=Facility.FacilityType.OTHER,
+            capacity=10,
+        )
+        # No OperatingHour rows → closed every day.
+        result = self._ask("Is the Shuttered Room available tomorrow at 2 PM?")
+        texts = [s["text"] for s in result["suggestions"]]
+        self.assertFalse(
+            any("Can I reserve the Shuttered Room" in t for t in texts),
+            f"must not suggest reserving a closed facility, got {texts}",
+        )
+
+    def test_authenticated_suggestions_differ_from_anonymous(self):
+        anon = self._ask("What is the cancellation policy?")["suggestions"]
+        auth = self._ask("What is the cancellation policy?", self.user)["suggestions"]
+        anon_texts = " | ".join(s["text"] for s in anon)
+        auth_texts = " | ".join(s["text"] for s in auth)
+        self.assertIn("Cancel my reservation", auth_texts)
+        self.assertNotIn("Cancel my reservation", anon_texts)
+
+    def test_personal_suggestions_absent_for_visitors(self):
+        result = self._ask("What facilities are available?")
+        texts = [s["text"] for s in result["suggestions"]]
+        banned = ("my reservations", "cancel my reservation", "my upcoming")
+        for text in texts:
+            for phrase in banned:
+                self.assertNotIn(phrase, text.lower())
+
+    def test_never_repeats_the_asked_question(self):
+        result = self._ask("What facilities are available tomorrow?")
+        asked = "what facilities are available tomorrow?"
+        texts = [s["text"].lower() for s in result["suggestions"]]
+        self.assertNotIn(asked, texts)
+
+    def test_suggestions_have_action_fields(self):
+        result = self._ask("hello")
+        for s in result["suggestions"]:
+            self.assertIn("text", s)
+            self.assertIn("action", s)
+            self.assertTrue(s["text"])
+            self.assertTrue(s["action"])
