@@ -419,3 +419,12 @@ export function useUnreadCount() {
     refetchInterval: 60_000,
   })
 }
+// ---------------------------------------------------------------------------
+// Chatbot
+// ---------------------------------------------------------------------------
+
+export function useChatbot() {
+  return useMutation({
+    mutationFn: (message: string) => endpoints.chatbot(message),
+  })
+}

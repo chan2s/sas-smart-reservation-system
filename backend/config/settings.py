@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     "reservations",
     "notifications",
     "analytics",
+    "chatbot",
 ]
 
 
@@ -220,6 +221,8 @@ REST_FRAMEWORK = {
         # DRF periods are single-char: s/m/h/d — 10 min = 600 s.
         "otp_verify": "5/600s",
         "otp_resend": "3/600s",
+        # Chatbot Q&A — modest per-user limit.
+        "chatbot": "30/min",
     },
     "DEFAULT_PAGINATION_CLASS":
         "rest_framework.pagination.PageNumberPagination",

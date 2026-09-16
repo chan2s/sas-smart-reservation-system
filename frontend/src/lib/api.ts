@@ -2,6 +2,7 @@ import type {
   AvailabilityCheck,
   CalendarEvent,
   CampusUserOption,
+  ChatbotResponse,
   DashboardSummary,
   Equipment,
   EquipmentCategory,
@@ -535,4 +536,7 @@ export const endpoints = {
   markNotificationRead: (id: number) =>
     api.post<Notification>(`/api/notifications/${id}/mark_read/`),
   markAllNotificationsRead: () => api.post<{ count: number }>('/api/notifications/mark_all_read/'),
+
+  chatbot: (message: string) =>
+    api.post<ChatbotResponse>('/api/chatbot/', { message }),
 }

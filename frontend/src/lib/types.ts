@@ -2,6 +2,18 @@
 
 export type Role = 'ADMIN' | 'STAFF' | 'REQUESTER'
 
+/** Chatbot response — grounded answer from the rule-based pipeline. */
+export interface ChatbotResponse {
+  message: string
+  intent: string
+  confidence?: 'high' | 'medium' | 'low'
+  source: 'database' | 'knowledge' | 'hybrid' | 'help' | 'fallback'
+  data?: {
+    entities?: Record<string, unknown>
+    refs?: Array<Record<string, unknown>>
+  }
+}
+
 export interface User {
   id: number
   username: string

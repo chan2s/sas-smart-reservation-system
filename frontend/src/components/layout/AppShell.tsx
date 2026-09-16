@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import { Header, MobileBottomNav } from './Header'
+import { ChatWidget } from '@/components/chatbot/ChatWidget'
 
 /**
  * Application shell.
@@ -32,6 +33,9 @@ export function AppShell() {
       </main>
 
       <MobileBottomNav />
+
+      {/* Floating rule-based assistant (backend-grounded, no AI client-side) */}
+      <ChatWidget />
     </div>
   )
 }
