@@ -209,8 +209,18 @@ export const api = {
       redirect_uri?: string
       scope?: string[]
     }>('/api/auth/google/'),
-  googleStart: () =>
-    api.get<{ authorize_url: string }>('/api/auth/google/start/'),
+  // The origin hint lets the backend bind the OAuth flow to the environment
+  // the browser is actually in (localhost, 127.0.0.1, or the current Dev
+  // Tunnel). The backend validates it against its allowlist, so a spoofed
+  // value changes nothing.
+  googleStart: (frontendOrigin?: string) =>
+    api.get<{ authorize_url: string }>(
+      `/api/auth/google/start/${
+        frontendOrigin
+          ? `?frontend_origin=${encodeURIComponent(frontendOrigin)}`
+          : ''
+      }`,
+    ),
   verifyGoogleOtp: async (verificationToken: string, otp: string) => {
     const data = await request<{ access: string; refresh: string; user: User }>(
       '/api/auth/google/verify-otp/',

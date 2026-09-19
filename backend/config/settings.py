@@ -329,6 +329,19 @@ GOOGLE_CLIENT_SECRET = os.environ.get(
     "",
 )
 
+# The redirect_uri handed to Google for the authorization code exchange.
+#
+# Leave EMPTY in development: the backend then derives it from the browser's
+# validated frontend origin (config/frontend.py) so localhost, 127.0.0.1, and
+# any *.devtunnels.ms all work without code changes — each maps to the same
+# path as accounts:google-callback (default /api/auth/google/callback/).
+#
+# Set it in production (or behind a rewriting proxy) to the exact URL that is
+# registered in Google Cloud Console — e.g.
+#   GOOGLE_REDIRECT_URI=https://sas.example.com/api/auth/google/callback/
+# It must match the registered Authorized redirect URI character-for-character.
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
+
 
 # ---------------------------------------------------------------------------
 # Frontend
@@ -337,6 +350,21 @@ GOOGLE_CLIENT_SECRET = os.environ.get(
 PUBLIC_FRONTEND_URL = os.environ.get(
     "PUBLIC_FRONTEND_URL",
     "http://localhost:5173",
+)
+
+# Origins allowed to receive OAuth redirects, in addition to localhost in
+# DEBUG and (optionally) current VS Code Dev Tunnels. Exact origins only.
+FRONTEND_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("FRONTEND_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+# Dev Tunnels: hostname changes on every restart, so trust the domain
+# pattern instead of individual hosts. Never enable in production.
+ALLOW_DEV_TUNNELS = (
+    os.environ.get("ALLOW_DEV_TUNNELS", "true" if DEBUG else "false").lower()
+    == "true"
 )
 
 
@@ -353,7 +381,35 @@ CORS_ALLOWED_ORIGINS = [
     if o.strip()
 ]
 
+# The frontend normally reaches the API same-origin through the Vite proxy,
+# so CORS rarely matters in dev. When a tunnel frontend calls the backend
+# cross-origin, its origin must be allowed dynamically without weakening
+# production (which pins origins via CORS_ALLOWED_ORIGINS).
+if DEBUG and ALLOW_DEV_TUNNELS:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https://[a-z0-9-]+\.devtunnels\.ms$",
+    ]
+
 CORS_ALLOW_CREDENTIALS = True
+
+
+# ---------------------------------------------------------------------------
+# CSRF
+# ---------------------------------------------------------------------------
+
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+# Dev Tunnels may expose the backend directly (separate port tunnel). The
+# leading-dot entries match any *.devtunnels.ms subdomain and are DEBUG-only:
+# production pins hosts explicitly via DJANGO_ALLOWED_HOSTS. The frontend's
+# same-origin Vite proxy needs none of this (Host stays 127.0.0.1:8000).
+if DEBUG and ALLOW_DEV_TUNNELS:
+    ALLOWED_HOSTS.append(".devtunnels.ms")
+    CSRF_TRUSTED_ORIGINS.append("https://*.devtunnels.ms")
 
 
 # ---------------------------------------------------------------------------

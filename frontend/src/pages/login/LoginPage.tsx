@@ -116,8 +116,10 @@ export function LoginPage() {
     setGoogleLoading(true)
     try {
       // The backend issues the signed state and returns the consent URL.
-      // The secret never touches the frontend.
-      const { authorize_url } = await api.googleStart()
+      // The secret never touches the frontend. Sending our actual origin
+      // (localhost, 127.0.0.1, or the current Dev Tunnel) lets the backend
+      // bind the OAuth flow to this environment — no hard-coded hostnames.
+      const { authorize_url } = await api.googleStart(window.location.origin)
       window.location.href = authorize_url
     } catch {
       setError('Google sign-in is unavailable. Please use your username and password.')

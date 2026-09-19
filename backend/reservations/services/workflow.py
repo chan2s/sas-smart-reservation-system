@@ -1,11 +1,13 @@
 """Reservation workflow actions.
 
 Each transition records a ReservationEvent (timeline + approval history) and
-emits the appropriate notifications (in-app + email).
+emits the appropriate notifications (in-app; email for submission, rejection,
+and cancellation only).
 
-Approval emails are only dispatched *after* the approval transaction commits
-(``transaction.on_commit``), never before, and are guarded so the same
-reservation is never notified twice.
+Automatic approval emails are intentionally DISABLED: approving a reservation
+notifies the requester through the in-app notification system only. Staff can
+still send the approval email manually via the admin/API retry action
+(``resend_approval_email``).
 """
 
 from __future__ import annotations
@@ -80,84 +82,24 @@ def _get_requester_email(reservation) -> str:
 
 
 def _schedule_approval_email(reservation, actor):
-    """Resolve the requester email and schedule the approval email.
+    """Intentionally a no-op: automatic approval emails are disabled.
 
-    The email itself is dispatched only after the current transaction commits
-    (``transaction.on_commit``), so a failed approval never leaks an email and
-    a successful approval cannot lose one on a later rollback. Reservations
-    whose approval email is already recorded as sent are skipped, which makes
-    the mechanism idempotent.
+    Product decision: when an admin approves a reservation, the requester is
+    notified through the in-app notification only (created by
+    ``approve_reservation``/``auto_approve``); no automatic email is sent.
+    Requesters see the updated APPROVED status in the application. The
+    delivery-state field is kept for the staff-only manual resend helper.
     """
-    if reservation.approval_email_status == Reservation.ApprovalEmailStatus.SENT:
-        return
-    email = resolve_requester_email(reservation, actor)
-    if not email:
-        reservation.approval_email_status = Reservation.ApprovalEmailStatus.NO_EMAIL
-        reservation.save(update_fields=["approval_email_status", "updated_at"])
-        logger.warning(
-            "Approval email NOT sent for reservation %s (%s): requester has "
-            "no valid email address.",
-            reservation.reservation_id,
-            reservation.event_name,
-        )
-        return
-    reservation.approval_email_status = Reservation.ApprovalEmailStatus.NOT_SENT
-    reservation.save(update_fields=["approval_email_status", "updated_at"])
-    transaction.on_commit(
-        lambda: _dispatch_approved_email(reservation, actor, email)
-    )
-
-
-def _dispatch_approved_email(reservation, actor, email):
-    """Actually send the approval email and record its delivery state.
-
-    Runs after the approval transaction has committed. A fresh status read
-    guards against double-sending for the same reservation.
-    """
-    try:
-        reservation.refresh_from_db(
-            fields=["approval_email_status", "status", "updated_at"]
-        )
-    except Reservation.DoesNotExist:
-        return
-    if reservation.approval_email_status == Reservation.ApprovalEmailStatus.SENT:
-        logger.info(
-            "Approval email already marked SENT for reservation %s; skipping.",
-            reservation.reservation_id,
-        )
-        return
-    logger.info(
-        "Approval email send attempted for reservation %s to %s.",
-        reservation.reservation_id,
-        email,
-    )
-    ok, reason = send_reservation_approved(reservation, actor)
-    if ok:
-        reservation.approval_email_status = Reservation.ApprovalEmailStatus.SENT
-        reservation.save(update_fields=["approval_email_status", "updated_at"])
-        logger.info(
-            "Approval email recorded as SENT for reservation %s.",
-            reservation.reservation_id,
-        )
-    else:
-        reservation.approval_email_status = Reservation.ApprovalEmailStatus.FAILED
-        reservation.save(update_fields=["approval_email_status", "updated_at"])
-        logger.error(
-            "Approval email delivery FAILED for reservation %s (reason: %s). "
-            "Approval itself remains: %s",
-            reservation.reservation_id,
-            reason,
-            reservation.status,
-        )
+    return
 
 
 def resend_approval_email(reservation, actor) -> str:
-    """Force a retry of the approval email for an approved reservation.
+    """Manually send the approval email for an approved reservation.
 
-    Safe to call after the approval transaction has already committed (from
-    the Django admin site or the API retry action) because it dispatches the
-    email immediately instead of scheduling it. Returns the delivery status
-    after the attempt.
+    Staff-only (Django admin action / API retry action). Automatic sending on
+    approval is disabled; this is the only path that can deliver an approval
+    email, and it runs immediately rather than being scheduled. Returns the
+    delivery status after the attempt.
     """
     if reservation.status != Reservation.Status.APPROVED:
         raise ValueError("Only approved reservations can receive an approval email.")
@@ -173,7 +115,32 @@ def resend_approval_email(reservation, actor) -> str:
             reservation.reservation_id,
         )
         return reservation.approval_email_status
-    _dispatch_approved_email(reservation, actor, email)
+
+    # Dispatch immediately and record the delivery state. A failure must
+    # never propagate into the caller's transaction — the approval itself is
+    # already committed and is unaffected by SMTP problems.
+    logger.info(
+        "Approval email send attempted for reservation %s to %s.",
+        reservation.reservation_id,
+        email,
+    )
+    ok, reason = send_reservation_approved(reservation, actor)
+    if ok:
+        reservation.approval_email_status = Reservation.ApprovalEmailStatus.SENT
+        logger.info(
+            "Approval email recorded as SENT for reservation %s.",
+            reservation.reservation_id,
+        )
+    else:
+        reservation.approval_email_status = Reservation.ApprovalEmailStatus.FAILED
+        logger.error(
+            "Approval email delivery FAILED for reservation %s (reason: %s). "
+            "Approval itself remains: %s",
+            reservation.reservation_id,
+            reason,
+            reservation.status,
+        )
+    reservation.save(update_fields=["approval_email_status", "updated_at"])
     return reservation.approval_email_status
 
 

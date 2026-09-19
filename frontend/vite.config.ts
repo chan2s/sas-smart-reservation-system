@@ -13,6 +13,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // VS Code Dev Tunnels get a new hostname on every restart, so allow the
+    // domain pattern instead of pinning one — this is the dev server only;
+    // production builds are unaffected.
+    allowedHosts: ['.devtunnels.ms'],
     proxy: {
       // Forward API calls to the Django dev server during development.
       '/api': {
