@@ -386,6 +386,30 @@ class PublicAccessTests(TestCase):
         result = process_message(None, "What is the capital of France?")
         self.assertIn("only answer questions", result["message"].lower())
 
+    def test_visitor_reserve_question_gets_public_process_answer(self):
+        """"Can I reserve the Cafeteria tomorrow?" never pretends the visitor
+        has an account — it explains the process and points to sign-in."""
+        result = process_message(None, "Can I reserve the Cafeteria tomorrow?")
+        message = result["message"].lower()
+        self.assertIn("log in", message)
+        self.assertIn("reservations are made by signed-in users", message)
+
+    def test_public_help_has_no_personal_data_vocabulary(self):
+        """The visitor capability list must not advertise personal questions."""
+        result = process_message(None, "help")
+        self.assertEqual(result["intent"], Intent.SYSTEM_HELP)
+        message = result["message"].lower()
+        self.assertNotIn("your reservations", message)
+        self.assertNotIn("show my reservations", message)
+        self.assertIn("sign in", message)
+
+    def test_requester_help_still_lists_personal_capabilities(self):
+        requester = User.objects.create_user(
+            username="helpeq", email="helpeq@example.com", password="testpass1234",
+        )
+        result = process_message(requester, "help")
+        self.assertIn("your reservations", result["message"].lower())
+
 
 class KnowledgeVisibilityTests(TestCase):
     """visibility=PUBLIC/AUTHENTICATED/ADMIN enforced for every viewer."""
@@ -528,13 +552,25 @@ class SuggestionTests(TestCase):
         return process_message(user, message)
 
     def test_availability_suggests_reserving_returned_facility(self):
-        result = self._ask("What facilities are available tomorrow?")
+        """Authenticated requesters still get "Can I reserve …" chips."""
+        result = self._ask("What facilities are available tomorrow?", self.user)
         texts = [s["text"] for s in result["suggestions"]]
         self.assertTrue(
             any("Can I reserve the Suggestion Hall" in t for t in texts),
             f"expected a DB-driven reserve suggestion, got {texts}",
         )
         self.assertTrue(any("tomorrow" in t for t in texts))
+
+    def test_visitor_availability_suggestion_is_impersonal(self):
+        """Visitors get the same DB-driven follow-up, phrased impersonally."""
+        result = self._ask("What facilities are available tomorrow?")
+        texts = [s["text"] for s in result["suggestions"]]
+        self.assertTrue(
+            any("Suggestion Hall" in t for t in texts),
+            f"expected a DB-driven facility suggestion, got {texts}",
+        )
+        for text in texts:
+            self.assertNotIn("can i reserve", text.lower())
 
     def test_availability_includes_computed_next_date(self):
         result = self._ask("What facilities are available tomorrow?")
@@ -597,3 +633,44 @@ class SuggestionTests(TestCase):
             self.assertIn("action", s)
             self.assertTrue(s["text"])
             self.assertTrue(s["action"])
+
+    def test_visitor_never_receives_first_person_suggestions(self):
+        """Public-page chips must read as information, not account actions."""
+        for question in (
+            "What facilities are available tomorrow?",
+            "What is the cancellation policy?",
+            "What facilities are available?",
+            "Is the Suggestion Hall available tomorrow at 2 PM?",
+            "What is SAS Reserve?",
+            "How does the reservation process work?",
+        ):
+            with self.subTest(question=question):
+                result = self._ask(question)
+                texts = [s["text"].lower() for s in result["suggestions"]]
+                for text in texts:
+                    for phrase in (
+                        "my reservations", "my upcoming", "my cancelled",
+                        "cancel my", "can i reserve", "can i book",
+                    ):
+                        self.assertNotIn(phrase, text)
+
+    def test_private_intent_short_circuit_serves_public_suggestions(self):
+        """A visitor asking a personal question must get impersonal chips."""
+        result = self._ask("Show my reservations")
+        texts = [s["text"].lower() for s in result["suggestions"]]
+        self.assertNotIn("cancel my reservation", texts)
+        self.assertNotIn("show my upcoming reservations", texts)
+        # And the chips stay informational.
+        self.assertTrue(texts)
+
+    def test_requester_still_gets_personal_suggestions(self):
+        result = self._ask("What is the cancellation policy?", self.user)
+        texts = [s["text"] for s in result["suggestions"]]
+        self.assertIn("Cancel my reservation", texts)
+
+    def test_personal_tokens_only_match_whole_words(self):
+        """"How do I book a facility?" must survive for visitors — "i" only
+        matches as a whole word, not inside other words."""
+        result = self._ask("What is the reservation policy?")
+        texts = [s["text"] for s in result["suggestions"]]
+        self.assertTrue(texts)

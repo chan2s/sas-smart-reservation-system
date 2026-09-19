@@ -11,7 +11,9 @@ Design constraints (all enforced here, none probabilistic):
 * "Can I reserve …" is only suggested for facilities the retrieval service
   confirms open for the relevant day (same business rules as the answers).
 * Personal-data suggestions ("my reservations", "cancel my reservation")
-  are only ever produced for authenticated callers.
+  are only ever produced for authenticated callers, and unauthenticated
+  callers never receive first-person ("I/my/me") phrasings at all — the
+  landing page must read as a public information assistant.
 * The exact question just asked is never suggested again.
 * Dates ("today", "tomorrow", "September 18") are computed, never literals.
 * Priority: direct action on the current result → follow-up on an entity →
@@ -30,6 +32,14 @@ from . import retrieval
 from .intents import Intent
 
 _MAX_SUGGESTIONS = 4
+
+# First-person pronouns: suggestions carrying them presume an account and
+# are therefore only ever shown to authenticated callers.
+_PERSONAL_TOKEN_RE = re.compile(r"\b(?:i|my|me|mine)\b", re.IGNORECASE)
+
+
+def _is_personal(text: str) -> bool:
+    return _PERSONAL_TOKEN_RE.search(text) is not None
 
 
 def _norm(text: str) -> str:
@@ -160,7 +170,12 @@ def build(intent: str, entities, refs: list, user) -> list[dict]:
         open_ones = [f for f in facilities if avail.is_open(f, day or today)]
         if day:
             if open_ones:
-                candidates.append(reserve(open_ones[0].name, day_phrase))
+                # Same DB-driven follow-up for both audiences, phrased for
+                # each: requesters may act on it, visitors get information.
+                if auth:
+                    candidates.append(reserve(open_ones[0].name, day_phrase))
+                else:
+                    candidates.append(is_available(open_ones[0].name, day_phrase))
             if len(open_ones) > 1:
                 candidates.append(time_question(open_ones[1].name, day_phrase))
             candidates.append(available_on(next_phrase))
@@ -265,10 +280,15 @@ def build(intent: str, entities, refs: list, user) -> list[dict]:
         candidates.append(my_upcoming if auth else register)
 
     # --- Assemble: dedupe, drop the asked question, cap at four -------------
+    # First-person suggestions are dropped for unauthenticated callers so the
+    # landing page never shows visitor-invisible questions like "Can I
+    # reserve the …" — for them every chip is impersonal information.
     seen: set[str] = set()
     out: list[dict] = []
     asked_norm = _norm(asked) if asked else None
     for text, action in candidates:
+        if not auth and _is_personal(text):
+            continue
         key = _norm(text)
         if not key or key in seen:
             continue

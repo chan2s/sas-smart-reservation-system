@@ -701,6 +701,10 @@ def _handle_policy(user, entities: Entities, raw: str, intent: str) -> tuple[str
 
 
 def _handle_help(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    """'help' — requesters get the full capability list; visitors get the
+    public-information list (no personal-data vocabulary)."""
+    if user is None:
+        return templates.HELP_PUBLIC, "help", []
     return templates.HELP, "help", []
 
 

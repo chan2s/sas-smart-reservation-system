@@ -119,7 +119,13 @@ _RULES: tuple[IntentRule, ...] = (
     ),
     IntentRule(
         Intent.MAKE_RESERVATION,
-        (("book", "facility"), ("reserve", "facility"), ("make", "reservation"), ("create", "reservation"), ("new reservation",), ("book", "room"), ("reserve", "room"), ("i want to book",), ("i want to reserve",), ("i'd like to book",), ("reserve", "for"), ("book", "for")),
+        (("book", "facility"), ("reserve", "facility"), ("make", "reservation"), ("create", "reservation"), ("new reservation",), ("book", "room"), ("reserve", "room"), ("i want to book",), ("i want to reserve",), ("i'd like to book",), ("reserve", "for"), ("book", "for"),
+         # "Can I reserve the Cafeteria tomorrow?" — a reservation request
+         # phrased as a question. Guests get public guidance + a sign-in
+         # nudge; requesters additionally get the grounded availability
+         # check via the handler. Checked above CHECK_AVAILABILITY's 50
+         # so the intent table is not order-dependent.
+         ("can i reserve",), ("can i book",), ("can we reserve",), ("can we book",),),
         weight=84,
     ),
     # --- Facility data -------------------------------------------------------

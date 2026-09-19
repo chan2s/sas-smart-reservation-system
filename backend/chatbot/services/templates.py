@@ -20,6 +20,25 @@ WELCOME_PUBLIC = (
     "to see everything I can do."
 )
 
+# Capability list for unauthenticated visitors: informational topics only —
+# it never advertises personal-data questions a guest cannot use.
+HELP_PUBLIC = (
+    "Here is what I can help with:\n"
+    "• About — \"What is SAS Reserve?\" or \"Who can use the system?\"\n"
+    "• Facilities — \"What facilities can be reserved?\", \"Tell me about the "
+    "Gymnasium\", \"What are the rules for the Cafeteria?\"\n"
+    "• Availability — \"What facilities are available on Friday?\", \"Is the "
+    "Audio-Visual Room available tomorrow at 2 PM?\"\n"
+    "• Equipment — \"How many wireless microphones are available today?\"\n"
+    "• Reserving — \"How does the reservation process work?\", \"What are the "
+    "reservation requirements?\"\n"
+    "• Policies — \"What is the cancellation policy?\"\n"
+    "• Getting started — \"How do I register?\", \"How do I log in?\", "
+    "\"Any announcements?\"\n\n"
+    "Sign in to also ask about your own reservations. I answer only from this "
+    "system's data — I don't use outside sources."
+)
+
 SIGN_IN_REQUIRED = (
     "I can only share reservation details with signed-in users, and only "
     "their own. Please log in and ask again — or type \"how do I register\" "
