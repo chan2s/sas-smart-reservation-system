@@ -280,6 +280,15 @@ class _ReservationCreateMixin:
         if target_date < timezone.localdate():
             raise serializers.ValidationError({"date": "Date cannot be in the past."})
 
+        now = timezone.localtime()
+        if target_date == now.date():
+            from datetime import datetime as dt_cls
+
+            if timezone.make_aware(dt_cls.combine(target_date, start)) <= now:
+                raise serializers.ValidationError(
+                    {"start_time": "Start time must be in the future for same-day reservations."}
+                )
+
         if not attrs.get("event_name", "").strip():
             raise serializers.ValidationError({"event_name": "Event name is required."})
         if not attrs.get("event_type"):

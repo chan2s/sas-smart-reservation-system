@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -1479,3 +1480,89 @@ class RecommendationRuleTests(TestCase):
         self.assertEqual(mic["available"], 2)  # 4 of 6 reserved
         self.assertEqual(mic["recommended"], 2)  # capped prefill
         self.assertIn("Only 2 of the recommended 5", mic["warning"])
+
+
+class SameDayStartTimeApiTests(TestCase):
+    """Same-day reservations must start strictly after the current Asia/Manila time.
+
+    "Now" is pinned with ``timezone.now`` so the assertions are deterministic
+    regardless of when the suite runs. The patched clock is 13:00 on a Monday
+    (2026-09-14), so slots equal to or before 13:00 are already past and must be
+    rejected, while 13:30 onwards is bookable on the same day.
+    """
+
+    MOCK_NOW = None
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.MOCK_NOW = timezone.make_aware(datetime(2026, 9, 14, 13, 0))
+
+    def setUp(self):
+        self.client = APIClient()
+        self.requester = User.objects.create_user(
+            username="requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.facility = Facility.objects.create(
+            name="AVR", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        for day in range(7):
+            OperatingHour.objects.create(
+                facility=self.facility,
+                day_of_week=day,
+                open_time=time(6, 0),
+                close_time=time(22, 0),
+            )
+        self.client.force_authenticate(self.requester)
+
+    def _payload(self, **overrides):
+        payload = dict(
+            facility_id=self.facility.id,
+            date="2026-09-14",
+            start_time="09:00",
+            end_time="11:00",
+            event_name="Orientation",
+            event_type="ACADEMIC",
+            organization="Student Affairs",
+            purpose="Freshmen orientation",
+            expected_participants=50,
+        )
+        payload.update(overrides)
+        return payload
+
+    def _post(self, payload):
+        with mock.patch("django.utils.timezone.now", return_value=self.MOCK_NOW):
+            return self.client.post("/api/reservations/", payload, format="json")
+
+    def test_same_day_past_start_is_rejected(self):
+        response = self._post(
+            self._payload(date="2026-09-14", start_time="12:00", end_time="13:00")
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("start_time", response.json())
+
+    def test_same_day_current_slot_equal_to_now_is_rejected(self):
+        """At 13:00 the 13:00 slot is the current (past) slot — not bookable."""
+        response = self._post(
+            self._payload(date="2026-09-14", start_time="13:00", end_time="14:30")
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("start_time", response.json())
+
+    def test_same_day_next_slot_is_accepted(self):
+        response = self._post(
+            self._payload(date="2026-09-14", start_time="13:30", end_time="15:00")
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+    def test_tomorrow_allows_earlier_start_than_current_time(self):
+        response = self._post(
+            self._payload(date="2026-09-15", start_time="06:00", end_time="08:00")
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+    def test_future_day_allows_any_operating_hour(self):
+        response = self._post(
+            self._payload(date="2026-09-21", start_time="06:00", end_time="08:00")
+        )
+        self.assertEqual(response.status_code, 201, response.content)

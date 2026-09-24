@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CalendarDays, CheckCircle2, Minus, Plus, AlertTriangle } from 'lucide-react'
 import { format } from 'date-fns'
 import { Button } from '@/components/ui/Button'
@@ -168,6 +168,19 @@ export function manilaCalendarDate(): Date {
   return new Date(Number(y), Number(m) - 1, Number(d))
 }
 
+/** Current wall-clock time in Asia/Manila as minutes since midnight. */
+function manilaNowMinutes(): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date())
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0')
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? '0')
+  return hour * 60 + minute
+}
+
 export function StepSchedule({
   facility,
   date,
@@ -183,9 +196,16 @@ export function StepSchedule({
   isCancellationRestricted,
 }: ScheduleProps) {
   const [month, setMonth] = useState(() => new Date())
+  const [nowMinutes, setNowMinutes] = useState(() => manilaNowMinutes())
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMinutes(manilaNowMinutes()), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const dayIndex = date ? (date.getDay() === 0 ? 6 : date.getDay() - 1) : -1
   const hours = facility?.operating_hours?.find((hour) => hour.day_of_week === dayIndex)
+  const isToday = date != null && date.toDateString() === manilaCalendarDate().toDateString()
   const timeSlots = useMemo(() => {
     if (!hours || hours.is_closed || !hours.open_time || !hours.close_time) return []
     const slots: string[] = []
@@ -194,11 +214,13 @@ export function StepSchedule({
     let cursor = openHour * 60 + openMinute
     const close = closeHour * 60 + closeMinute
     while (cursor < close) {
-      slots.push(`${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`)
+      if (!isToday || cursor > nowMinutes) {
+        slots.push(`${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`)
+      }
       cursor += 30
     }
     return slots
-  }, [hours])
+  }, [hours, isToday, nowMinutes])
 
   const endSlots = useMemo(() => {
     if (!startTime) return []
@@ -212,6 +234,19 @@ export function StepSchedule({
     }
     return slots
   }, [startTime, hours])
+
+  useEffect(() => {
+    if (startTime) {
+      if (!timeSlots.includes(startTime)) {
+        onStartTime('')
+        onEndTime('')
+        return
+      }
+    }
+    if (endTime && !endSlots.includes(endTime)) {
+      onEndTime('')
+    }
+  }, [timeSlots, endSlots, startTime, endTime, onStartTime, onEndTime])
 
   return (
     <section aria-label="Choose schedule" className="grid gap-6 lg:grid-cols-2">
@@ -278,6 +313,11 @@ export function StepSchedule({
               </Select>
             </Field>
           </div>
+          {isToday && (
+            <p className="mt-3 text-[13px] text-muted">
+              Only future time slots are shown for today.
+            </p>
+          )}
           {date && hours?.is_closed && (
             <p className="mt-4 rounded-lg bg-status-rejected-bg px-3 py-2 text-[13px] text-status-rejected">
               {facility?.name} is closed on {format(date, 'EEEE')}.
