@@ -6,16 +6,18 @@ attempt cap, resend cooldown) and regression-checks that existing
 username/password login, JWT refresh, and TOTP protection are unchanged.
 """
 
+import smtplib
 from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, unquote, urlparse
 
 from django.core import mail
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
+from . import email_otp
 from .models import AuditLog, EmailOTPVerification, User
 
 
@@ -391,3 +393,83 @@ class RegressionTests(APITestCase):
                 user__email="sendfail@gmail.com"
             ).exists()
         )
+
+    def test_email_failure_root_cause_is_logged(self):
+        # The real exception must hit the server logs (masked, no secrets)
+        # while the browser still only sees the friendly otp_send_failed code.
+        with mock.patch(
+            "accounts.email_otp.EmailMultiAlternatives.send",
+            side_effect=ConnectionError("smtp down"),
+        ):
+            with self.assertLogs("accounts.email_otp", level="ERROR") as logs:
+                response = _oauth_callback(self.client, "logfail@gmail.com")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("google_error=otp_send_failed", response.url)
+        self.assertTrue(
+            any("Email OTP dispatch failed" in record and "smtp down" in record for record in logs.output)
+        )
+        # The PII-safe mask is logged, never the raw address.
+        self.assertFalse(any("logfail@gmail.com" in record for record in logs.output))
+
+
+class EmailConfigDiagnosticsTests(SimpleTestCase):
+    """The dispatch diagnostics must be useful and must never leak secrets."""
+
+    def test_snapshot_never_contains_the_password(self):
+        secret = "abcd efgh ijkl mnop"
+        with override_settings(
+            EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+            EMAIL_HOST="smtp.gmail.com",
+            EMAIL_PORT=587,
+            EMAIL_USE_TLS=True,
+            EMAIL_HOST_USER="sender@gmail.com",
+            EMAIL_HOST_PASSWORD=secret,
+            DEFAULT_FROM_EMAIL="SAS RESERVE <sender@gmail.com>",
+        ):
+            snapshot = email_otp._email_config_snapshot()
+
+        self.assertIn("backend=django.core.mail.backends.smtp.EmailBackend", snapshot)
+        self.assertIn("host=smtp.gmail.com:587", snapshot)
+        self.assertIn("tls=True", snapshot)
+        self.assertIn("user=sender@gmail.com", snapshot)
+        self.assertIn("from=SAS RESERVE <sender@gmail.com>", snapshot)
+        # Presence / length / whitespace only — never the secret itself.
+        self.assertIn("password=set", snapshot)
+        self.assertIn("password_length=19", snapshot)
+        self.assertIn("password_has_whitespace=True", snapshot)
+        self.assertNotIn(secret, snapshot)
+        self.assertNotIn("abcd", snapshot)
+
+    def test_snapshot_reports_missing_password(self):
+        with override_settings(EMAIL_HOST_PASSWORD="", EMAIL_HOST_USER=""):
+            snapshot = email_otp._email_config_snapshot()
+
+        self.assertIn("password=<unset>", snapshot)
+        self.assertIn("password_length=0", snapshot)
+        self.assertIn("password_has_whitespace=False", snapshot)
+        self.assertIn("user=<unset>", snapshot)
+
+    def test_send_failure_diagnostic_omits_otp_and_password(self):
+        secret = "abcd efgh ijkl mnop"
+        failure = smtplib.SMTPAuthenticationError(
+            535, b"5.7.8 Username and Password not accepted"
+        )
+        with override_settings(
+            EMAIL_HOST_USER="sender@gmail.com", EMAIL_HOST_PASSWORD=secret
+        ):
+            with mock.patch.object(
+                email_otp.EmailMultiAlternatives, "send", side_effect=failure
+            ):
+                with self.assertLogs("accounts.email_otp", level="DEBUG") as logs:
+                    with self.assertRaises(smtplib.SMTPAuthenticationError):
+                        email_otp._send_otp_email(
+                            "dest@gmail.com", "123456", first_send=True
+                        )
+
+        output = "\n".join(logs.output)
+        self.assertIn("password=set", output)
+        self.assertIn("password_length=19", output)
+        self.assertNotIn(secret, output)
+        # Neither the OTP nor the recipient address leaks into the logs.
+        self.assertNotIn("123456", output)
+        self.assertNotIn("dest@gmail.com", output)

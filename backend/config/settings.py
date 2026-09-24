@@ -17,7 +17,24 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load environment variables from backend/.env
-load_dotenv(BASE_DIR / ".env")
+ENV_FILE = BASE_DIR / ".env"
+
+# mtime captured at import time. Used by the email diagnostics
+# (accounts/email_otp.py) to flag a process that is still running with the
+# values it read at startup while .env has since been edited.
+ENV_FILE_MTIME = ENV_FILE.stat().st_mtime if ENV_FILE.exists() else None
+
+# ``override=True`` is deliberate. python-dotenv defaults to NOT overwriting
+# variables that already exist in the process environment, so an exported or
+# inherited variable silently won over .env and `runserver` could be using
+# different SMTP credentials than a fresh `manage.py shell` — the classic
+# "the shell sends mail, the web request fails with 535" trap. backend/.env
+# is gitignored, so it only exists on a developer machine and cannot shadow a
+# real production environment.
+#
+# NOTE: .env is read ONCE per process. Django's autoreloader watches Python
+# files only, so an edited .env still requires a full server restart.
+load_dotenv(ENV_FILE, override=True)
 
 
 # SECURITY WARNING: keep the secret key used in production secret!

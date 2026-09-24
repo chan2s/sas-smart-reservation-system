@@ -17,6 +17,7 @@ Security properties:
 * The OTP is never returned by an API, never logged, never in a URL.
 """
 
+import logging
 import secrets
 from datetime import timedelta
 
@@ -33,6 +34,8 @@ from .models import (
     OTP_LIFETIME_SECONDS,
     OTP_RESEND_COOLDOWN_SECONDS,
 )
+
+logger = logging.getLogger(__name__)
 
 VERIFICATION_TOKEN_MAX_AGE_SECONDS = 1800  # 30 min to finish the session
 
@@ -53,6 +56,48 @@ def _mask_email(email: str) -> str:
         return "***"
     shown = local[:2] if len(local) > 2 else local[:1]
     return f"{shown}***@{domain}"
+
+
+def _env_file_changed_since_start() -> bool:
+    """True when .env was edited after this process imported settings.
+
+    Django's autoreloader does not watch ``.env``, so a long-running server
+    keeps the credentials it read at startup. Flagging the mismatch turns a
+    confusing "works in the shell, fails in the web request" bug into an
+    explicit log entry telling you to restart the server.
+    """
+    env_file = getattr(settings, "ENV_FILE", None)
+    loaded_mtime = getattr(settings, "ENV_FILE_MTIME", None)
+    if env_file is None or loaded_mtime is None:
+        return False
+    try:
+        return env_file.stat().st_mtime > loaded_mtime
+    except OSError:  # pragma: no cover — .env removed mid-run
+        return False
+
+
+def _email_config_snapshot() -> str:
+    """Secret-free summary of the email configuration *this process* loaded.
+
+    Logged before every dispatch and inside every failure path: when a send
+    works from ``manage.py shell`` but fails inside a web request, this line
+    shows exactly what differs between the two processes (the usual culprit
+    being a server started before ``.env`` was edited). The SMTP password is
+    never included — only whether it is set, its length, and whether it
+    carries stray whitespace.
+    """
+    password = settings.EMAIL_HOST_PASSWORD or ""
+    return (
+        f"backend={settings.EMAIL_BACKEND}"
+        f" host={settings.EMAIL_HOST}:{settings.EMAIL_PORT}"
+        f" tls={settings.EMAIL_USE_TLS}"
+        f" user={settings.EMAIL_HOST_USER or '<unset>'}"
+        f" password={'set' if password else '<unset>'}"
+        f" password_length={len(password)}"
+        f" password_has_whitespace={any(c.isspace() for c in password)}"
+        f" from={settings.DEFAULT_FROM_EMAIL}"
+        f" env_file_changed_since_start={_env_file_changed_since_start()}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +140,17 @@ def start_verification(user, email: str, *, request=None) -> str:
     except Exception as exc:  # noqa: BLE001 — surface a friendly error only
         if isinstance(exc, OtpError):
             raise
+        # Log the real failure (SMTP auth, connection, template, …) so the
+        # actual root cause lands in the server logs — the frontend only ever
+        # sees the friendly email_failed message below. No OTP/token/sender
+        # credentials are included here.
+        logger.exception(
+            "Email OTP dispatch failed during first-time Google sign-in "
+            "(user_id=%s, target=%s). Effective email config: %s",
+            user.pk,
+            _mask_email(email),
+            _email_config_snapshot(),
+        )
         raise OtpError(
             "email_failed",
             "We couldn't send the verification code. Please try again.",
@@ -156,6 +212,13 @@ def resend(token: str, *, request=None) -> None:
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, OtpError):
             raise
+        logger.exception(
+            "Email OTP dispatch failed on resend (user_id=%s, target=%s). "
+            "Effective email config: %s",
+            session.user.pk,
+            _mask_email(session.email),
+            _email_config_snapshot(),
+        )
         raise OtpError(
             "email_failed",
             "We couldn't send the verification code. Please try again.",
@@ -356,6 +419,11 @@ def _send_otp_email(email: str, otp: str, *, first_send: bool) -> None:
         to=[email],
     )
     message.attach_alternative(html_body, "text/html")
+    # Safe diagnostics (never the OTP, never the password): if this send
+    # fails while the identical configuration succeeds from `manage.py
+    # shell`, this line shows which settings *this* process is actually
+    # using — including a .env edit the process never picked up.
+    logger.debug("Email OTP dispatch config: %s", _email_config_snapshot())
     # send() may raise on SMTP failure; the caller converts that to a
     # friendly OtpError without leaking credentials or internals.
     message.send(fail_silently=False)

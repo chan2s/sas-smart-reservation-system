@@ -28,6 +28,52 @@ def secret_key_length_check(app_configs, **kwargs):
     return errors
 
 
+@checks.register()
+def email_backend_configuration_check(app_configs, **kwargs):
+    """Warn when SMTP is selected but the credentials cannot possibly work.
+
+    A missing or placeholder ``EMAIL_HOST_USER`` / ``EMAIL_HOST_PASSWORD`` is
+    the usual cause of Gmail's ``535 5.7.8 Username and Password not
+    accepted``: the username still triggers an SMTP login attempt that the
+    empty or placeholder password can never satisfy. Surfacing that at
+    startup is far cheaper than tracing a 535 raised inside an OAuth
+    callback.
+
+    Only the *presence* of the values is inspected — never their content —
+    so no secret can reach a log or a terminal.
+    """
+    from django.conf import settings
+
+    backend = getattr(settings, "EMAIL_BACKEND", "")
+    if "smtp" not in backend:
+        return []  # console / locmem / file backends need no credentials
+
+    placeholders = ("your-", "your_", "change-me", "changeme", "example.com")
+    problems = []
+    for label in ("EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD"):
+        value = getattr(settings, label, "") or ""
+        if not value:
+            problems.append(f"{label} is not set")
+        elif any(token in value.lower() for token in placeholders):
+            problems.append(f"{label} still holds the .env.example placeholder")
+
+    if not problems:
+        return []
+    return [
+        checks.Warning(
+            f"The SMTP email backend ({backend}) is configured but "
+            + "; ".join(problems)
+            + ".",
+            hint=(
+                "Set the real values in backend/.env and then RESTART the "
+                "development server: .env is only read when a process "
+                "starts, so a running server keeps the old values."
+            ),
+            id="sas.W002",
+        )
+    ]
+
+
 class AccountsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "accounts"
