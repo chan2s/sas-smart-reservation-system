@@ -230,6 +230,137 @@
   animation: shimmer 1.6s ease-in-out infinite;
 }
 
+/* ==========================================================================
+   Email OTP verification
+   The page is deliberately quiet: every animation below exists to confirm an
+   action the user just took (typed a digit, submitted, failed, succeeded).
+   Durations are short by design — 150–450 ms, plus one 620 ms success sweep.
+   ========================================================================== */
+
+/* Card / content entrance */
+@keyframes otp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-otp-rise {
+  animation: otp-rise 420ms var(--ease-out-soft) both;
+}
+
+/* A digit landing in its cell */
+@keyframes otp-digit-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@utility animate-otp-digit {
+  animation: otp-digit-in 160ms var(--ease-out-soft) both;
+}
+
+/* Focus indicator under the active cell */
+@keyframes otp-caret {
+  from {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@utility animate-otp-caret {
+  animation: otp-caret 170ms var(--ease-out-soft) both;
+}
+
+/* Wrong code — the cells shake, never the page */
+@keyframes otp-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+@utility animate-otp-shake {
+  animation: otp-shake 340ms var(--ease-out-soft) both;
+}
+
+/* Verified — each cell acknowledges just after its neighbour */
+@keyframes otp-confirm {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    transform: translateY(-2px) scale(1.03);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@utility animate-otp-confirm {
+  animation: otp-confirm 420ms var(--ease-out-soft) both;
+}
+
+/* One sweep used by both the success line and the submit progress bar:
+   the element travels its own width x3, i.e. across a full-width track. */
+@keyframes otp-travel {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@utility animate-otp-sweep {
+  animation: otp-travel 560ms var(--ease-out-soft) both;
+}
+
+@utility animate-otp-progress {
+  animation: otp-travel 1050ms cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+/* Verified tick — drawn, not faded */
+@keyframes otp-check-draw {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@utility animate-otp-check {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: otp-check-draw 360ms var(--ease-out-soft) 80ms forwards;
+}
+
 /* Reduced motion — respect user preference */
 @media (prefers-reduced-motion: reduce) {
   *,
