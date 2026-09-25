@@ -144,6 +144,27 @@ ENTRIES = [
         ),
     },
     {
+        "category": KnowledgeBaseEntry.Category.FAQ,
+        "title": "External Organization Fees",
+        "keywords": (
+            "external organization fee fees price pricing cost charge rate "
+            "how much gymnasium cafeteria chairs sound system operator"
+        ),
+        "visibility": V.PUBLIC,
+        "content": (
+            "Reservations made for external organizations are charged as "
+            "follows: Gymnasium ₱5,000.00 per reservation; Cafeteria "
+            "₱5,000.00 per reservation; chairs ₱5.00 each; sound system "
+            "₱1,000.00 each; and a sound system operator ₱5.00 per hour of "
+            "the event. Rooms without a configured rate, such as the "
+            "Audio-Visual Room, are free. Internal campus requesters — "
+            "students, faculty, employees, and campus organizations — are "
+            "not charged. Rates are configurable by the SAS Office, and the "
+            "amount shown alongside a recommendation is an estimate until "
+            "the reservation is approved."
+        ),
+    },
+    {
         "category": KnowledgeBaseEntry.Category.GENERAL,
         "title": "About SAS Reserve",
         "keywords": "about system what is sas reserve purpose",

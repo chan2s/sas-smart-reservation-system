@@ -174,17 +174,19 @@ export function ReservationWizardPage() {
         start_time: startTime,
         end_time: endTime,
         items: itemsList,
+        // Trusted server-side: only staff can actually enable external fees.
+        requester_type: requesterType,
       })
     }, 350)
     return () => window.clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facilityId, dateISO, startTime, endTime, itemsList, dateInvalid])
+  }, [facilityId, dateISO, startTime, endTime, itemsList, dateInvalid, requesterType])
 
   // Smart recommendations, recalculated live whenever the event details that
   // drive the rules change (event type, participants, facility, purpose,
   // special requirements, schedule). A fingerprint of those inputs guards the
   // effect so each change triggers exactly one fetch.
-  const recommendationInputs = `${stepKey}|${details.event_type}|${participants}|${facilityId ?? ''}|${details.purpose.trim()}|${details.special_requirements.trim()}|${dateISO}|${startTime}|${endTime}`
+  const recommendationInputs = `${stepKey}|${details.event_type}|${participants}|${facilityId ?? ''}|${details.purpose.trim()}|${details.special_requirements.trim()}|${dateISO}|${startTime}|${endTime}|${requesterType}`
   useEffect(() => {
     const hasInputs =
       scheduleComplete && !dateInvalid && participants >= 1 && details.event_type
@@ -202,6 +204,7 @@ export function ReservationWizardPage() {
         date: dateISO,
         start_time: startTime,
         end_time: endTime,
+        requester_type: requesterType,
       },
       {
         onSuccess: (data) => {
@@ -368,6 +371,7 @@ export function ReservationWizardPage() {
                   start_time: startTime,
                   end_time: endTime,
                   items: itemsList,
+                  requester_type: requesterType,
                 },
                 { onSuccess: () => setStep(1) },
               )
@@ -537,6 +541,8 @@ export function ReservationWizardPage() {
               facilityName: facility?.name ?? '',
               schedule: startTime && endTime ? `${formatTime(startTime)} – ${formatTime(endTime)}` : '',
             }}
+            pricing={availabilityCheck.data?.pricing ?? null}
+            pricingLoading={availabilityCheck.isPending}
           />
         )}
 
@@ -556,6 +562,7 @@ export function ReservationWizardPage() {
             onUseAlternative={useAlternative}
             isAdmin={isAdmin}
             isCancellationRestricted={inCancellationWindow}
+            pricing={availabilityCheck.data?.pricing ?? null}
             requesterSection={
               isAdmin ? (
                 <Card>

@@ -6,6 +6,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { Badge } from '@/components/ui/Badge'
 import { AvailabilityCheck } from '@/components/reservations/AvailabilityCheck'
+import { PricingBreakdown } from '@/components/reservations/PricingBreakdown'
 import { RecommendationCard } from '@/components/reservations/RecommendationCard'
 import { MonthGrid } from '@/components/calendar/MonthGrid'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
@@ -18,6 +19,7 @@ import type {
   AvailabilityCheck as AvailabilityCheckResult,
   Equipment,
   EventType,
+  PricingQuote,
   Recommendation,
 } from '@/lib/types'
 
@@ -493,6 +495,8 @@ export function StepResources({
   onAcceptRecommendations,
   onDismissRecommendations,
   eventContext,
+  pricing,
+  pricingLoading,
 }: {
   equipment: Equipment[]
   items: Record<number, number>
@@ -503,6 +507,9 @@ export function StepResources({
   onAcceptRecommendations: () => void
   onDismissRecommendations: () => void
   eventContext: { eventName: string; participants: string; facilityName: string; schedule: string }
+  /** Live estimate for the currently requested items/schedule. */
+  pricing?: PricingQuote | null
+  pricingLoading?: boolean
 }) {
   const recommendedIds = useMemo(
     () => new Set((recommendations ?? []).map((recommendation) => recommendation.equipment_id)),
@@ -548,6 +555,18 @@ export function StepResources({
       {recommendationLoading && !recommendations && (
         <div className="mt-5 max-w-2xl">
           <RecommendationCard recommendations={[]} equipment={[]} items={{}} onQuantity={() => {}} loading />
+        </div>
+      )}
+
+      {/*
+       * Estimated cost. Rendered from the backend quote for the requested
+       * items, so it recalculates live as quantities, facility, or duration
+       * change — no page refresh. Internal requesters always see ₱0.00 with a
+       * "no external fees" note rather than external prices.
+       */}
+      {(pricing || pricingLoading) && (
+        <div className="mt-5 max-w-2xl">
+          <PricingBreakdown pricing={pricing} loading={pricingLoading} />
         </div>
       )}
 
@@ -676,6 +695,7 @@ export function StepReview({
   isAdmin,
   requesterSection,
   isCancellationRestricted,
+  pricing,
 }: {
   facilityName: string
   facilityType: string
@@ -690,6 +710,8 @@ export function StepReview({
   checking: boolean
   onUseAlternative: (alternative: AlternativeSlot) => void
   isAdmin: boolean
+  /** Estimated external-organization cost for the final selected resources. */
+  pricing?: PricingQuote | null
   /** Requester identity block (campus summary or external contact details). */
   requesterSection?: ReactNode
   /** True when the event date falls within the 2-day cancellation window
@@ -716,6 +738,8 @@ export function StepReview({
 
       {report && <AvailabilityCheck report={report} onUseAlternative={onUseAlternative} />}
       {checking && !report && <div className="h-24 animate-pulse rounded-xl bg-soft" aria-hidden />}
+
+      <PricingBreakdown pricing={pricing} loading={checking && !pricing} title="Estimated cost" />
 
       {requesterSection}
 

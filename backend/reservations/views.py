@@ -20,7 +20,29 @@ from .serializers import (
 )
 from .services import workflow
 from .services.availability import check_availability, find_alternatives
-from .services.recommendations import recommend_resources
+from .services.pricing import quote_fees, quote_to_dict, rates_payload
+from .services.recommendations import recommend_resources_with_pricing
+
+
+def _trusted_requester_type(request, requested) -> str:
+    """Decide the pricing context from trusted data, never a client flag.
+
+    External-organization pricing is only ever surfaced to SAS staff (who
+    create external reservations on an organization's behalf) and is
+    validated against the caller's role. Everyone else is treated as an
+    internal campus requester, whose reservations are free. This means a
+    forged ``requester_type=EXTERNAL`` from a non-staff client cannot switch
+    on external fees.
+    """
+    user = getattr(request, "user", None)
+    if (
+        requested == Reservation.RequesterType.EXTERNAL
+        and user is not None
+        and user.is_authenticated
+        and user.is_sas_staff
+    ):
+        return Reservation.RequesterType.EXTERNAL
+    return Reservation.RequesterType.CAMPUS
 
 
 class ReservationViewSet(viewsets.ModelViewSet):
@@ -389,13 +411,42 @@ def availability_check(request):
             {"detail": "Facility not found."}, status=status.HTTP_404_NOT_FOUND
         )
 
-    report["alternatives"] = find_alternatives(
+    requester_type = _trusted_requester_type(request, data.get("requester_type"))
+    facility = Facility.objects.filter(pk=data["facility_id"]).first()
+
+    def _quote(target_date, start, end):
+        quote = quote_fees(
+            requester_type,
+            facility=facility,
+            items=data.get("items", []),
+            start_time=start,
+            end_time=end,
+        )
+        return quote_to_dict(quote)
+
+    # Current estimate for the requested window...
+    report["pricing"] = _quote(
+        datetime.date.fromisoformat(data["date"]),
+        datetime.time.fromisoformat(data["start_time"]),
+        datetime.time.fromisoformat(data["end_time"]),
+    )
+
+    alternatives = find_alternatives(
         data["facility_id"],
         datetime.date.fromisoformat(data["date"]),
         datetime.time.fromisoformat(data["start_time"]),
         datetime.time.fromisoformat(data["end_time"]),
         data.get("items", []),
     )
+    # ...and a fresh estimate for every proposed alternative, so a rescheduled
+    # slot never displays a stale total.
+    for slot in alternatives:
+        slot["pricing"] = _quote(
+            datetime.date.fromisoformat(slot["date"]),
+            datetime.time.fromisoformat(slot["start_time"]),
+            datetime.time.fromisoformat(slot["end_time"]),
+        )
+    report["alternatives"] = alternatives
     return Response(report)
 
 
@@ -427,7 +478,10 @@ def resources_recommendation(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    recommendations = recommend_resources(
+    # Resources are chosen from the event profile first; the applicable
+    # external-organization cost is calculated afterwards from the trusted
+    # requester context, never from price.
+    result = recommend_resources_with_pricing(
         event_type,
         participants,
         facility_id=data.get("facility_id"),
@@ -436,8 +490,21 @@ def resources_recommendation(request):
         target_date=target_date,
         start_time=start_time,
         end_time=end_time,
+        requester_type=_trusted_requester_type(request, data.get("requester_type")),
     )
-    return Response({"recommendations": recommendations})
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def pricing_rates(request):
+    """Active external-organization rates.
+
+    Served from the database so the frontend can display amounts (and label
+    quantities) without hardcoding any price in React. Staff-only edits in
+    Django admin flow straight through.
+    """
+    return Response({"currency": "PHP", "rates": rates_payload()})
 
 
 @api_view(["GET"])

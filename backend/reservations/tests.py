@@ -8,9 +8,18 @@ from rest_framework.test import APIClient
 
 from equipment.models import Equipment, EquipmentCategory, MaintenanceRecord
 from facilities.models import Facility, OperatingHour
-from .models import RecommendationRule, Reservation, ReservationItem
+from .models import (
+    PricingRule,
+    RecommendationRule,
+    Reservation,
+    ReservationItem,
+)
 from .services.availability import check_availability, find_alternatives
-from .services.recommendations import recommend_resources
+from .services.pricing import quote_fees, snapshot_reservation_fees
+from .services.recommendations import (
+    recommend_resources,
+    recommend_resources_with_pricing,
+)
 
 User = get_user_model()
 
@@ -340,6 +349,11 @@ class ReservationApiTests(TestCase):
         self.chairs = Equipment.objects.create(
             name="Folding Chair", category=category, total_quantity=100
         )
+        # A near-future Monday so the (Monday-only) operating hours line up and
+        # reservation dates never go stale as the calendar advances.
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
 
     def _auth(self, user):
         self.client.force_authenticate(user)
@@ -347,7 +361,7 @@ class ReservationApiTests(TestCase):
     def _payload(self, **overrides):
         payload = dict(
             facility_id=self.facility.id,
-            date="2026-09-14",
+            date=self.day.isoformat(),
             start_time="09:00",
             end_time="11:00",
             event_name="Orientation",
@@ -393,7 +407,7 @@ class ReservationApiTests(TestCase):
             "/api/reservations/",
             self._payload(
                 event_name="External booking",
-                date="2026-10-05",
+                date=(self.day + timedelta(days=7)).isoformat(),
                 requester_type="EXTERNAL",
                 organization="ABC School",
                 contact_person="Juan",
@@ -520,7 +534,7 @@ class ReservationApiTests(TestCase):
                 "event_type": "SEMINAR",
                 "expected_participants": 150,
                 "purpose": "Student leadership seminar",
-                "date": "2026-09-14",
+                "date": self.day.isoformat(),
                 "start_time": "09:00",
                 "end_time": "11:00",
             },
@@ -741,7 +755,7 @@ class ReservationApiTests(TestCase):
             "/api/availability/check/",
             {
                 "facility_id": self.facility.id,
-                "date": "2026-09-14",
+                "date": self.day.isoformat(),
                 "start_time": "09:00",
                 "end_time": "11:00",
                 "items": [{"equipment_id": self.chairs.id, "quantity": 20}],
@@ -765,7 +779,11 @@ class ReservationApiTests(TestCase):
         self._auth(self.requester)
         self.client.post("/api/reservations/", self._payload(), format="json")
         response = self.client.get(
-            "/api/calendar/events/", {"start": "2026-09-01", "end": "2026-09-30"}
+            "/api/calendar/events/",
+            {
+                "start": (self.day - timedelta(days=7)).isoformat(),
+                "end": (self.day + timedelta(days=7)).isoformat(),
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()), 1)
@@ -775,7 +793,11 @@ class ReservationApiTests(TestCase):
         self._auth(self.requester)
         self.client.post("/api/reservations/", self._payload(), format="json")
         response = self.client.get(
-            "/api/calendar/events/", {"start": "2026-09-01", "end": "2026-09-30"}
+            "/api/calendar/events/",
+            {
+                "start": (self.day - timedelta(days=7)).isoformat(),
+                "end": (self.day + timedelta(days=7)).isoformat(),
+            },
         )
         event = response.json()[0]
         self.assertIn("is_sas_staff", event)
@@ -802,7 +824,11 @@ class ReservationApiTests(TestCase):
             format="json",
         )
         response = self.client.get(
-            "/api/calendar/events/", {"start": "2026-09-01", "end": "2026-09-30"}
+            "/api/calendar/events/",
+            {
+                "start": (self.day - timedelta(days=7)).isoformat(),
+                "end": (self.day + timedelta(days=7)).isoformat(),
+            },
         )
         events = response.json()
         self.assertTrue(events)
@@ -979,11 +1005,15 @@ class RequesterTypeApiTests(TestCase):
         OperatingHour.objects.create(
             facility=self.facility, day_of_week=0, open_time=time(6, 0), close_time=time(22, 0)
         )
+        # Near-future Monday matching the operating hours above.
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
 
     def _external_payload(self, **overrides):
         payload = dict(
             facility_id=self.facility.id,
-            date="2026-09-14",
+            date=self.day.isoformat(),
             start_time="13:00",
             end_time="17:00",
             event_name="Inter-school Basketball Tournament",
@@ -1010,7 +1040,7 @@ class RequesterTypeApiTests(TestCase):
             "/api/reservations/",
             {
                 "facility_id": self.facility.id,
-                "date": "2026-09-14",
+                "date": self.day.isoformat(),
                 "start_time": "09:00",
                 "end_time": "11:00",
                 "event_name": "Orientation",
@@ -1046,7 +1076,7 @@ class RequesterTypeApiTests(TestCase):
             "/api/reservations/",
             {
                 "facility_id": self.facility.id,
-                "date": "2026-09-14",
+                "date": self.day.isoformat(),
                 "start_time": "09:00",
                 "end_time": "11:00",
                 "event_name": "Hijack",
@@ -1117,12 +1147,16 @@ class AuthenticationRequiredTests(TestCase):
         self.chairs = Equipment.objects.create(
             name="Folding Chair", category=category, total_quantity=100
         )
+        # Near-future Monday matching the operating hours above.
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
 
     def test_anonymous_user_cannot_create_reservation(self):
         """Unauthenticated users cannot create reservations."""
         payload = {
             "facility_id": self.facility.id,
-            "date": "2026-09-14",
+            "date": self.day.isoformat(),
             "start_time": "09:00",
             "end_time": "11:00",
             "event_name": "Test Event",
@@ -1138,7 +1172,7 @@ class AuthenticationRequiredTests(TestCase):
         self.client.force_authenticate(self.user)
         payload = {
             "facility_id": self.facility.id,
-            "date": "2026-09-14",
+            "date": self.day.isoformat(),
             "start_time": "09:00",
             "end_time": "11:00",
             "event_name": "Test Event",
@@ -1180,7 +1214,7 @@ class AuthenticationRequiredTests(TestCase):
         self.client.force_authenticate(self.user)
         payload = {
             "facility_id": self.facility.id,
-            "date": "2026-09-14",
+            "date": self.day.isoformat(),
             "start_time": "09:00",
             "end_time": "11:00",
             "event_name": "Test Event",
@@ -1209,7 +1243,7 @@ class AuthenticationRequiredTests(TestCase):
         self.client.force_authenticate(admin)
         payload = {
             "facility_id": self.facility.id,
-            "date": "2026-09-14",
+            "date": self.day.isoformat(),
             "start_time": "09:00",
             "end_time": "11:00",
             "event_name": "Test Event",
@@ -1254,7 +1288,7 @@ class AuthenticationRequiredTests(TestCase):
         self.client.force_authenticate(self.user)
         payload = {
             "facility_id": self.facility.id,
-            "date": "2026-09-14",
+            "date": self.day.isoformat(),
             "start_time": "09:00",
             "end_time": "11:00",
             "event_name": "Test Event",
@@ -1283,7 +1317,7 @@ class AuthenticationRequiredTests(TestCase):
         self.client.force_authenticate(external_user)
         payload = {
             "facility_id": self.facility.id,
-            "date": "2026-09-14",
+            "date": self.day.isoformat(),
             "start_time": "09:00",
             "end_time": "11:00",
             "event_name": "External Event",
@@ -1566,3 +1600,451 @@ class SameDayStartTimeApiTests(TestCase):
             self._payload(date="2026-09-21", start_time="06:00", end_time="08:00")
         )
         self.assertEqual(response.status_code, 201, response.content)
+
+
+class ExternalOrganizationPricingTests(TestCase):
+    """External-organization pricing layered on the recommendation engine.
+
+    Covers the acceptance matrix: internal requesters stay free, external
+    organizations get the configured fees, amounts are derived from the
+    reservation's own details, and the backend never trusts a client total.
+    """
+
+    def setUp(self):
+        from decimal import Decimal as D
+
+        self.client = APIClient()
+        self.staff = User.objects.create_user(
+            username="staff", password="pass12345", role=User.Role.STAFF
+        )
+        self.requester = User.objects.create_user(
+            username="campus", password="pass12345", role=User.Role.REQUESTER
+        )
+
+        self.gym = Facility.objects.create(
+            name="Gymnasium", facility_type=Facility.FacilityType.GYMNASIUM, capacity=2000
+        )
+        self.cafeteria = Facility.objects.create(
+            name="Cafeteria", facility_type=Facility.FacilityType.CAFETERIA, capacity=500
+        )
+        self.avr = Facility.objects.create(
+            name="Audio-Visual Room", facility_type=Facility.FacilityType.AVR, capacity=120
+        )
+        # A Monday in the near future, so availability validation passes no
+        # matter when the suite runs (a fixed date goes stale).
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
+        for facility in (self.gym, self.cafeteria, self.avr):
+            OperatingHour.objects.create(
+                facility=facility,
+                day_of_week=self.day.weekday(),
+                open_time=time(6, 0),
+                close_time=time(22, 0),
+            )
+
+        self.chairs_category = EquipmentCategory.objects.create(name="Chairs")
+        self.sound_category = EquipmentCategory.objects.create(name="Sound Systems")
+        self.chairs = Equipment.objects.create(
+            name="Folding Chair", category=self.chairs_category, total_quantity=300
+        )
+        self.sound = Equipment.objects.create(
+            name="Portable Sound System", category=self.sound_category, total_quantity=4
+        )
+
+        # Equipment/operator rates are staff-editable data. The two facility
+        # rates come from the default-rates data migration.
+        self.chair_rule = PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.EQUIPMENT,
+            equipment_category=self.chairs_category,
+            label="Chairs",
+            unit=PricingRule.Unit.UNIT,
+            unit_price=D("5.00"),
+        )
+        self.sound_rule = PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.EQUIPMENT,
+            equipment_category=self.sound_category,
+            label="Sound System",
+            unit=PricingRule.Unit.UNIT,
+            unit_price=D("1000.00"),
+        )
+        self.operator_rule = PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.OPERATOR,
+            equipment_category=self.sound_category,
+            label="Sound System Operator",
+            unit=PricingRule.Unit.HOUR,
+            unit_price=D("5.00"),
+        )
+
+    # -- helpers ----------------------------------------------------------
+
+    def _quote(self, requester_type, facility, items=None, start=None, end=None):
+        return quote_fees(
+            requester_type,
+            facility=facility,
+            items=items or [],
+            start_time=start or time(13, 0),
+            end_time=end or time(17, 0),
+        )
+
+    def _chairs(self, quantity):
+        return [{"equipment_id": self.chairs.id, "quantity": quantity}]
+
+    def _sound(self, quantity):
+        return [{"equipment_id": self.sound.id, "quantity": quantity}]
+
+    @staticmethod
+    def _money(value):
+        return f"{value:.2f}"
+
+    # -- tests 1-10: fee matrix -------------------------------------------
+
+    def test_internal_requester_is_never_charged(self):
+        """TEST 1/10: internal requesters remain free for every facility."""
+        for facility in (self.gym, self.cafeteria, self.avr):
+            quote = self._quote(
+                Reservation.RequesterType.CAMPUS, facility, self._chairs(100)
+            )
+            self.assertFalse(quote["external"])
+            self.assertEqual(quote["fees"], [])
+            self.assertEqual(quote["total"], 0)
+
+    def test_external_gymnasium_flat_fee(self):
+        """TEST 2: external organization + Gymnasium = ₱5,000."""
+        quote = self._quote(Reservation.RequesterType.EXTERNAL, self.gym)
+        self.assertEqual(self._money(quote["total"]), "5000.00")
+        self.assertEqual(quote["fees"][0]["fee_type"], PricingRule.FeeType.FACILITY)
+
+    def test_external_cafeteria_flat_fee(self):
+        """TEST 3: external organization + Cafeteria = ₱5,000."""
+        quote = self._quote(Reservation.RequesterType.EXTERNAL, self.cafeteria)
+        self.assertEqual(self._money(quote["total"]), "5000.00")
+
+    def test_external_chairs_fee(self):
+        """TEST 4: 100 chairs = 100 × ₱5 = ₱500."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.avr, self._chairs(100)
+        )
+        chair_line = next(f for f in quote["fees"] if f["description"] == "Chairs")
+        self.assertEqual(self._money(chair_line["subtotal"]), "500.00")
+
+    def test_external_two_sound_systems(self):
+        """TEST 5: 2 sound systems = 2 × ₱1,000 = ₱2,000."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.avr, self._sound(2)
+        )
+        sound_line = next(
+            f for f in quote["fees"] if f["description"] == "Sound System"
+        )
+        self.assertEqual(self._money(sound_line["subtotal"]), "2000.00")
+        # 2 systems also trigger one operator line for the event duration.
+        self.assertEqual(self._money(quote["total"]), "2020.00")
+
+    def test_external_operator_fee_from_duration(self):
+        """TEST 6: sound system + 5-hour event = 5 × ₱5 = ₱25."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            self._sound(1),
+            start=time(13, 0),
+            end=time(18, 0),
+        )
+        operator = next(
+            f for f in quote["fees"] if f["fee_type"] == PricingRule.FeeType.OPERATOR
+        )
+        self.assertEqual(self._money(operator["subtotal"]), "25.00")
+        self.assertEqual(self._money(operator["quantity"]), "5.00")
+
+    def test_chair_quantity_change_recalculates(self):
+        """TEST 7: 100 → 120 chairs changes ₱500 → ₱600."""
+        first = self._quote(Reservation.RequesterType.EXTERNAL, self.avr, self._chairs(100))
+        second = self._quote(Reservation.RequesterType.EXTERNAL, self.avr, self._chairs(120))
+        self.assertEqual(self._money(first["total"]), "500.00")
+        self.assertEqual(self._money(second["total"]), "600.00")
+
+    def test_duration_change_recalculates_operator(self):
+        """TEST 8: 4h → 6h changes the operator fee ₱20 → ₱30."""
+        four = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.avr, self._sound(1),
+            start=time(13, 0), end=time(17, 0),
+        )
+        six = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.avr, self._sound(1),
+            start=time(13, 0), end=time(19, 0),
+        )
+        operator_four = next(f for f in four["fees"] if f["fee_type"] == "OPERATOR")
+        operator_six = next(f for f in six["fees"] if f["fee_type"] == "OPERATOR")
+        self.assertEqual(self._money(operator_four["subtotal"]), "20.00")
+        self.assertEqual(self._money(operator_six["subtotal"]), "30.00")
+
+    def test_facility_change_removes_fee(self):
+        """TEST 9: Gymnasium → AVR drops the ₱5,000 facility fee."""
+        gym = self._quote(Reservation.RequesterType.EXTERNAL, self.gym)
+        avr = self._quote(Reservation.RequesterType.EXTERNAL, self.avr)
+        self.assertEqual(self._money(gym["total"]), "5000.00")
+        self.assertEqual(self._money(avr["total"]), "0.00")
+
+    def test_no_operator_fee_without_sound_system(self):
+        """An order with no sound system is never charged an operator fee."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.avr, self._chairs(50)
+        )
+        self.assertFalse(
+            any(f["fee_type"] == PricingRule.FeeType.OPERATOR for f in quote["fees"])
+        )
+
+    # -- recommendation engine integration --------------------------------
+
+    def test_recommendation_prices_the_seminar_example(self):
+        """AVR · Seminar · 100 participants · 4h → ₱1,520 estimated."""
+        result = recommend_resources_with_pricing(
+            "SEMINAR",
+            100,
+            facility_id=self.avr.id,
+            target_date=self.day,
+            start_time=time(13, 0),
+            end_time=time(17, 0),
+            requester_type=Reservation.RequesterType.EXTERNAL,
+        )
+        by_category = {r["category"]: r for r in result["recommendations"]}
+        chairs = by_category["Chairs"]
+        self.assertEqual(chairs["quantity"], 100)
+        self.assertEqual(chairs["unit_price"], "5.00")
+        self.assertEqual(chairs["estimated_cost"], "500.00")
+        self.assertEqual(result["pricing"]["total"], "1520.00")
+
+    def test_recommendation_is_free_for_internal_requester(self):
+        """The same event for a campus requester shows no external fees."""
+        result = recommend_resources_with_pricing(
+            "SEMINAR",
+            100,
+            facility_id=self.avr.id,
+            start_time=time(13, 0),
+            end_time=time(17, 0),
+            requester_type=Reservation.RequesterType.CAMPUS,
+        )
+        self.assertTrue(result["recommendations"])
+        self.assertFalse(result["pricing"]["external"])
+        self.assertEqual(result["pricing"]["total"], "0.00")
+        self.assertEqual(result["pricing"]["fees"], [])
+
+    def test_recommendation_quantity_survives_shortage(self):
+        """TEST 12: availability and recommendation stay separate."""
+        # Only 20 chairs on hand, but the event needs 29.
+        self.chairs.total_quantity = 20
+        self.chairs.save(update_fields=["total_quantity"])
+        result = recommend_resources_with_pricing(
+            "SEMINAR",
+            29,
+            facility_id=self.avr.id,
+            start_time=time(13, 0),
+            end_time=time(17, 0),
+            requester_type=Reservation.RequesterType.EXTERNAL,
+        )
+        chairs = next(r for r in result["recommendations"] if r["category"] == "Chairs")
+        self.assertEqual(chairs["quantity"], 29)  # needed quantity, not availability
+        self.assertEqual(chairs["available"], 20)
+        self.assertEqual(chairs["recommended"], 20)
+
+    # -- backend authority + snapshot -------------------------------------
+
+    def test_backend_recalculates_manipulated_total(self):
+        """TEST 11: a forged total is ignored; the backend computes ₱6,520."""
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            "/api/reservations/",
+            {
+                "facility_id": self.gym.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "17:00",
+                "event_name": "External Seminar",
+                "event_type": "SEMINAR",
+                "organization": "ABC School",
+                "organization_type": "SCHOOL",
+                "contact_person": "Juan",
+                "contact_email": "juan@example.com",
+                "purpose": "Seminar",
+                "expected_participants": 100,
+                "requester_type": "EXTERNAL",
+                "items": [
+                    {"equipment_id": self.chairs.id, "quantity": 100},
+                    {"equipment_id": self.sound.id, "quantity": 1},
+                ],
+                # Manipulated values must be ignored.
+                "estimated_total": "1.00",
+                "total_amount": "1.00",
+                "fees": [],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        self.assertEqual(body["estimated_total"], "6520.00")
+        self.assertEqual(len(body["fees"]), 4)
+
+        stored = Reservation.objects.get(pk=body["id"])
+        self.assertEqual(str(stored.estimated_total), "6520.00")
+        self.assertEqual(stored.fees.count(), 4)
+
+    def test_internal_reservation_snapshots_zero(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            "/api/reservations/",
+            {
+                "facility_id": self.gym.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "17:00",
+                "event_name": "Campus Sports",
+                "event_type": "SPORTS",
+                "purpose": "Intramurals",
+                "expected_participants": 50,
+                "items": [{"equipment_id": self.chairs.id, "quantity": 50}],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        self.assertEqual(body["requester_type"], "CAMPUS")
+        self.assertEqual(body["estimated_total"], "0.00")
+        self.assertEqual(body["fees"], [])
+
+    def test_snapshot_survives_later_rate_change(self):
+        """TEST 17 (acceptance): stored rates do not change retroactively."""
+        self.client.force_authenticate(self.staff)
+        reservation = Reservation.objects.create(
+            requester_type=Reservation.RequesterType.EXTERNAL,
+            organization="ABC School",
+            contact_person="Juan",
+            contact_email="juan@example.com",
+            event_name="External Seminar",
+            event_type=Reservation.EventType.SEMINAR,
+            facility=self.avr,
+            date=self.day,
+            start_time=time(13, 0),
+            end_time=time(17, 0),
+            expected_participants=100,
+            purpose="Seminar",
+        )
+        ReservationItem.objects.create(
+            reservation=reservation, equipment=self.chairs, quantity=100
+        )
+        snapshot_reservation_fees(reservation)
+        self.assertEqual(str(reservation.estimated_total), "500.00")
+
+        # Staff later raise the chair rate; the existing snapshot must not move.
+        self.chair_rule.unit_price = 9
+        self.chair_rule.save(update_fields=["unit_price"])
+        reservation.refresh_from_db()
+        self.assertEqual(str(reservation.estimated_total), "500.00")
+        fee = reservation.fees.get(fee_type=PricingRule.FeeType.EQUIPMENT)
+        self.assertEqual(str(fee.unit_price), "5.00")
+
+    # -- endpoints --------------------------------------------------------
+
+    def test_recommendation_endpoint_hides_external_pricing_from_requesters(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            "/api/availability/resources/",
+            {
+                "event_type": "SEMINAR",
+                "expected_participants": 100,
+                "facility_id": self.avr.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "17:00",
+                "requester_type": "EXTERNAL",  # ignored for non-staff
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["pricing"]["total"], "0.00")
+
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            "/api/availability/resources/",
+            {
+                "event_type": "SEMINAR",
+                "expected_participants": 100,
+                "facility_id": self.avr.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "17:00",
+                "requester_type": "EXTERNAL",
+            },
+            format="json",
+        )
+        self.assertEqual(response.json()["pricing"]["total"], "1520.00")
+
+    def test_availability_endpoint_recalculates_pricing_per_slot(self):
+        """Alternative scheduling never keeps a stale total (TEST 13)."""
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            "/api/availability/check/",
+            {
+                "facility_id": self.avr.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "17:00",
+                "requester_type": "EXTERNAL",
+                "items": [{"equipment_id": self.sound.id, "quantity": 1}],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["pricing"]["total"], "1020.00")
+        for slot in body["alternatives"]:
+            self.assertIn("pricing", slot)
+
+    def test_rates_endpoint_exposes_configurable_rates(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.get("/api/pricing/rates/")
+        self.assertEqual(response.status_code, 200)
+        rates = response.json()["rates"]
+        self.assertTrue(rates)
+        self.assertTrue(any(r["unit_price"] == "5.00" for r in rates))
+
+    def test_unavailable_facility_still_conflicts(self):
+        """TEST 13: existing conflict detection is untouched by pricing."""
+        Reservation.objects.create(
+            requester=self.requester,
+            event_name="Blocking",
+            facility=self.gym,
+            date=self.day,
+            start_time=time(13, 0),
+            end_time=time(15, 0),
+            status=Reservation.Status.APPROVED,
+        )
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            "/api/reservations/",
+            {
+                "facility_id": self.gym.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "17:00",
+                "event_name": "External Seminar",
+                "event_type": "SEMINAR",
+                "organization": "ABC School",
+                "contact_person": "Juan",
+                "contact_email": "juan@example.com",
+                "purpose": "Seminar",
+                "expected_participants": 100,
+                "requester_type": "EXTERNAL",
+                "items": [],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 409, response.content)
+
+    def test_internals_unaffected_when_no_rates_configured(self):
+        """A requester order with no rules at all still succeeds at ₱0."""
+        self.chair_rule.delete()
+        quote = self._quote(Reservation.RequesterType.CAMPUS, self.gym, self._chairs(10))
+        self.assertEqual(quote["total"], 0)
+        external = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.avr, self._chairs(10)
+        )
+        self.assertEqual(self._money(external["total"]), "0.00")

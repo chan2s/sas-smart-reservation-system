@@ -26,6 +26,7 @@ class Intent:
     EQUIPMENT_AVAILABILITY = "EQUIPMENT_AVAILABILITY"
     MAINTENANCE_STATUS = "MAINTENANCE_STATUS"
     RESERVATION_POLICY = "RESERVATION_POLICY"
+    RESERVATION_PRICING = "RESERVATION_PRICING"
     CANCELLATION_POLICY = "CANCELLATION_POLICY"
     BOOKING_GUIDE = "BOOKING_GUIDE"
     REGISTRATION_HELP = "REGISTRATION_HELP"
@@ -60,6 +61,14 @@ _RULES: tuple[IntentRule, ...] = (
         Intent.CANCELLATION_POLICY,
         (("cancellation policy",), ("cancel", "policy"), ("cancel", "rules"), ("cancel", "fee"), ("cancel", "charge")),
         weight=95,
+    ),
+    # Pricing questions. Weight 94 sits below cancellation (so "cancel fee"
+    # stays a cancellation question) but above the generic policy rules, and
+    # is answered from the approved knowledge base only.
+    IntentRule(
+        Intent.RESERVATION_PRICING,
+        (("fee",), ("fees",), ("price",), ("pricing",), ("cost",), ("how much",), ("rate",), ("charge",), ("external organization",)),
+        weight=94,
     ),
     IntentRule(
         Intent.RESERVATION_POLICY,

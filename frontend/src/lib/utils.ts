@@ -119,6 +119,22 @@ export function formatDateTime(iso: string): string {
   return format(parseISO(iso), 'MMM d, yyyy · h:mm a')
 }
 
+/**
+ * Format a money value from the pricing engine (fixed-point string or number)
+ * as Philippine pesos, e.g. "5000.00" -> "₱5,000.00".
+ *
+ * Amounts come from the backend already rounded to 2 decimals; this only adds
+ * grouping and the peso sign, so a rate is never recomputed in the browser.
+ */
+export function formatCurrency(value: string | number): string {
+  const amount = typeof value === 'number' ? value : Number.parseFloat(value || '0')
+  if (!Number.isFinite(amount)) return '₱0.00'
+  return `₱${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
 export function weekdayLabel(dayOfWeek: number): string {
   return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][
     dayOfWeek

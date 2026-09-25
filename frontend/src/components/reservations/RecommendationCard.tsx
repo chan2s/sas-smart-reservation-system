@@ -2,7 +2,7 @@ import { Sparkles, Check, Minus, Plus, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import type { Equipment, Recommendation } from '@/lib/types'
-import { cn, equipmentPrimaryImageUrl } from '@/lib/utils'
+import { cn, equipmentPrimaryImageUrl, formatCurrency } from '@/lib/utils'
 
 interface EventContext {
   eventName: string
@@ -124,7 +124,7 @@ export function RecommendationCard({
                         shortage ? 'bg-status-pending-bg text-status-pending' : 'bg-status-available-bg text-status-available',
                       )}
                     >
-                      Recommended {recommendation.quantity}{' '}
+                      Recommended: {recommendation.quantity}{' '}
                       {recommendation.quantity === 1 ? 'unit' : 'units'}
                     </span>
                   </div>
@@ -160,9 +160,16 @@ export function RecommendationCard({
 
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:pl-12">
                 <p className="text-xs text-body">
-                  <span className="font-medium text-ink">{available}</span> available during your
-                  schedule
+                  Available: <span className="font-medium text-ink">{available}</span>
                 </p>
+                <p className="text-xs text-body">
+                  Requested: <span className="font-medium text-ink">{requested}</span>
+                </p>
+                {recommendation.fee_applies && recommendation.unit_price && (
+                  <p className="text-xs font-medium text-brand">
+                    {formatCurrency(recommendation.unit_price)} each
+                  </p>
+                )}
                 {recommendation.recommended > 0 && requested !== recommendation.recommended && (
                   <button
                     type="button"

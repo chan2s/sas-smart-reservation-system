@@ -37,6 +37,33 @@ class Facility(models.Model):
         return self.name
 
 
+class FacilityImage(models.Model):
+    """One image in a facility's gallery.
+
+    The gallery is the source of truth for image display. ``Facility.image``
+    is retained for backward compatibility with older records and API
+    consumers; the serializer falls back to it whenever the gallery is empty.
+
+    Ordering is always: primary image first, then ``order``, then the oldest
+    image. None of this is stored on ``Facility`` itself, so gallery changes
+    never touch the facility row.
+    """
+
+    facility = models.ForeignKey(
+        Facility, on_delete=models.CASCADE, related_name="images"
+    )
+    image = models.ImageField(upload_to="facilities/")
+    is_primary = models.BooleanField(default=False)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-is_primary", "order", "created_at", "id")
+
+    def __str__(self) -> str:
+        return f"{self.facility.name} — image {self.pk or 'unsaved'}"
+
+
 class OperatingHour(models.Model):
     class Day(models.IntegerChoices):
         MONDAY = 0, "Monday"

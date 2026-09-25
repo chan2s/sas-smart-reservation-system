@@ -40,8 +40,9 @@ from datetime import time as time_cls
 from equipment.models import Equipment, EquipmentCategory
 from facilities.models import Facility
 
+from . import pricing
 from .availability import equipment_availability_map
-from ..models import RecommendationRule
+from ..models import RecommendationRule, Reservation
 
 
 # ---------------------------------------------------------------------------
@@ -501,3 +502,77 @@ def recommend_resources(
             }
         )
     return recommendations
+
+
+# ---------------------------------------------------------------------------
+# Recommendation + pricing bundle
+# ---------------------------------------------------------------------------
+def recommend_resources_with_pricing(
+    event_type: str,
+    participants: int,
+    facility_id=None,
+    purpose: str = "",
+    special_requirements: str = "",
+    target_date: date_cls | None = None,
+    start_time: time_cls | None = None,
+    end_time: time_cls | None = None,
+    requester_type: str = Reservation.RequesterType.CAMPUS,
+) -> dict:
+    """Recommend resources, then price them for the requester type.
+
+    Recommendation and pricing stay separate concerns: resources are chosen
+    from the event profile first (never from price), and only then is the
+    applicable external-organization cost calculated from the recommended
+    quantities and the schedule. Internal requesters get a visible zero-fee
+    summary rather than external prices presented as if charged.
+
+    Returns ``{"recommendations": [...], "pricing": {...}}``. Each
+    recommendation gains ``unit_price``/``estimated_cost``/``fee_applies`` so
+    the client can show per-line costs without hardcoding any rate.
+    """
+    recommendations = recommend_resources(
+        event_type,
+        participants,
+        facility_id=facility_id,
+        purpose=purpose,
+        special_requirements=special_requirements,
+        target_date=target_date,
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    facility = None
+    if facility_id is not None:
+        facility = Facility.objects.filter(pk=facility_id).first()
+
+    quote = pricing.quote_fees(
+        requester_type,
+        facility=facility,
+        items=[
+            {"equipment_id": r["equipment_id"], "quantity": r["quantity"]}
+            for r in recommendations
+        ],
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    equipment_lines = {
+        line["equipment_id"]: line
+        for line in quote["fees"]
+        if line["fee_type"] == pricing.PricingRule.FeeType.EQUIPMENT
+        and line.get("equipment_id")
+    }
+    for item in recommendations:
+        line = equipment_lines.get(item["equipment_id"])
+        item["unit_price"] = (
+            f"{pricing.money(line['unit_price']):.2f}" if line else None
+        )
+        item["estimated_cost"] = (
+            f"{pricing.money(line['subtotal']):.2f}" if line else "0.00"
+        )
+        item["fee_applies"] = line is not None
+
+    return {
+        "recommendations": recommendations,
+        "pricing": pricing.quote_to_dict(quote),
+    }

@@ -1,1 +1,9 @@
 frontend/src/assets/0625.mp4
+
+# OTP browser test artifacts
+frontend/chrome-otp-check/
+frontend/chrome-otp-check2/
+frontend/otp-desktop.png
+frontend/otp-mobile.png
+frontend/otp-diag.mjs
+frontend/otp-ui-check.mjs

@@ -5,6 +5,7 @@ from .views import (
     ReservationViewSet,
     availability_check,
     calendar_events,
+    pricing_rates,
     reservation_by_checkin_code,
     resources_recommendation,
 )
@@ -21,6 +22,7 @@ urlpatterns = router.urls + [
         name="availability-resources",
     ),
     path("calendar/events/", calendar_events, name="calendar-events"),
+    path("pricing/rates/", pricing_rates, name="pricing-rates"),
     path(
         "reservations/checkin/<uuid:code>/",
         reservation_by_checkin_code,

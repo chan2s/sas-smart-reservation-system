@@ -205,6 +205,57 @@ export interface ReservationItem {
   returned: boolean
 }
 
+/** One snapshotted priced line item on a reservation (external org only). */
+export interface ReservationFee {
+  id: number
+  fee_type: 'FACILITY' | 'EQUIPMENT' | 'OPERATOR'
+  fee_type_label: string
+  description: string
+  /** Formatted quantity, e.g. "100" or "4" (hours). */
+  quantity: string
+  /** "flat" | "unit" | "hour" — how the line is charged. */
+  unit: string
+  unit_price: string
+  subtotal: string
+  created_at: string
+}
+
+/**
+ * A quote line from the pricing engine. Money is a fixed-point string so no
+ * rate is ever rounded or invented by the client — the backend is the source
+ * of truth for every amount.
+ */
+export interface PricingFeeLine {
+  fee_type: 'FACILITY' | 'EQUIPMENT' | 'OPERATOR'
+  fee_type_label: string
+  description: string
+  quantity: string
+  unit: string
+  unit_price: string
+  subtotal: string
+  equipment_id?: number | null
+  equipment_category_id?: number | null
+}
+
+/**
+ * An estimated external-organization cost breakdown. Internal requesters always
+ * receive `external: false` with an empty `fees` list and a ₱0.00 total, so the
+ * external rates are never presented as if they were being charged.
+ */
+export interface PricingQuote {
+  requester_type: RequesterType
+  requester_type_label: string
+  external: boolean
+  currency: string
+  facility_id: number | null
+  /** Scheduled duration in hours (from start_time → end_time), e.g. "4". */
+  duration_hours: string
+  fees: PricingFeeLine[]
+  total: string
+  /** Human note clarifying that the amount is an estimate until approval. */
+  note: string
+}
+
 export interface ReservationEvent {
   id: number
   event_type:
@@ -271,6 +322,10 @@ export interface ReservationSummary {
   checked_in_at: string | null
   checked_out_at: string | null
   resources: string[]
+  /** Snapshotted external-organization total. Always "0.00" for campus users. */
+  estimated_total: string
+  /** Priced fee breakdown (external org only); empty for campus users. */
+  fees: ReservationFee[]
   /** Staff-only diagnostic: delivery state of the approval email. */
   approval_email_status: string
   approval_email_status_label: string
@@ -317,6 +372,8 @@ export interface AvailabilityCheck {
   problems: { type: string; message: string }[]
   overall: { ok: boolean; message: string }
   requested: { date: string; start_time: string; end_time: string }
+  /** Estimated external-organization cost for the requested items/schedule. */
+  pricing?: PricingQuote
   alternatives?: AlternativeSlot[]
 }
 
@@ -325,6 +382,8 @@ export interface AlternativeSlot {
   start_time: string
   end_time: string
   duration: string
+  /** Cost estimate for this alternative — recalculated per slot, never stale. */
+  pricing?: PricingQuote
 }
 
 export interface Recommendation {
@@ -339,6 +398,12 @@ export interface Recommendation {
   reason: string // why this quantity, e.g. "1 chair per participant"
   calculation: string // exact arithmetic, e.g. "ceil(29 / 10) = 3"
   warning: string | null // only when the rule quantity exceeds stock
+  /** Per-unit external rate for this item, or null when no rate applies. */
+  unit_price?: string | null
+  /** Estimated cost of the recommended quantity, e.g. "500.00". */
+  estimated_cost?: string
+  /** True when an external-organization rate covers this item. */
+  fee_applies?: boolean
 }
 
 export interface ReservationDetail extends ReservationSummary {

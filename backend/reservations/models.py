@@ -1,9 +1,13 @@
 import uuid
 from datetime import datetime, timedelta
 
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+
+from facilities.models import Facility
 
 
 class RecommendationRule(models.Model):
@@ -136,6 +140,123 @@ class RecommendationRule(models.Model):
         return f"{scope}: {self.get_calculation_type_display()} for {self.category.name}"
 
 
+class PricingRule(models.Model):
+    """A staff-editable rate applied to EXTERNAL organization reservations only.
+
+    Prices used to be invisible to the codebase; keeping them here means the
+    SAS Office can change a rate in Django admin without touching any source
+    code or the frontend. One row describes one chargeable thing:
+
+    * ``FACILITY`` — a flat fee for a facility *type* (e.g. Gymnasium).
+    * ``EQUIPMENT`` — a per-unit fee for an equipment *category* (e.g. chairs).
+    * ``OPERATOR``  — an hourly fee triggered by an equipment category being
+      part of the reservation (e.g. a sound system requires its operator).
+
+    These rules never apply to internal campus requesters; the pricing
+    service decides that from the trusted ``Reservation.requester_type``.
+    """
+
+    class FeeType(models.TextChoices):
+        FACILITY = "FACILITY", "Facility fee"
+        EQUIPMENT = "EQUIPMENT", "Equipment fee"
+        OPERATOR = "OPERATOR", "Operator fee"
+
+    class Unit(models.TextChoices):
+        FLAT = "flat", "Flat per reservation"
+        UNIT = "unit", "Per unit"
+        HOUR = "hour", "Per hour"
+
+    fee_type = models.CharField(max_length=16, choices=FeeType.choices, db_index=True)
+    facility_type = models.CharField(
+        max_length=32,
+        choices=Facility.FacilityType.choices,
+        blank=True,
+        help_text="For facility fees: which facility type this rate covers.",
+    )
+    equipment_category = models.ForeignKey(
+        "equipment.EquipmentCategory",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="pricing_rules",
+        help_text=(
+            "For equipment/operator fees: the category this rate applies to "
+            "(and, for operator fees, the category that triggers the fee)."
+        ),
+    )
+    label = models.CharField(
+        max_length=120,
+        blank=True,
+        help_text="Name shown on the fee breakdown, e.g. 'Gymnasium' or 'Sound System Operator'.",
+    )
+    unit = models.CharField(
+        max_length=16,
+        choices=Unit.choices,
+        default=Unit.UNIT,
+        help_text="How the price is charged: flat, per unit, or per hour.",
+    )
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["fee_type", "facility_type", "equipment_category__name"]
+        indexes = [
+            models.Index(fields=["fee_type", "is_active"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(unit_price__gte=0),
+                name="pricing_rule_unit_price_nonnegative",
+            ),
+        ]
+
+    @property
+    def display_label(self) -> str:
+        if self.label:
+            return self.label
+        if self.equipment_category_id:
+            return self.equipment_category.name
+        if self.facility_type:
+            return self.get_facility_type_display()
+        return self.get_fee_type_display()
+
+    def __str__(self) -> str:
+        return f"{self.get_fee_type_display()}: {self.display_label} @ {self.unit_price}/{self.unit}"
+
+
+class ReservationFee(models.Model):
+    """A priced line item snapshotted onto a reservation at submission time.
+
+    The stored ``unit_price``/``subtotal`` are copies of the rate that applied
+    when the reservation was created, so later changes to ``PricingRule`` do
+    not retroactively alter an existing reservation's estimated cost.
+    """
+
+    class FeeType(models.TextChoices):
+        FACILITY = "FACILITY", "Facility"
+        EQUIPMENT = "EQUIPMENT", "Equipment"
+        OPERATOR = "OPERATOR", "Operator"
+
+    reservation = models.ForeignKey(
+        "Reservation", on_delete=models.CASCADE, related_name="fees"
+    )
+    fee_type = models.CharField(max_length=16, choices=FeeType.choices)
+    description = models.CharField(max_length=160)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    unit = models.CharField(max_length=32, default="unit")
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["fee_type", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.description}: {self.quantity} × {self.unit_price} = {self.subtotal}"
+
+
 class Reservation(models.Model):
     class RequesterType(models.TextChoices):
         """Who the reservation is FOR — independent of who created it."""
@@ -248,6 +369,14 @@ class Reservation(models.Model):
     date = models.DateField()
     start_time = models.TimeField()
     end_time = models.TimeField()
+
+    # Snapshot of the applicable external-organization fees at submission
+    # time. Always 0 for internal campus requesters (their reservations are
+    # free) and always recalculated by the backend — never accepted from the
+    # client. The per-line breakdown lives in ``ReservationFee``.
+    estimated_total = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0.00")
+    )
 
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.PENDING

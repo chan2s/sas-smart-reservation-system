@@ -15,7 +15,12 @@ from django.db import transaction
 
 from equipment.models import Equipment, EquipmentCategory, MaintenanceRecord
 from facilities.models import Facility, OperatingHour
-from reservations.models import Reservation, ReservationEvent, ReservationItem
+from reservations.models import (
+    PricingRule,
+    Reservation,
+    ReservationEvent,
+    ReservationItem,
+)
 
 User = get_user_model()
 
@@ -114,6 +119,7 @@ class Command(BaseCommand):
         self.seed_users()
         self.seed_facilities()
         self.seed_equipment()
+        self.seed_pricing()
         if options["with_demo_reservations"]:
             self.seed_demo_reservations()
         self.stdout.write(self.style.SUCCESS("Seed complete."))
@@ -199,6 +205,46 @@ class Command(BaseCommand):
                 )
                 if created:
                     self.stdout.write(f"    + {eq.name} ({eq.total_quantity})")
+
+    def seed_pricing(self):
+        """Default external-organization rates (staff-editable in admin).
+
+        Idempotent: ``get_or_create`` keyed on the fee target, so re-running
+        seed never duplicates a rate or overwrites a price staff have changed.
+        """
+        facilities = [
+            (Facility.FacilityType.GYMNASIUM, "Gymnasium", "5000.00"),
+            (Facility.FacilityType.CAFETERIA, "Cafeteria", "5000.00"),
+        ]
+        for facility_type, label, price in facilities:
+            _, created = PricingRule.objects.get_or_create(
+                fee_type=PricingRule.FeeType.FACILITY,
+                facility_type=facility_type,
+                defaults={
+                    "label": label,
+                    "unit": PricingRule.Unit.FLAT,
+                    "unit_price": price,
+                },
+            )
+            if created:
+                self.stdout.write(f"  + Pricing: {label} ₱{price}")
+
+        equipment_rates = [
+            ("Chairs", "Chairs", "5.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
+            ("Sound Systems", "Sound System", "1000.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
+            ("Sound Systems", "Sound System Operator", "5.00", PricingRule.Unit.HOUR, PricingRule.FeeType.OPERATOR),
+        ]
+        for category_name, label, price, unit, fee_type in equipment_rates:
+            category = EquipmentCategory.objects.filter(name=category_name).first()
+            if category is None:
+                continue
+            _, created = PricingRule.objects.get_or_create(
+                fee_type=fee_type,
+                equipment_category=category,
+                defaults={"label": label, "unit": unit, "unit_price": price},
+            )
+            if created:
+                self.stdout.write(f"  + Pricing: {label} ₱{price}/{unit}")
 
     def seed_demo_reservations(self):
         """Clearly-labelled demo records for UI preview only."""

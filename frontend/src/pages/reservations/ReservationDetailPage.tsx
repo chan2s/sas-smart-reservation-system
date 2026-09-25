@@ -22,8 +22,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Textarea } from '@/components/ui/Form'
 import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import { Skeleton } from '@/components/ui/Misc'
-import { cn, formatDateTime, formatTime } from '@/lib/utils'
-import type { ReservationDetail, ReservationEvent } from '@/lib/types'
+import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
+import type { ReservationDetail, ReservationEvent, ReservationFee } from '@/lib/types'
 
 export function ReservationDetailPage() {
   const { id } = useParams()
@@ -321,6 +321,52 @@ export function ReservationDetailPage() {
             )}
           </Card>
 
+          {/* Estimated cost — snapshotted external-organization fees. */}
+          {reservation.requester_type === 'EXTERNAL' && (
+            <Card>
+              <CardHeader
+                title="Estimated cost"
+                description="External organization fees — estimated until the reservation is approved"
+              />
+              {reservation.fees.length === 0 ? (
+                <p className="mt-4 text-sm text-muted">
+                  No fees were recorded for this reservation.
+                </p>
+              ) : (
+                <div className="mt-4">
+                  <ul className="divide-y divide-line">
+                    {reservation.fees.map((fee) => (
+                      <li
+                        key={fee.id}
+                        className="flex items-start justify-between gap-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-medium text-ink">
+                            {fee.description}
+                          </p>
+                          <p className="mt-0.5 break-words text-xs tabular-nums text-muted">
+                            {feeSummary(fee)}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-sm font-semibold tabular-nums text-ink">
+                          {formatCurrency(fee.subtotal)}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex items-baseline justify-between gap-4 border-t border-line pt-3">
+                    <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted">
+                      Total
+                    </span>
+                    <span className="text-lg font-semibold tabular-nums text-ink">
+                      {formatCurrency(reservation.estimated_total)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </Card>
+          )}
+
           {/* Availability */}
           {reservation.availability && (
             <Card>
@@ -598,6 +644,15 @@ function AvatarInitials({ name }: { name: string }) {
         .toUpperCase()}
     </span>
   )
+}
+
+function feeSummary(fee: ReservationFee): string {
+  if (fee.unit === 'flat') return 'Flat fee'
+  if (fee.unit === 'hour') {
+    const hours = fee.quantity === '1' ? 'hour' : 'hours'
+    return `${fee.quantity} ${hours} × ${formatCurrency(fee.unit_price)}`
+  }
+  return `${fee.quantity} × ${formatCurrency(fee.unit_price)}`
 }
 
 function AvailabilitySummary({ availability }: { availability: ReservationDetail['availability'] }) {

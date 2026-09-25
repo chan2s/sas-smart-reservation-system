@@ -3,8 +3,15 @@ from rest_framework import serializers
 
 from equipment.models import Equipment
 
-from .models import InspectionReport, Reservation, ReservationEvent, ReservationItem
+from .models import (
+    InspectionReport,
+    Reservation,
+    ReservationEvent,
+    ReservationFee,
+    ReservationItem,
+)
 from .services.availability import check_availability
+from .services.pricing import snapshot_reservation_fees
 
 User = get_user_model()
 
@@ -32,6 +39,24 @@ class ReservationItemSerializer(serializers.ModelSerializer):
             "condition",
             "quantity",
             "returned",
+        )
+
+
+class ReservationFeeSerializer(serializers.ModelSerializer):
+    fee_type_label = serializers.CharField(source="get_fee_type_display", read_only=True)
+
+    class Meta:
+        model = ReservationFee
+        fields = (
+            "id",
+            "fee_type",
+            "fee_type_label",
+            "description",
+            "quantity",
+            "unit",
+            "unit_price",
+            "subtotal",
+            "created_at",
         )
 
 
@@ -116,6 +141,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     event_type_label = serializers.CharField(source="get_event_type_display", read_only=True)
     resources = serializers.SerializerMethodField()
+    estimated_total = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
+    fees = ReservationFeeSerializer(many=True, read_only=True)
     check_in_open_time = serializers.SerializerMethodField()
     check_in_window_open = serializers.SerializerMethodField()
     approval_email_status = serializers.CharField(read_only=True)
@@ -155,6 +184,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "checked_in_at",
             "checked_out_at",
             "resources",
+            "estimated_total",
+            "fees",
             "approval_email_status",
             "approval_email_status_label",
             "created_at",
@@ -196,6 +227,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
         )
         if not (is_staff or is_own):
             data["contact_email"] = ""
+            # Fee breakdown is private to the requester and SAS staff.
+            data["fees"] = []
+            data["estimated_total"] = "0.00"
         # Approval-email delivery state is a staff diagnostic: never shown to
         # requesters or unauthenticated viewers.
         if not is_staff:
@@ -483,6 +517,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 equipment_id=item["equipment_id"],
                 quantity=item.get("quantity", 1),
             )
+        # The backend computes and snapshots the amount from the reservation's
+        # own fields. Any client-supplied total is ignored by construction.
+        snapshot_reservation_fees(reservation)
         return reservation
 
 
@@ -552,6 +589,9 @@ class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.Mode
                 equipment_id=item["equipment_id"],
                 quantity=item.get("quantity", 1),
             )
+        # The backend computes and snapshots the amount from the reservation's
+        # own fields. Any client-supplied total is ignored by construction.
+        snapshot_reservation_fees(reservation)
         return reservation
 
 
@@ -586,6 +626,10 @@ class PublicTrackSerializer(serializers.Serializer):
     expected_participants = serializers.IntegerField(read_only=True)
     purpose = serializers.CharField(read_only=True)
     resources = serializers.SerializerMethodField()
+    estimated_total = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
+    fees = ReservationFeeSerializer(many=True, read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
 
     def get_resources(self, obj):

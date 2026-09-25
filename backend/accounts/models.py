@@ -88,6 +88,7 @@ class AuditLog(models.Model):
         FACILITY_CREATED = "FACILITY_CREATED", "Facility created"
         FACILITY_EDITED = "FACILITY_EDITED", "Facility edited"
         FACILITY_REMOVED = "FACILITY_REMOVED", "Facility removed"
+        FACILITY_IMAGE = "FACILITY_IMAGE", "Facility image changed"
         SETTINGS_CHANGED = "SETTINGS_CHANGED", "Settings changed"
 
     actor = models.ForeignKey(

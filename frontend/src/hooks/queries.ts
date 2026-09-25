@@ -9,6 +9,7 @@ import {
   type EquipmentPayload,
   type ReservationFilters,
 } from '@/lib/api'
+import type { RequesterType } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
 // Facilities
@@ -311,6 +312,7 @@ export function useAvailabilityCheck() {
       start_time: string
       end_time: string
       items: { equipment_id: number; quantity: number }[]
+      requester_type?: RequesterType
     }) => endpoints.checkAvailability(payload),
   })
 }
@@ -326,6 +328,7 @@ export function useRecommendResources() {
       date?: string
       start_time?: string
       end_time?: string
+      requester_type?: RequesterType
     }) => endpoints.recommendResources(payload),
   })
 }

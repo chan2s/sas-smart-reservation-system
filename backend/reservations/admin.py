@@ -5,9 +5,11 @@ from facilities.models import Facility
 
 from .models import (
     InspectionReport,
+    PricingRule,
     RecommendationRule,
     Reservation,
     ReservationEvent,
+    ReservationFee,
     ReservationItem,
 )
 
@@ -192,9 +194,67 @@ class RecommendationRuleAdmin(admin.ModelAdmin):
         self.message_user(request, f"{updated} rule(s) disabled.")
 
 
+@admin.register(PricingRule)
+class PricingRuleAdmin(admin.ModelAdmin):
+    """Staff-editable external-organization rates (no code changes needed)."""
+
+    list_display = (
+        "fee_type",
+        "display_label_admin",
+        "facility_type",
+        "equipment_category",
+        "unit",
+        "unit_price",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("fee_type", "is_active", "facility_type", "unit")
+    search_fields = ("label", "equipment_category__name")
+    readonly_fields = ("created_at", "updated_at")
+    fieldsets = (
+        (
+            "What is charged",
+            {
+                "fields": ("fee_type", "label", "unit_price", "unit"),
+                "description": (
+                    "Rates apply to EXTERNAL organization reservations only. "
+                    "Internal campus requesters are always free."
+                ),
+            },
+        ),
+        (
+            "What it applies to",
+            {
+                "fields": ("facility_type", "equipment_category"),
+                "description": (
+                    "Facility fees match a facility type. Equipment and "
+                    "operator fees match an equipment category; an operator "
+                    "fee is charged per event hour whenever that category is "
+                    "part of the reservation."
+                ),
+            },
+        ),
+        ("Status", {"fields": ("is_active", "created_at", "updated_at")}),
+    )
+
+    @admin.display(description="Applies to")
+    def display_label_admin(self, rule: PricingRule) -> str:
+        return rule.display_label
+
+
 class ReservationItemInline(admin.TabularInline):
     model = ReservationItem
     extra = 0
+
+
+class ReservationFeeInline(admin.TabularInline):
+    """Read-only snapshot of the fees charged for this reservation."""
+
+    model = ReservationFee
+    extra = 0
+    can_delete = False
+    fields = ("fee_type", "description", "quantity", "unit", "unit_price", "subtotal")
+    readonly_fields = fields
 
 
 class ReservationEventInline(admin.TabularInline):
@@ -217,9 +277,23 @@ class ReservationAdmin(admin.ModelAdmin):
     )
     list_filter = ("status", "event_type", "date")
     search_fields = ("reservation_id", "event_name", "organization")
-    inlines = [ReservationItemInline, ReservationEventInline]
-    readonly_fields = ("approval_email_status",)
-    actions = ["retry_approval_email"]
+    inlines = [ReservationItemInline, ReservationFeeInline, ReservationEventInline]
+    readonly_fields = ("approval_email_status", "estimated_total")
+    actions = ["retry_approval_email", "recalculate_fees"]
+
+    @admin.action(
+        description="Recalculate external-organization fees from current rates"
+    )
+    def recalculate_fees(self, request, queryset):
+        from .services.pricing import snapshot_reservation_fees
+
+        updated = 0
+        for reservation in queryset:
+            snapshot_reservation_fees(reservation)
+            updated += 1
+        self.message_user(
+            request, f"Recalculated estimated fees for {updated} reservation(s)."
+        )
 
     @admin.display(description="Approval email")
     def approval_email(self, obj):

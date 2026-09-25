@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, Clock3, Sparkles, XCircle } from 'lucide-react'
-import { cn, formatDate, formatTime } from '@/lib/utils'
+import { cn, formatCurrency, formatDate, formatTime } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import type {
   AlternativeSlot,
@@ -107,6 +107,12 @@ export function AvailabilityCheck({
                   {formatTime(report.alternatives[0].start_time)} –{' '}
                   {formatTime(report.alternatives[0].end_time)}
                 </p>
+                {report.alternatives[0].pricing?.external && (
+                  <p className="mt-0.5 text-[13px] font-medium text-brand">
+                    Estimated{' '}
+                    {formatCurrency(report.alternatives[0].pricing.total)}
+                  </p>
+                )}
               </div>
             </div>
             <Button

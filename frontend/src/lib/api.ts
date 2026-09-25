@@ -18,6 +18,7 @@ import type {
   Notification,
   OrganizationType,
   Paginated,
+  PricingQuote,
   Recommendation,
   ReportDefinition,
   ReportDetail,
@@ -482,6 +483,8 @@ export const endpoints = {
     start_time: string
     end_time: string
     items: { equipment_id: number; quantity: number }[]
+    /** Staff only: EXTERNAL enables the external-organization fee estimate. */
+    requester_type?: RequesterType
   }) => api.post<AvailabilityCheck>('/api/availability/check/', payload),
   recommendResources: (payload: {
     event_type: string
@@ -492,7 +495,13 @@ export const endpoints = {
     date?: string
     start_time?: string
     end_time?: string
-  }) => api.post<{ recommendations: Recommendation[] }>('/api/availability/resources/', payload),
+    /** Staff only: EXTERNAL enables the external-organization fee estimate. */
+    requester_type?: RequesterType
+  }) =>
+    api.post<{ recommendations: Recommendation[]; pricing: PricingQuote }>(
+      '/api/availability/resources/',
+      payload,
+    ),
 
   calendarEvents: (params: {
     start: string

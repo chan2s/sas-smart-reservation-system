@@ -700,6 +700,39 @@ def _handle_policy(user, entities: Entities, raw: str, intent: str) -> tuple[str
     )
 
 
+def _handle_pricing(user, entities: Entities, raw: str) -> tuple[str, str, list]:
+    """External-organization pricing questions.
+
+    Answered strictly from the PUBLIC knowledge base, so an unauthenticated
+    visitor can learn the general rates while never seeing any reservation's
+    specific fees. A signed-in requester asking about their own reservation is
+    routed to the reservation handlers instead (see ``_PRIVATE_INTENTS``).
+    """
+    entries = search_knowledge_for_intent(
+        raw,
+        Intent.RESERVATION_PRICING,
+        entities.facility_resolved,
+        viewer_is_authenticated=user is not None,
+        viewer_is_admin=bool(user and user.is_admin),
+    )
+    if not entries:
+        entries = search_knowledge(
+            raw,
+            viewer_is_authenticated=user is not None,
+            viewer_is_admin=bool(user and user.is_admin),
+            require_keyword_hit=True,
+        )
+    if not entries:
+        return templates.NOT_FOUND, "fallback", []
+    entry = entries[0]
+    return (
+        templates.POLICY_ANSWER.format(content=entry.content)
+        + templates.POLICY_SOURCE.format(title=entry.title),
+        "knowledge",
+        [_ref_kb(entry)],
+    )
+
+
 def _handle_help(user, entities: Entities, raw: str) -> tuple[str, str, list]:
     """'help' — requesters get the full capability list; visitors get the
     public-information list (no personal-data vocabulary)."""
@@ -774,6 +807,7 @@ _HANDLERS = {
     Intent.EQUIPMENT_AVAILABILITY: _handle_equipment_availability,
     Intent.MAINTENANCE_STATUS: _handle_maintenance_status,
     Intent.BOOKING_GUIDE: _handle_booking_guide,
+    Intent.RESERVATION_PRICING: _handle_pricing,
     Intent.REGISTRATION_HELP: _handle_registration_help,
     Intent.LOGIN_HELP: _handle_login_help,
     Intent.PUBLIC_ANNOUNCEMENT: _handle_public_announcement,
