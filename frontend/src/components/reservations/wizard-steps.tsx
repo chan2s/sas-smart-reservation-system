@@ -376,11 +376,17 @@ export function StepDetails({
   onChange,
   showErrors,
   missing,
+  organizationLocked,
+  organizationHint,
 }: {
   details: EventDetails
   onChange: (next: EventDetails) => void
   showErrors: boolean
   missing: string[]
+  /** When true the Organization / Office field is derived from the user's own
+   *  account (or the selected campus requester) and cannot be edited. */
+  organizationLocked?: boolean
+  organizationHint?: string
 }) {
   const set = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) =>
     onChange({ ...details, [key]: value })
@@ -435,12 +441,25 @@ export function StepDetails({
               placeholder="e.g. Recognition ceremony for graduating students"
             />
           </Field>
-          <Field label="Organization / Office" htmlFor="organization" className="sm:col-span-2">
+          <Field
+            label="Organization / Office"
+            htmlFor="organization"
+            className="sm:col-span-2"
+            hint={organizationHint}
+            error={fieldError('Organization / Office')}
+          >
             <Input
               id="organization"
               value={details.organization}
               onChange={(event) => set('organization', event.target.value)}
               placeholder="e.g. Student Affairs Office"
+              disabled={organizationLocked}
+              aria-readonly={organizationLocked || undefined}
+              title={
+                organizationLocked
+                  ? 'This is the organization linked to your account and cannot be changed.'
+                  : undefined
+              }
             />
           </Field>
           <Field label="Contact person" htmlFor="contact-person" className="sm:col-span-2">

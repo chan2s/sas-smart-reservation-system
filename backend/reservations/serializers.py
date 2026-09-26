@@ -377,6 +377,22 @@ class _ReservationCreateMixin:
         return attrs
 
 
+def account_organization(user):
+    """The organization/office an account is linked to, or "" when none.
+
+    Prefers the structured external organization bound to the profile and
+    falls back to the free-text NORSU unit. This is the authoritative value a
+    reservation snapshots — the request body's own ``organization`` is only
+    consulted for accounts that have never declared one, so a requester cannot
+    swap in a different organization through the API.
+    """
+    if user is None:
+        return ""
+    if user.organization_ref_id:
+        return user.organization_ref.organization_name
+    return (user.organization or "").strip()
+
+
 class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSerializer):
     """Authenticated creation.
 
@@ -513,11 +529,21 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                         {"requester_id": "Requested campus user not found."}
                     )
                 attrs["_on_behalf_of"] = target
+                # Resolve the office from the requester being booked for, never
+                # from the request body.
+                requester_org = account_organization(target)
+                if requester_org:
+                    attrs["organization"] = requester_org
             else:
                 if user is None or not user.is_authenticated:
                     raise serializers.ValidationError(
                         {"requester_id": "Authentication is required for campus reservations."}
                     )
+                # A signed-in campus user's own office/affiliation takes
+                # precedence over anything the client submitted.
+                requester_org = account_organization(user)
+                if requester_org:
+                    attrs["organization"] = requester_org
         return attrs
 
     def create(self, validated_data):

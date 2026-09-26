@@ -390,3 +390,92 @@ class AffiliationSnapshotTests(TestCase):
         user.save(update_fields=["affiliation"])
         reservation.refresh_from_db()
         self.assertEqual(reservation.affiliation_label, "NORSU Faculty/Staff")
+
+
+class CampusOrganizationDerivationTests(TestCase):
+    """Campus reservations snapshot the organization linked to the account.
+
+    The organization is resolved from the authenticated profile (or the campus
+    user a staff member reserves for), never from the request body — so a
+    requester cannot swap in a different office through the API.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="norsu_student",
+            password="pass12345",
+            role=User.Role.REQUESTER,
+            organization="Student Affairs Office",
+        )
+        self.staff = User.objects.create_user(
+            username="staff", password="pass12345", role=User.Role.STAFF
+        )
+        self.facility = Facility.objects.create(
+            name="AVR", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        OperatingHour.objects.create(
+            facility=self.facility,
+            day_of_week=0,
+            open_time=time(6, 0),
+            close_time=time(22, 0),
+        )
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
+
+    def _payload(self, **overrides):
+        payload = {
+            "facility_id": self.facility.id,
+            "date": self.day.isoformat(),
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Orientation",
+            "event_type": "ACADEMIC",
+            "purpose": "Freshmen orientation",
+            "expected_participants": 50,
+            "items": [],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_campus_user_organization_is_derived_from_profile(self):
+        """A client-supplied organization never overrides the account's own."""
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            RESERVATIONS_URL,
+            self._payload(organization="Some Other Office"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(
+            Reservation.objects.get().organization, "Student Affairs Office"
+        )
+
+    def test_campus_user_without_profile_organization_keeps_submitted_value(self):
+        """Legacy accounts with no office are not forced into an empty value."""
+        user = User.objects.create_user(
+            username="no_office", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.client.force_authenticate(user)
+        response = self.client.post(
+            RESERVATIONS_URL,
+            self._payload(organization="Typed Office"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(Reservation.objects.get().organization, "Typed Office")
+
+    def test_staff_on_behalf_uses_target_users_organization(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            RESERVATIONS_URL,
+            self._payload(
+                requester_id=self.user.id, organization="Spoofed Office"
+            ),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        reservation = Reservation.objects.get()
+        self.assertEqual(reservation.requester, self.user)
+        self.assertEqual(reservation.organization, "Student Affairs Office")

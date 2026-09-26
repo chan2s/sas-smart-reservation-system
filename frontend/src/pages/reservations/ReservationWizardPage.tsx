@@ -159,6 +159,54 @@ export function ReservationWizardPage() {
     availabilityCheck.data != null &&
     availabilityCheck.data.overall.ok
 
+  // The Organization / Office is never typed by the requester when it can be
+  // derived from an account. External members use the organization bound to
+  // their profile; NORSU users use the office/department on their account; and
+  // staff reserving on behalf of a campus user use that user's office. The
+  // backend independently resolves the same value, so this is presentation
+  // only — the field is locked to prevent "Bayawan NHS" → "Another Org".
+  const accountOrganization = useMemo(() => {
+    const linked = user?.organization_ref?.organization_name?.trim()
+    return linked || user?.organization?.trim() || ''
+  }, [user])
+  const lockedOrganization = isAdmin
+    ? requesterType === 'CAMPUS'
+      ? selectedUser?.organization?.trim() || ''
+      : ''
+    : accountOrganization
+  const organizationLocked = Boolean(lockedOrganization)
+  // The field drives the submitted campus organization except on the staff
+  // external path, where the requester block owns the organization instead.
+  const organizationFieldRelevant = !(isAdmin && requesterType === 'EXTERNAL')
+  const organizationRequired = organizationFieldRelevant && !organizationLocked
+  const organizationHint = organizationLocked
+    ? isAdmin
+      ? 'Linked to the selected requester’s account and cannot be changed.'
+      : 'Linked to your account and cannot be changed.'
+    : organizationFieldRelevant
+      ? 'No organization is linked to your account yet — enter your office/department or update your profile.'
+      : undefined
+
+  // Seed (and keep in sync) the locked organization into the event details
+  // once the account/requester is known.
+  useEffect(() => {
+    if (lockedOrganization) {
+      setDetails((current) =>
+        current.organization === lockedOrganization
+          ? current
+          : { ...current, organization: lockedOrganization },
+      )
+      return
+    }
+    // A staff member switched to a campus user with no linked office — clear
+    // the previous selection's organization instead of carrying it over.
+    if (isAdmin && requesterType === 'CAMPUS') {
+      setDetails((current) =>
+        current.organization ? { ...current, organization: '' } : current,
+      )
+    }
+  }, [lockedOrganization, isAdmin, requesterType])
+
   const facility = facilities?.find((item) => item.id === facilityId)
   const itemsList = useMemo(
     () => Object.entries(items).map(([equipmentId, quantity]) => ({ equipment_id: Number(equipmentId), quantity })),
@@ -278,8 +326,13 @@ export function ReservationWizardPage() {
     if (!details.event_type) missing.push('Event type')
     if (!details.purpose.trim()) missing.push('Event purpose')
     if (participants < 1) missing.push('Expected participants')
+    // An account with no linked organization must supply one explicitly rather
+    // than silently submitting an empty value.
+    if (organizationRequired && !details.organization.trim()) {
+      missing.push('Organization / Office')
+    }
     return missing
-  }, [details, participants])
+  }, [details, participants, organizationRequired])
 
   /**
    * Advance one step. Members of an unapproved external organization are
@@ -563,6 +616,8 @@ export function ReservationWizardPage() {
             onChange={setDetails}
             showErrors={stepError != null}
             missing={missingDetails}
+            organizationLocked={organizationLocked}
+            organizationHint={organizationHint}
           />
         )}
 
