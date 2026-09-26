@@ -4,12 +4,39 @@ import { Lock, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
-import { Field, Input } from '@/components/ui/Form'
+import { Field, Input, Select } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
+import type { Affiliation, ExternalOrganizationType } from '@/lib/types'
+
+const AFFILIATION_OPTIONS: { value: Affiliation; label: string }[] = [
+  { value: 'NORSU_STUDENT', label: 'NORSU Student' },
+  { value: 'NORSU_FACULTY_STAFF', label: 'NORSU Faculty/Staff' },
+  { value: 'NORSU_OFFICE', label: 'NORSU Office/Department' },
+  { value: 'EXTERNAL_ORGANIZATION', label: 'External Organization' },
+]
+
+const ORGANIZATION_TYPE_OPTIONS: { value: ExternalOrganizationType; label: string }[] = [
+  { value: 'GOVERNMENT_AGENCY', label: 'Government Agency' },
+  { value: 'NGO', label: 'NGO' },
+  { value: 'PRIVATE_ORGANIZATION', label: 'Private Organization' },
+  { value: 'COMMUNITY_ORGANIZATION', label: 'Community Organization' },
+  { value: 'SCHOOL_UNIVERSITY', label: 'School/University' },
+  { value: 'OTHER', label: 'Other' },
+]
+
+const EMPTY_EXTERNAL = {
+  organization_name: '',
+  organization_type: 'NGO' as ExternalOrganizationType,
+  contact_person: '',
+  contact_email: '',
+  contact_number: '',
+  address: '',
+  purpose: '',
+}
 
 export function RegisterPage() {
-  const { login } = useAuth()
+  const { login, logout } = useAuth()
   const navigate = useNavigate()
 
   const [formData, setFormData] = useState({
@@ -20,12 +47,24 @@ export function RegisterPage() {
     email: '',
     organization: '',
   })
+  // Blank affiliation keeps the legacy behavior (a plain campus account).
+  const [affiliation, setAffiliation] = useState<Affiliation | ''>('')
+  const [external, setExternal] = useState(EMPTY_EXTERNAL)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const isExternal = affiliation === 'EXTERNAL_ORGANIZATION'
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = event.target
     setFormData((prev) => ({ ...prev, [name]: value }))
+  }
+
+  function handleExternalChange(
+    event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
+  ) {
+    const { name, value } = event.target
+    setExternal((prev) => ({ ...prev, [name]: value }))
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -45,6 +84,20 @@ export function RegisterPage() {
       setError('Email is required')
       return
     }
+    if (isExternal) {
+      if (!external.organization_name.trim()) {
+        setError('Organization name is required')
+        return
+      }
+      if (!external.contact_person.trim()) {
+        setError('Representative / contact person is required')
+        return
+      }
+      if (!external.contact_email.trim()) {
+        setError('Organization email is required')
+        return
+      }
+    }
 
     setSubmitting(true)
     try {
@@ -54,12 +107,24 @@ export function RegisterPage() {
         first_name: formData.first_name.trim(),
         last_name: formData.last_name.trim(),
         email: formData.email.trim().toLowerCase(),
-        organization: formData.organization.trim(),
+        organization: isExternal ? '' : formData.organization.trim(),
+        ...(affiliation ? { affiliation } : {}),
+        ...(isExternal ? external : {}),
       })
 
-      // Auto-login after successful registration — `login` sets both the
-      // stored tokens and the in-memory auth state, so the protected
-      // dashboard is reachable immediately.
+      // External organizations must be verified by an administrator before
+      // they can reserve. Do NOT authenticate the new account — clear any
+      // tokens, leave the dashboard unreachable, and hand off to the login
+      // page with the pending-approval notice.
+      if (isExternal) {
+        logout()
+        navigate('/login?registered=external', { replace: true })
+        return
+      }
+
+      // Everyone else keeps the existing flow: auto-login into the dashboard.
+      // `login` sets both the stored tokens and the in-memory auth state, so
+      // the protected dashboard is reachable immediately.
       await login(formData.username.trim(), formData.password)
       navigate('/dashboard', { replace: true })
     } catch (err) {
@@ -155,16 +220,136 @@ export function RegisterPage() {
                 />
               </Field>
 
-              <Field label="Organization" htmlFor="organization">
-                <Input
-                  id="organization"
-                  name="organization"
-                  type="text"
-                  value={formData.organization}
-                  onChange={handleChange}
-                  placeholder="University of the Philippines"
-                />
+              <Field
+                label="I am registering as"
+                htmlFor="affiliation"
+                hint="External organizations are verified by the SAS Office before they can reserve."
+              >
+                <Select
+                  id="affiliation"
+                  name="affiliation"
+                  value={affiliation}
+                  onChange={(event) => setAffiliation(event.target.value as Affiliation | '')}
+                >
+                  <option value="">Campus user / not sure yet</option>
+                  {AFFILIATION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
               </Field>
+
+              {!isExternal && (
+                <Field label="Organization" htmlFor="organization">
+                  <Input
+                    id="organization"
+                    name="organization"
+                    type="text"
+                    value={formData.organization}
+                    onChange={handleChange}
+                    placeholder="University of the Philippines"
+                  />
+                </Field>
+              )}
+
+              {isExternal && (
+                <fieldset className="space-y-5 rounded-xl border border-line bg-soft/40 p-4">
+                  <legend className="px-1 text-sm font-semibold text-ink">
+                    Organization details
+                  </legend>
+
+                  <Field label="Organization name" htmlFor="organization_name">
+                    <Input
+                      id="organization_name"
+                      name="organization_name"
+                      type="text"
+                      value={external.organization_name}
+                      onChange={handleExternalChange}
+                      placeholder="e.g. Bayawan National High School"
+                      required
+                    />
+                  </Field>
+
+                  <Field label="Organization type" htmlFor="organization_type">
+                    <Select
+                      id="organization_type"
+                      name="organization_type"
+                      value={external.organization_type}
+                      onChange={handleExternalChange}
+                    >
+                      {ORGANIZATION_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+
+                  <Field label="Representative / Contact person" htmlFor="contact_person">
+                    <Input
+                      id="contact_person"
+                      name="contact_person"
+                      type="text"
+                      value={external.contact_person}
+                      onChange={handleExternalChange}
+                      placeholder="Full name"
+                      required
+                    />
+                  </Field>
+
+                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                    <Field label="Contact number" htmlFor="contact_number">
+                      <Input
+                        id="contact_number"
+                        name="contact_number"
+                        type="text"
+                        value={external.contact_number}
+                        onChange={handleExternalChange}
+                        placeholder="e.g. 0917 123 4567"
+                      />
+                    </Field>
+
+                    <Field label="Organization email" htmlFor="contact_email">
+                      <Input
+                        id="contact_email"
+                        name="contact_email"
+                        type="email"
+                        value={external.contact_email}
+                        onChange={handleExternalChange}
+                        placeholder="office@organization.org"
+                        required
+                      />
+                    </Field>
+                  </div>
+
+                  <Field label="Organization address" htmlFor="address">
+                    <Input
+                      id="address"
+                      name="address"
+                      type="text"
+                      value={external.address}
+                      onChange={handleExternalChange}
+                      placeholder="Street, city"
+                    />
+                  </Field>
+
+                  <Field
+                    label="Purpose of requesting NORSU facilities"
+                    htmlFor="purpose"
+                    hint="Optional — helps SAS verify your organization."
+                  >
+                    <Input
+                      id="purpose"
+                      name="purpose"
+                      type="text"
+                      value={external.purpose}
+                      onChange={handleExternalChange}
+                      placeholder="e.g. Community seminar"
+                    />
+                  </Field>
+                </fieldset>
+              )}
 
               <Field label="Password" htmlFor="password">
                 <div className="relative">
@@ -187,6 +372,13 @@ export function RegisterPage() {
                 <p className="mt-1.5 text-xs text-muted">Minimum 8 characters</p>
               </Field>
 
+              {isExternal && (
+                <p className="rounded-lg border border-status-pending/25 bg-status-pending-bg px-3 py-2 text-xs text-status-pending">
+                  After registering you will be asked to sign in. Your organization will be
+                  reviewed by the SAS Office, and you can reserve facilities once it is approved.
+                </p>
+              )}
+
               {error && (
                 <p
                   role="alert"
@@ -197,7 +389,7 @@ export function RegisterPage() {
               )}
 
               <Button type="submit" loading={submitting} className="w-full" size="lg">
-                Create Account
+                {isExternal ? 'Register Organization' : 'Create Account'}
               </Button>
 
               <p className="text-center text-xs text-muted">

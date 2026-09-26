@@ -134,8 +134,11 @@ class ReservationListSerializer(serializers.ModelSerializer):
     requester = serializers.CharField(source="requester_display_name", read_only=True)
     requester_type = serializers.CharField(read_only=True)
     requester_type_label = serializers.CharField(read_only=True)
+    affiliation = serializers.CharField(read_only=True)
+    affiliation_label = serializers.CharField(read_only=True)
     organization_type = serializers.CharField(read_only=True)
     organization_type_label = serializers.CharField(read_only=True)
+    organization_code = serializers.CharField(read_only=True)
     contact_email = serializers.CharField(read_only=True)
     created_by_name = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
@@ -163,7 +166,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "requester",
             "requester_type",
             "requester_type_label",
+            "affiliation",
+            "affiliation_label",
             "organization",
+            "organization_code",
             "organization_type",
             "organization_type_label",
             "contact_person",
@@ -426,13 +432,63 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
 
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
-        requester_type = attrs.get("requester_type", Reservation.RequesterType.CAMPUS)
+        is_staff = bool(user and user.is_authenticated and user.is_sas_staff)
+
+        # An external-organization member ALWAYS creates an external
+        # reservation: the requester type is derived from the authenticated
+        # profile, never taken from the client flag.
+        if (
+            user is not None
+            and user.is_authenticated
+            and not is_staff
+            and user.is_external_organization
+        ):
+            requester_type = Reservation.RequesterType.EXTERNAL
+        else:
+            requester_type = attrs.get(
+                "requester_type", Reservation.RequesterType.CAMPUS
+            )
+        attrs["requester_type"] = requester_type
 
         if requester_type == Reservation.RequesterType.EXTERNAL:
-            # Reservation on behalf of an organization without an account.
-            # Restricted to staff on the authenticated endpoint — external
-            # requesters themselves use the public guest endpoint.
-            if not (user and user.is_authenticated and user.is_sas_staff):
+            attrs.pop("requester_id", None)
+            if is_staff:
+                # Reservation on behalf of an organization without an account
+                # — unchanged behavior for SAS staff.
+                if not (attrs.get("organization") or "").strip():
+                    raise serializers.ValidationError(
+                        {"organization": "Organization name is required for external reservations."}
+                    )
+                if not (attrs.get("contact_person") or "").strip():
+                    raise serializers.ValidationError(
+                        {"contact_person": "Contact person is required for external reservations."}
+                    )
+                if not (attrs.get("contact_email") or "").strip():
+                    raise serializers.ValidationError(
+                        {"contact_email": "Email address is required for external reservations."}
+                    )
+            elif user is not None and user.is_authenticated and user.is_external_organization:
+                # The organization itself is resolved from the caller's own
+                # profile. Nothing about the organization (id, name, type) is
+                # ever read from the request body, so a member cannot book on
+                # behalf of another organization.
+                block_reason = user.reservation_block_reason
+                if block_reason:
+                    raise serializers.ValidationError({"requester_type": block_reason})
+                organization = user.organization_ref
+                attrs["_organization_ref"] = organization
+                attrs["organization"] = organization.organization_name
+                attrs["organization_type"] = (
+                    Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
+                        organization.organization_type,
+                        Reservation.OrganizationType.OTHER,
+                    )
+                )
+                if not (attrs.get("contact_person") or "").strip():
+                    attrs["contact_person"] = user.display_name
+                if not (attrs.get("contact_email") or "").strip():
+                    attrs["contact_email"] = organization.contact_email or user.email
+            else:
                 raise serializers.ValidationError(
                     {
                         "requester_type": (
@@ -441,19 +497,6 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                         )
                     }
                 )
-            if not (attrs.get("organization") or "").strip():
-                raise serializers.ValidationError(
-                    {"organization": "Organization name is required for external reservations."}
-                )
-            if not (attrs.get("contact_person") or "").strip():
-                raise serializers.ValidationError(
-                    {"contact_person": "Contact person is required for external reservations."}
-                )
-            if not (attrs.get("contact_email") or "").strip():
-                raise serializers.ValidationError(
-                    {"contact_email": "Email address is required for external reservations."}
-                )
-            attrs.pop("requester_id", None)
         else:
             # Campus requester: defaults to the current user; staff may pick
             # another campus user to reserve on their behalf.
@@ -482,34 +525,38 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         facility_id = validated_data.pop("facility_id")
         validated_data.pop("_availability_report", None)  # validation artifact
         on_behalf_of = validated_data.pop("_on_behalf_of", None)
+        organization_ref = validated_data.pop("_organization_ref", None)
         requester_type = validated_data.pop(
             "requester_type", Reservation.RequesterType.CAMPUS
         )
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
+        authenticated = bool(user and user.is_authenticated)
 
         # For campus reservations, use the user's email if not provided
         contact_email = validated_data.get("contact_email", "")
-        if not contact_email and user and user.is_authenticated:
+        if not contact_email and authenticated:
             contact_email = user.email
             validated_data["contact_email"] = contact_email
+
+        # Who the reservation is FOR: someone on whose behalf staff booked,
+        # the external-organization member themselves, or the signed-in user.
+        if on_behalf_of is not None:
+            requester = on_behalf_of
+        elif organization_ref is not None and authenticated:
+            requester = user
+        elif authenticated and requester_type == Reservation.RequesterType.CAMPUS:
+            requester = user
+        else:
+            requester = None
 
         reservation = Reservation.objects.create(
             **validated_data,
             facility_id=facility_id,
-            requester=(
-                on_behalf_of
-                if on_behalf_of is not None
-                else (
-                    user
-                    if user
-                    and user.is_authenticated
-                    and requester_type == Reservation.RequesterType.CAMPUS
-                    else None
-                )
-            ),
+            requester=requester,
             requester_type=requester_type,
-            created_by=user if user and user.is_authenticated else None,
+            organization_ref=organization_ref,
+            created_by=user if authenticated else None,
         )
         for item in items:
             ReservationItem.objects.create(

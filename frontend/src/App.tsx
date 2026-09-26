@@ -77,6 +77,16 @@ const HelpPage = lazy(() =>
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/AuditLogPage').then((module) => ({ default: module.AuditLogPage })),
 )
+const OrganizationsPage = lazy(() =>
+  import('@/pages/admin/OrganizationsPage').then((module) => ({
+    default: module.OrganizationsPage,
+  })),
+)
+const AffiliationPage = lazy(() =>
+  import('@/pages/onboarding/AffiliationPage').then((module) => ({
+    default: module.AffiliationPage,
+  })),
+)
 
 function PageLoader() {
   return (
@@ -125,6 +135,8 @@ export default function App() {
         <Route path="/auth/verify-otp" element={<VerifyOtpPage />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          {/* Affiliation completion — reachable at any time from the profile. */}
+          <Route path="/onboarding/affiliation" element={<AffiliationPage />} />
           <Route path="/facilities" element={<FacilitiesPage />} />
           <Route path="/facilities/:id" element={<FacilityDetailPage />} />
           <Route path="/reservations" element={<ReservationsPage />} />
@@ -141,6 +153,14 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
+          <Route
+            path="/organizations"
+            element={
+              <RequireStaff>
+                <OrganizationsPage />
+              </RequireStaff>
+            }
+          />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

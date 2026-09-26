@@ -8,20 +8,28 @@ import { useAuth } from '@/hooks/useAuth'
  * Landing point of the Google OAuth flow. The backend redirects here with
  * the SAS RESERVE JWT pair in the URL fragment. The AuthProvider bootstrap
  * consumes the fragment on mount and loads the authenticated user; this page
- * shows progress and then routes to the correct dashboard for the user's
+ * shows progress and then routes to the correct destination for the user's
  * existing role (requesters and staff both land on /dashboard, which renders
  * role-scoped content; staff additionally get Analytics in the nav).
+ *
+ * Authentication is unchanged: this page only decides WHERE to send an
+ * already-authenticated user. Accounts that have never chosen an affiliation
+ * are sent to the affiliation step first — signing in still works exactly as
+ * before for everyone else.
  */
 export function AuthCallbackPage() {
   const navigate = useNavigate()
   const { user, loading } = useAuth()
 
-  // Once the OAuth session materializes, route to the role-aware dashboard.
+  // Once the OAuth session materializes, route to the right next step.
   useEffect(() => {
     if (!loading && user) {
       // Both roles use /dashboard; the dashboard renders role-scoped content.
       // Staff see additional Analytics nav (see components/layout/navigation.ts).
-      navigate('/dashboard', { replace: true })
+      // A first-time Google account has no affiliation yet — ask for it once.
+      navigate(user.has_affiliation ? '/dashboard' : '/onboarding/affiliation', {
+        replace: true,
+      })
     }
   }, [loading, user, navigate])
 

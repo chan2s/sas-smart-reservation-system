@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, KeyRound, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
@@ -52,6 +52,10 @@ export function LoginPage() {
   const { user, login, verifyTwoFactorLogin } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+
+  // Set after an external-organization sign-up redirects here instead of
+  // auto-authenticating the new account.
+  const registeredExternal = searchParams.get('registered') === 'external'
 
   const [step, setStep] = useState<'credentials' | 'twofa'>('credentials')
   const [mfaToken, setMfaToken] = useState('')
@@ -153,6 +157,21 @@ export function LoginPage() {
             </p>
 
             <div className="mt-9">
+              {registeredExternal && step === 'credentials' && (
+                <div
+                  role="status"
+                  className="mb-6 flex items-start gap-2.5 rounded-xl border border-status-available/30 bg-status-available-bg px-3.5 py-3 text-[13px] text-status-available"
+                >
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <p>
+                    Registration successful. Your organization registration is pending
+                    administrator approval. Please wait for the administrator to approve
+                    your organization before making a reservation. You can log in after
+                    registration.
+                  </p>
+                </div>
+              )}
+
               {step === 'credentials' ? (
                 <>
                   <button

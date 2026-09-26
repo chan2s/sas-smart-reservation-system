@@ -269,10 +269,23 @@ class Reservation(models.Model):
         GOVERNMENT = "GOVERNMENT", "Government Organization"
         PRIVATE = "PRIVATE", "Private Organization"
         COMMUNITY = "COMMUNITY", "Community Organization"
+        NGO = "NGO", "Non-Governmental Organization"
         SPORTS = "SPORTS", "Sports Organization"
         COMPANY = "COMPANY", "Company"
         INDIVIDUAL = "INDIVIDUAL", "Individual"
         OTHER = "OTHER", "Other"
+
+    #: Maps a verified ``accounts.Organization.OrganizationType`` onto this
+    #: model's display vocabulary. Used to snapshot the organization type onto
+    #: an external reservation without coupling the two apps' choice classes.
+    ORGANIZATION_TYPE_FROM_ORGANIZATION = {
+        "GOVERNMENT_AGENCY": OrganizationType.GOVERNMENT,
+        "NGO": OrganizationType.NGO,
+        "PRIVATE_ORGANIZATION": OrganizationType.PRIVATE,
+        "COMMUNITY_ORGANIZATION": OrganizationType.COMMUNITY,
+        "SCHOOL_UNIVERSITY": OrganizationType.SCHOOL,
+        "OTHER": OrganizationType.OTHER,
+    }
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -334,6 +347,19 @@ class Reservation(models.Model):
         choices=OrganizationType.choices,
         blank=True,
         help_text="For external requesters: what kind of organization they are.",
+    )
+    # Structured link to the verified organization entity. Deliberately a NEW
+    # nullable field: the free-text ``organization``/``organization_type``
+    # fields above stay as the human-readable snapshot, so existing rows and
+    # API consumers keep working untouched. Never set from a client-supplied
+    # id — always derived from the authenticated requester's own profile.
+    organization_ref = models.ForeignKey(
+        "accounts.Organization",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="organization_reservations",
+        help_text="Verified external organization this reservation belongs to.",
     )
     contact_email = models.EmailField(
         blank=True,
@@ -444,14 +470,52 @@ class Reservation(models.Model):
 
     @property
     def requester_display_name(self) -> str:
-        """Human name of the requester, account or external alike."""
+        """Human name of the requester, account or external alike.
+
+        An external organization's own member is identified by their name
+        (the organization is shown separately); staff-entered external
+        reservations — which have no account — fall back to the organization
+        name recorded on the reservation.
+        """
+        if self.requester_id and self.requester:
+            return self.requester.display_name
         if self.requester_type == self.RequesterType.EXTERNAL:
             return self.organization or self.contact_person or "External Requester"
-        return self.requester.display_name if self.requester else "—"
+        return "—"
 
     @property
     def requester_type_label(self) -> str:
         return self.get_requester_type_display()
+
+    @property
+    def affiliation(self) -> str:
+        """Affiliation code behind this reservation.
+
+        Resolved from the requester's own profile rather than stored here, so
+        it can never drift from the user record. Guest/staff-entered external
+        reservations (no account) read as an external organization.
+        """
+        if self.requester_id and self.requester.affiliation:
+            return self.requester.affiliation
+        if self.requester_type == self.RequesterType.EXTERNAL:
+            return "EXTERNAL_ORGANIZATION"
+        return ""
+
+    @property
+    def affiliation_label(self) -> str:
+        from accounts.models import User as UserModel
+
+        value = self.affiliation
+        if not value:
+            return "Campus User"
+        return dict(UserModel.Affiliation.choices).get(value, value)
+
+    @property
+    def organization_code(self) -> str:
+        """Unique code of the linked organization, if any."""
+        if self.organization_ref_id:
+            return self.organization_ref.organization_code
+        return ""
 
     @property
     def is_today(self) -> bool:

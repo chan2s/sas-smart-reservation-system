@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsSasStaff
 
-from . import oauth_views
+from . import oauth_views, organization_views
 from .models import AuditLog
 from .views import (
     LoginView,
@@ -104,5 +104,29 @@ urlpatterns = [
     path("2fa/disable/", TwoFactorDisableView.as_view(), name="twofa-disable"),
     path("2fa/verify-login/", TwoFactorVerifyLoginView.as_view(), name="twofa-verify-login"),
     path("2fa/backup-codes/", TwoFactorBackupCodesView.as_view(), name="twofa-backup-codes"),
+
+    # Affiliation + external organizations (layered on top of the existing
+    # authentication — never a replacement for it).
+    path(
+        "affiliation/",
+        organization_views.MyAffiliationView.as_view(),
+        name="affiliation",
+    ),
+    path(
+        "organizations/",
+        organization_views.OrganizationListView.as_view(),
+        name="organization-list",
+    ),
+    path(
+        "organizations/<int:pk>/",
+        organization_views.OrganizationDetailView.as_view(),
+        name="organization-detail",
+    ),
+    path(
+        "organizations/<int:pk>/verify/",
+        organization_views.OrganizationVerifyView.as_view(),
+        name="organization-verify",
+    ),
+
     path("audit-log/", AuditLogView.as_view(), name="audit-log"),
 ]

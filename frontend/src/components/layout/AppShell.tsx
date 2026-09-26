@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom'
 import { Header, MobileBottomNav } from './Header'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
+import { AffiliationPrompt } from '@/components/organizations/AffiliationPrompt'
 
 /**
  * Application shell.
@@ -28,6 +29,8 @@ export function AppShell() {
       <main className="w-full flex-1">
         {/* Comfortable max content width — never overly wide on large monitors */}
         <div className="mx-auto w-full max-w-[1440px] px-4 pb-24 pt-8 sm:px-6 lg:px-10 lg:pb-14 lg:pt-10">
+          {/* Non-blocking nudge — never gates access for existing users. */}
+          <AffiliationPrompt />
           <Outlet />
         </div>
       </main>

@@ -1,6 +1,20 @@
 import { useState, type FormEvent } from 'react'
-import { Check, Copy, Download, Fingerprint, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  ArrowRight,
+  Check,
+  Copy,
+  Download,
+  Fingerprint,
+  ShieldAlert,
+  ShieldCheck,
+} from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import {
+  OrganizationStatusNotice,
+  VERIFICATION_LABEL,
+  VERIFICATION_TONE,
+} from '@/components/organizations/OrganizationStatusNotice'
 import type { User } from '@/lib/types'
 import { useToast } from '@/components/ui/Toast'
 import { api } from '@/lib/api'
@@ -194,6 +208,69 @@ export function SettingsPage() {
             </Button>
           </div>
         </form>
+      </Card>
+
+      {/* ---------------------------------------------------------- */}
+      {/* Affiliation & organization                                */}
+      {/* ---------------------------------------------------------- */}
+      <Card className="mt-6">
+        <CardHeader
+          title="Affiliation"
+          description="Google confirms who you are — your affiliation tells SAS RESERVE who you represent."
+        />
+
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-line p-3.5">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted">Affiliation</dt>
+            <dd className="mt-1 text-sm text-ink">
+              {user.affiliation_label || 'Not set'}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-line p-3.5">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted">Organization</dt>
+            <dd className="mt-1 text-sm text-ink">
+              {user.organization_ref?.organization_name || user.organization || '—'}
+              {user.organization_ref && (
+                <span className="block text-xs text-muted">
+                  {user.organization_ref.organization_code} ·{' '}
+                  {user.organization_ref.organization_type_label}
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-line p-3.5 sm:col-span-2">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted">
+              Verification status
+            </dt>
+            <dd className="mt-1 text-sm text-ink">
+              {user.organization_verification_status ? (
+                <Badge tone={VERIFICATION_TONE[user.organization_verification_status]}>
+                  {VERIFICATION_LABEL[user.organization_verification_status]}
+                </Badge>
+              ) : (
+                'Not applicable'
+              )}
+            </dd>
+          </div>
+        </dl>
+
+        {user.organization_verification_status && (
+          <OrganizationStatusNotice
+            status={user.organization_verification_status}
+            organization={user.organization_ref}
+            className="mt-4"
+          />
+        )}
+
+        <div className="mt-4">
+          <Link
+            to="/onboarding/affiliation"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-soft"
+          >
+            {user.has_affiliation ? 'Update affiliation' : 'Complete your affiliation'}
+            <ArrowRight className="size-3.5" aria-hidden />
+          </Link>
+        </div>
       </Card>
 
       {/* ---------------------------------------------------------- */}

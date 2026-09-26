@@ -34,6 +34,7 @@ import {
   type EventDetails,
 } from '@/components/reservations/wizard-steps'
 import { useAuth } from '@/hooks/useAuth'
+import { OrganizationStatusNotice } from '@/components/organizations/OrganizationStatusNotice'
 import { cn, formatTime } from '@/lib/utils'
 import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import type {
@@ -148,8 +149,15 @@ export function ReservationWizardPage() {
   // Only the final submission is gated on a clean availability report. Step
   // navigation stays clickable on every step and validates inline via goNext(),
   // so Continue can never silently dead-end the wizard as a disabled button.
+  // A member of an organization that is not Approved cannot submit at all —
+  // the backend enforces this regardless, but say so up front.
+  const canCreateReservations = user?.can_create_reservations ?? true
   const canSubmit =
-    scheduleComplete && !dateInvalid && availabilityCheck.data != null && availabilityCheck.data.overall.ok
+    scheduleComplete &&
+    !dateInvalid &&
+    canCreateReservations &&
+    availabilityCheck.data != null &&
+    availabilityCheck.data.overall.ok
 
   const facility = facilities?.find((item) => item.id === facilityId)
   const itemsList = useMemo(
@@ -274,11 +282,23 @@ export function ReservationWizardPage() {
   }, [details, participants])
 
   /**
-   * Continue is always enabled. When a step's requirements are missing we
-   * surface inline validation feedback instead of silently blocking the
-   * button, so the user always knows what to do next.
+   * Advance one step. Members of an unapproved external organization are
+   * blocked outright (the Continue button is disabled for them too). For
+   * everyone else, a step's missing requirements surface inline validation
+   * feedback instead of silently blocking the button, so the user always
+   * knows what to do next.
    */
   function goNext() {
+    // External organizations must be APPROVED before any step can proceed.
+    // The Continue button is disabled, but guard here too so the rule holds
+    // even if the disabled state is bypassed with dev tools.
+    if (!canCreateReservations) {
+      setStepError(
+        user?.reservation_block_reason ||
+          'Your organization must be approved by an administrator before you can reserve a facility.',
+      )
+      return
+    }
     if (stepKey === 'requester' && requesterType === 'CAMPUS' && !selectedUser) {
       setStepError('Search for and select the campus user this reservation is for.')
       return
@@ -455,6 +475,27 @@ export function ReservationWizardPage() {
           Reserve a facility and the resources you need for your event.
         </p>
       </div>
+
+      {!canCreateReservations && (
+        <div className="mt-6">
+          {user?.organization_verification_status ? (
+            <OrganizationStatusNotice
+              status={user.organization_verification_status}
+              organization={user.organization_ref}
+            />
+          ) : (
+            <p
+              role="alert"
+              className="rounded-xl border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-status-pending"
+            >
+              {user?.reservation_block_reason}{' '}
+              <Link to="/onboarding/affiliation" className="font-medium underline">
+                Complete your organization registration
+              </Link>
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="mt-8">
         <Stepper
@@ -637,7 +678,13 @@ export function ReservationWizardPage() {
               <ArrowLeft className="size-4" /> Back
             </Button>
             {step < steps.length - 1 ? (
-              <Button onClick={goNext}>
+              <Button
+                onClick={goNext}
+                disabled={!canCreateReservations}
+                title={
+                  !canCreateReservations ? user?.reservation_block_reason : undefined
+                }
+              >
                 Continue <ArrowRight className="size-4" />
               </Button>
             ) : (
@@ -646,9 +693,11 @@ export function ReservationWizardPage() {
                 loading={createReservation.isPending}
                 disabled={!canSubmit || createReservation.isPending}
                 title={
-                  availabilityCheck.data && !availabilityCheck.data.overall.ok
-                    ? 'Resolve the conflicts above before submitting'
-                    : undefined
+                  !canCreateReservations
+                    ? user?.reservation_block_reason
+                    : availabilityCheck.data && !availabilityCheck.data.overall.ok
+                      ? 'Resolve the conflicts above before submitting'
+                      : undefined
                 }
               >
                 {isAdmin ? 'Create approved reservation' : 'Submit reservation'}{' '}

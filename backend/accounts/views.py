@@ -81,6 +81,19 @@ class RegisterView(generics.CreateAPIView):
             object_repr=user.display_name,
             request=request,
         )
+        # An external-organization sign-up also creates the organization in
+        # the PENDING state; record that separately so the verification trail
+        # starts at registration. No credentials are issued here.
+        if user.is_external_organization and user.organization_ref_id:
+            AuditLog.record(
+                user,
+                AuditLog.Action.ORGANIZATION_REGISTERED,
+                object_type="organization",
+                object_id=user.organization_ref_id,
+                object_repr=str(user.organization_ref),
+                detail="External organization registered at sign-up",
+                request=request,
+            )
         return Response(
             UserSerializer(user).data,
             status=status.HTTP_201_CREATED,

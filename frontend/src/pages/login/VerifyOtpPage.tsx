@@ -107,6 +107,12 @@ export function VerifyOtpPage() {
    * animation short — this keeps the hand-off on our terms.
    */
   const flowActiveRef = useRef(false)
+  /**
+   * Where to land once verification succeeds. A brand-new Google account has
+   * no affiliation yet, so it completes the affiliation step first; every
+   * other account goes straight to the dashboard as before.
+   */
+  const nextPathRef = useRef('/dashboard')
 
   // No valid token (or already signed in) → back to login.
   const invalidEntry = !verificationToken
@@ -131,7 +137,10 @@ export function VerifyOtpPage() {
   // Acknowledged: leave only after the cells and the button have said so.
   useEffect(() => {
     if (status !== 'success') return
-    const timer = setTimeout(() => navigate('/dashboard', { replace: true }), SUCCESS_EXIT_MS)
+    const timer = setTimeout(
+      () => navigate(nextPathRef.current, { replace: true }),
+      SUCCESS_EXIT_MS,
+    )
     return () => clearTimeout(timer)
   }, [status, navigate])
 
@@ -259,9 +268,12 @@ export function VerifyOtpPage() {
     setError('')
     setStatus('submitting')
     try {
-      await verifyGoogleOtp(verificationToken, code)
+      const verified = await verifyGoogleOtp(verificationToken, code)
       // The API is the single source of truth — only a resolved verify()
       // reaches this state, and the exit is handled by the effect above.
+      nextPathRef.current = verified.has_affiliation
+        ? '/dashboard'
+        : '/onboarding/affiliation'
       setStatus('success')
     } catch (err) {
       handleError(err)
@@ -291,7 +303,14 @@ export function VerifyOtpPage() {
     }
   }
 
-  if (user && !flowActiveRef.current) return <Navigate to="/dashboard" replace />
+  if (user && !flowActiveRef.current) {
+    return (
+      <Navigate
+        to={user.has_affiliation ? '/dashboard' : '/onboarding/affiliation'}
+        replace
+      />
+    )
+  }
   if (invalidEntry) return null
 
   return (

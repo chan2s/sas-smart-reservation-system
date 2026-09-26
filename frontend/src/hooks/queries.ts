@@ -10,6 +10,11 @@ import {
   type ReservationFilters,
 } from '@/lib/api'
 import type { RequesterType } from '@/lib/types'
+import type {
+  AffiliationPayload,
+  OrganizationFilters,
+  OrganizationVerificationAction,
+} from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Facilities
@@ -429,5 +434,70 @@ export function useUnreadCount() {
 export function useChatbot() {
   return useMutation({
     mutationFn: (message: string) => endpoints.chatbot(message),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Affiliation + external organizations
+// ---------------------------------------------------------------------------
+
+export function useMyAffiliation() {
+  return useQuery({
+    queryKey: ['affiliation'],
+    queryFn: () => api.myAffiliation(),
+  })
+}
+
+/**
+ * Set the caller's affiliation (and register an external organization).
+ *
+ * The backend derives the organization from the authenticated user, so the
+ * cache for the caller's reservation gating is refreshed on success.
+ */
+export function useSetAffiliation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: AffiliationPayload) => api.setAffiliation(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['affiliation'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
+    },
+  })
+}
+
+/** Staff verification queue. */
+export function useOrganizations(params: OrganizationFilters = {}) {
+  return useQuery({
+    queryKey: ['organizations', params],
+    queryFn: () => api.organizations(params),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useOrganization(id: number | null) {
+  return useQuery({
+    queryKey: ['organization', id],
+    queryFn: () => api.organization(id as number),
+    enabled: id != null,
+  })
+}
+
+export function useVerifyOrganization() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      action,
+      notes,
+    }: {
+      id: number
+      action: OrganizationVerificationAction
+      notes?: string
+    }) => api.verifyOrganization(id, action, notes),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['organizations'] })
+      void queryClient.invalidateQueries({ queryKey: ['organization'] })
+      void queryClient.invalidateQueries({ queryKey: ['affiliation'] })
+    },
   })
 }

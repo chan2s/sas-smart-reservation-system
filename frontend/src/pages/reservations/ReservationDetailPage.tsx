@@ -280,7 +280,25 @@ export function ReservationDetailPage() {
           <Card>
             <CardHeader title="Event details" />
             <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
-              <DetailItem label="Organization" value={reservation.organization || '—'} />
+              {/* Who the reservation is for — affiliation first, so an
+                  external-organization booking is obvious at a glance. */}
+              <DetailItem label="Affiliation" value={reservation.affiliation_label || '—'} />
+              <DetailItem
+                label="Organization"
+                value={
+                  reservation.organization
+                    ? `${reservation.organization}${
+                        reservation.organization_code
+                          ? ` (${reservation.organization_code})`
+                          : ''
+                      }`
+                    : '—'
+                }
+              />
+              <DetailItem
+                label="Organization type"
+                value={reservation.organization_type_label || '—'}
+              />
               <DetailItem label="Event type" value={reservation.event_type_label} />
               <DetailItem label="Expected participants" value={`${reservation.expected_participants}`} />
               <DetailItem label="Facility" value={reservation.facility} />

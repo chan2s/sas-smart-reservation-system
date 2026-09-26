@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import {
+  BadgeCheck,
   BarChart3,
   Building2,
   CalendarCheck,
@@ -37,6 +38,7 @@ export const primaryNavigation: NavigationItem[] = [
 /** Staff-only additions to the primary navigation (kept out of requester UI). */
 export const staffPrimaryNavigation: NavigationItem[] = [
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/organizations', label: 'Organizations', icon: BadgeCheck },
 ]
 
 /**

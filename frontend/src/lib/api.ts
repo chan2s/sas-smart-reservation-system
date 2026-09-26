@@ -1,4 +1,5 @@
 import type {
+  Affiliation,
   AvailabilityCheck,
   CalendarEvent,
   CampusUserOption,
@@ -15,7 +16,9 @@ import type {
   Facility,
   Insights,
   MaintenanceRecord,
+  MyAffiliation,
   Notification,
+  Organization,
   OrganizationType,
   Paginated,
   PricingQuote,
@@ -30,6 +33,7 @@ import type {
   TrendPoint,
   User,
   Utilization,
+  VerificationStatus,
 } from './types'
 
 const ACCESS_KEY = 'sas_access'
@@ -274,6 +278,54 @@ export const api = {
   register: (payload: Record<string, unknown>) =>
     api.post<User>('/api/auth/register/', payload),
   me: () => api.get<User>('/api/auth/me/'),
+
+  // Affiliation + external organizations ---------------------------------
+  // The organization is never chosen from the client: the backend resolves
+  // it from the authenticated profile. These calls only submit the caller's
+  // own affiliation/registration details.
+  myAffiliation: () => api.get<MyAffiliation>('/api/auth/affiliation/'),
+  setAffiliation: (payload: AffiliationPayload) =>
+    api.post<MyAffiliation>('/api/auth/affiliation/', payload),
+  organizations: (params: OrganizationFilters = {}) => {
+    const qs = new URLSearchParams()
+    if (params.status) qs.set('status', params.status)
+    if (params.type) qs.set('type', params.type)
+    if (params.search) qs.set('search', params.search)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return api.get<Paginated<Organization> | Organization[]>(
+      `/api/auth/organizations/${suffix}`,
+    )
+  },
+  organization: (id: number) => api.get<Organization>(`/api/auth/organizations/${id}/`),
+  verifyOrganization: (id: number, action: OrganizationVerificationAction, notes = '') =>
+    api.post<Organization>(`/api/auth/organizations/${id}/verify/`, { action, notes }),
+}
+
+export type OrganizationVerificationAction =
+  | 'approve'
+  | 'reject'
+  | 'suspend'
+  | 'reactivate'
+
+export interface OrganizationFilters {
+  status?: VerificationStatus
+  type?: string
+  search?: string
+}
+
+/** Payload for POST /api/auth/affiliation/ — external registration included. */
+export interface AffiliationPayload {
+  affiliation: Affiliation
+  /** NORSU office/department, for internal affiliations. */
+  organization?: string
+  // Present only when registering an external organization.
+  organization_name?: string
+  organization_type?: string
+  contact_person?: string
+  contact_email?: string
+  contact_number?: string
+  address?: string
+  purpose?: string
 }
 
 export interface AuditLogEntry {

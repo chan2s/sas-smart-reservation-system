@@ -3,22 +3,186 @@ import secrets
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 
+class Organization(models.Model):
+    """An external organization affiliated with SAS RESERVE.
+
+    Google identifies the *person*; this entity identifies the *institution*
+    that person represents. It is deliberately NOT an authentication
+    mechanism: every member authenticates with their own Google account and
+    is linked here by ``User.organization_ref``, so one organization can have
+    many users (and one user belongs to at most one organization).
+
+    Registration is self-service but inert until SAS staff verify it: new
+    organizations start ``PENDING`` and their members cannot create
+    reservations until the status is ``APPROVED``.
+    """
+
+    class OrganizationType(models.TextChoices):
+        GOVERNMENT_AGENCY = "GOVERNMENT_AGENCY", "Government Agency"
+        NGO = "NGO", "NGO"
+        PRIVATE_ORGANIZATION = "PRIVATE_ORGANIZATION", "Private Organization"
+        COMMUNITY_ORGANIZATION = "COMMUNITY_ORGANIZATION", "Community Organization"
+        SCHOOL_UNIVERSITY = "SCHOOL_UNIVERSITY", "School/University"
+        OTHER = "OTHER", "Other"
+
+    class VerificationStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        SUSPENDED = "SUSPENDED", "Suspended"
+
+    # Unique, human-readable identifier (EXT-0001, EXT-0002, …) generated on
+    # first save. Never derived from a Google account id.
+    organization_code = models.CharField(
+        max_length=16, unique=True, editable=False, db_index=True
+    )
+    organization_name = models.CharField(max_length=160)
+    organization_type = models.CharField(
+        max_length=32,
+        choices=OrganizationType.choices,
+        default=OrganizationType.OTHER,
+    )
+    contact_person = models.CharField(max_length=120)
+    contact_email = models.EmailField()
+    contact_number = models.CharField(max_length=32, blank=True)
+    address = models.CharField(max_length=240, blank=True)
+    purpose = models.TextField(
+        blank=True,
+        help_text="Why the organization needs to use NORSU facilities.",
+    )
+    verification_status = models.CharField(
+        max_length=16,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.PENDING,
+        db_index=True,
+    )
+    review_notes = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="organizations_reviewed",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    # Who registered the organization (the first affiliated user).
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="organizations_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["verification_status", "organization_type"]),
+        ]
+        verbose_name = "external organization"
+        verbose_name_plural = "external organizations"
+
+    # ------------------------------------------------------------------
+
+    CODE_PREFIX = "EXT-"
+
+    @classmethod
+    def _next_organization_code(cls) -> str:
+        last = (
+            cls.objects.filter(organization_code__startswith=cls.CODE_PREFIX)
+            .order_by("-organization_code")
+            .values_list("organization_code", flat=True)
+            .first()
+        )
+        if last:
+            try:
+                sequence = int(last.rsplit("-", 1)[1]) + 1
+            except (IndexError, ValueError):
+                sequence = 1
+        else:
+            sequence = 1
+        return f"{cls.CODE_PREFIX}{sequence:04d}"
+
+    def save(self, *args, **kwargs):
+        if self.organization_code:
+            return super().save(*args, **kwargs)
+        # Generate on first save. The unique constraint is the real guard, so
+        # a concurrent insert simply retries with the next code instead of
+        # silently colliding.
+        for _ in range(10):
+            self.organization_code = self._next_organization_code()
+            try:
+                with transaction.atomic():
+                    return super().save(*args, **kwargs)
+            except IntegrityError:
+                self.organization_code = ""
+        return super().save(*args, **kwargs)
+
+    @property
+    def is_verified(self) -> bool:
+        return self.verification_status == self.VerificationStatus.APPROVED
+
+    @property
+    def member_count(self) -> int:
+        return self.members.count()
+
+    def __str__(self) -> str:
+        return f"{self.organization_code} — {self.organization_name}"
+
+
 class User(AbstractUser):
-    """Application user with institutional roles."""
+    """Application user with institutional roles.
+
+    ``affiliation`` is how SAS RESERVE identifies *who the person represents*
+    (NORSU student/faculty/office or an external organization), layered on top
+    of the existing Google/OTP/2FA authentication — it is never used as a
+    credential and never replaces it. Existing accounts keep their current
+    behavior: a blank affiliation means "campus user as before".
+    """
 
     class Role(models.TextChoices):
         ADMIN = "ADMIN", "Administrator"
         STAFF = "STAFF", "SAS Staff"
         REQUESTER = "REQUESTER", "Requester"
 
+    class Affiliation(models.TextChoices):
+        NORSU_STUDENT = "NORSU_STUDENT", "NORSU Student"
+        NORSU_FACULTY_STAFF = "NORSU_FACULTY_STAFF", "NORSU Faculty/Staff"
+        NORSU_OFFICE = "NORSU_OFFICE", "NORSU Office/Department"
+        EXTERNAL_ORGANIZATION = "EXTERNAL_ORGANIZATION", "External Organization"
+
     role = models.CharField(
         max_length=16, choices=Role.choices, default=Role.REQUESTER
     )
+    # Free-text NORSU unit / department (legacy field, still used by the
+    # profile form and shown in the UI). For external requesters the resolved
+    # organization name comes from ``organization_ref`` instead.
     organization = models.CharField(max_length=120, blank=True)
+    affiliation = models.CharField(
+        max_length=32,
+        choices=Affiliation.choices,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Blank = not yet chosen (treated as an internal campus user).",
+    )
+    organization_ref = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="members",
+        help_text=(
+            "External organization this user belongs to. Set only through the "
+            "backend from the authenticated user — never from a client-sent id."
+        ),
+    )
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
     # Persistent first-time verification state (server-authoritative):
     # accounts created by first-time Google sign-in start as False and are
@@ -49,6 +213,67 @@ class User(AbstractUser):
     @property
     def is_sas_staff(self) -> bool:
         return self.role in (self.Role.ADMIN, self.Role.STAFF)
+
+    # -- Affiliation helpers -------------------------------------------
+
+    @property
+    def is_external_organization(self) -> bool:
+        return self.affiliation == self.Affiliation.EXTERNAL_ORGANIZATION
+
+    @property
+    def has_affiliation(self) -> bool:
+        """False only for accounts that have never completed the step.
+
+        Legacy accounts (created before affiliations existed) also read as
+        False — they keep working exactly as before and are only *prompted*.
+        """
+        return bool(self.affiliation)
+
+    @property
+    def organization_verification_status(self) -> str:
+        """Verification status of this user's organization ('' when none)."""
+        if self.organization_ref_id:
+            return self.organization_ref.verification_status
+        return ""
+
+    @property
+    def can_create_reservations(self) -> bool:
+        """False only for external affiliations whose organization is not
+        APPROVED. Internal/legacy users are always allowed."""
+        return not self.reservation_block_reason
+
+    @property
+    def reservation_block_reason(self) -> str:
+        """Why this user may not submit a reservation, or '' when allowed.
+
+        Pending / Rejected / Suspended organizations cannot create normal
+        reservations — the message is surfaced verbatim by the API so the
+        frontend can show the matching status notice.
+        """
+        if not self.is_external_organization:
+            return ""
+        organization = self.organization_ref
+        if organization is None:
+            return (
+                "Complete your external organization registration before "
+                "submitting reservations."
+            )
+        if organization.verification_status == Organization.VerificationStatus.APPROVED:
+            return ""
+        return {
+            Organization.VerificationStatus.PENDING: (
+                "Your organization registration is pending administrator "
+                "verification. You cannot submit reservations yet."
+            ),
+            Organization.VerificationStatus.REJECTED: (
+                "Your organization registration was rejected, so reservations "
+                "are not available. Contact the SAS Office for assistance."
+            ),
+            Organization.VerificationStatus.SUSPENDED: (
+                "Your organization is currently suspended. Reservations are "
+                "disabled until the SAS Office reactivates it."
+            ),
+        }.get(organization.verification_status, "")
 
     def __str__(self) -> str:
         return self.display_name
@@ -90,6 +315,14 @@ class AuditLog(models.Model):
         FACILITY_REMOVED = "FACILITY_REMOVED", "Facility removed"
         FACILITY_IMAGE = "FACILITY_IMAGE", "Facility image changed"
         SETTINGS_CHANGED = "SETTINGS_CHANGED", "Settings changed"
+        # External organization affiliations (Task: external organizations).
+        AFFILIATION_CHANGED = "AFFILIATION_CHANGED", "Affiliation changed"
+        ORGANIZATION_REGISTERED = "ORGANIZATION_REGISTERED", "Organization registered"
+        ORGANIZATION_UPDATED = "ORGANIZATION_UPDATED", "Organization updated"
+        ORGANIZATION_APPROVED = "ORGANIZATION_APPROVED", "Organization approved"
+        ORGANIZATION_REJECTED = "ORGANIZATION_REJECTED", "Organization rejected"
+        ORGANIZATION_SUSPENDED = "ORGANIZATION_SUSPENDED", "Organization suspended"
+        ORGANIZATION_REACTIVATED = "ORGANIZATION_REACTIVATED", "Organization reactivated"
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -273,13 +273,92 @@ class ReservationAdmin(admin.ModelAdmin):
         "start_time",
         "status",
         "requester",
+        "affiliation_admin",
+        "organization_admin",
         "approval_email",
     )
-    list_filter = ("status", "event_type", "date")
-    search_fields = ("reservation_id", "event_name", "organization")
+    list_filter = ("status", "event_type", "requester_type", "date")
+    search_fields = (
+        "reservation_id",
+        "event_name",
+        "organization",
+        "organization_ref__organization_name",
+        "organization_ref__organization_code",
+        "requester__affiliation",
+    )
     inlines = [ReservationItemInline, ReservationFeeInline, ReservationEventInline]
-    readonly_fields = ("approval_email_status", "estimated_total")
+    readonly_fields = ("approval_email_status", "estimated_total", "checkin_code")
+    fieldsets = (
+        (
+            "Requester",
+            {
+                "fields": (
+                    "requester_type",
+                    "requester",
+                    "organization_ref",
+                    "organization",
+                    "organization_type",
+                    "contact_person",
+                    "contact_email",
+                    "created_by",
+                ),
+                "description": (
+                    "Affiliation and organization are resolved from the "
+                    "requester's profile; the text fields are display snapshots."
+                ),
+            },
+        ),
+        (
+            "Event",
+            {
+                "fields": (
+                    "event_name",
+                    "event_type",
+                    "purpose",
+                    "description",
+                    "expected_participants",
+                    "special_requirements",
+                )
+            },
+        ),
+        ("Schedule", {"fields": ("facility", "date", "start_time", "end_time")}),
+        (
+            "Status",
+            {
+                "fields": (
+                    "status",
+                    "notes",
+                    "rejection_reason",
+                    "approved_by",
+                    "approved_at",
+                    "approval_email_status",
+                    "estimated_total",
+                )
+            },
+        ),
+        (
+            "Check-in",
+            {
+                "fields": (
+                    "checkin_code",
+                    "checked_in_at",
+                    "checked_out_at",
+                    "early_check_in_override",
+                )
+            },
+        ),
+    )
     actions = ["retry_approval_email", "recalculate_fees"]
+
+    @admin.display(description="Affiliation", ordering="requester__affiliation")
+    def affiliation_admin(self, obj):
+        return obj.affiliation_label
+
+    @admin.display(description="Organization")
+    def organization_admin(self, obj):
+        if obj.organization_ref_id:
+            return f"{obj.organization_ref.organization_name} ({obj.organization_ref.organization_code})"
+        return obj.organization or "—"
 
     @admin.action(
         description="Recalculate external-organization fees from current rates"

@@ -27,20 +27,22 @@ from .services.recommendations import recommend_resources_with_pricing
 def _trusted_requester_type(request, requested) -> str:
     """Decide the pricing context from trusted data, never a client flag.
 
-    External-organization pricing is only ever surfaced to SAS staff (who
-    create external reservations on an organization's behalf) and is
-    validated against the caller's role. Everyone else is treated as an
-    internal campus requester, whose reservations are free. This means a
-    forged ``requester_type=EXTERNAL`` from a non-staff client cannot switch
-    on external fees.
+    External-organization pricing applies to SAS staff (who create external
+    reservations on an organization's behalf) and to members of an approved
+    external organization booking for their own organization. Everyone else
+    is treated as an internal campus requester, whose reservations are free.
+    A forged ``requester_type=EXTERNAL`` from an ordinary requester therefore
+    cannot switch on external fees.
     """
     user = getattr(request, "user", None)
-    if (
-        requested == Reservation.RequesterType.EXTERNAL
-        and user is not None
-        and user.is_authenticated
-        and user.is_sas_staff
-    ):
+    if user is None or not user.is_authenticated:
+        return Reservation.RequesterType.CAMPUS
+    if requested == Reservation.RequesterType.EXTERNAL and user.is_sas_staff:
+        return Reservation.RequesterType.EXTERNAL
+    # External-organization members are priced as external for their own
+    # reservations regardless of what the client sent (their own profile
+    # decides, and an unverified organization is blocked entirely).
+    if user.is_external_organization and user.can_create_reservations:
         return Reservation.RequesterType.EXTERNAL
     return Reservation.RequesterType.CAMPUS
 
@@ -62,7 +64,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Reservation.objects.select_related(
-            "facility", "requester", "created_by", "approved_by"
+            "facility", "requester", "created_by", "approved_by", "organization_ref"
         ).prefetch_related("items__equipment__category", "events")
         user = self.request.user
 

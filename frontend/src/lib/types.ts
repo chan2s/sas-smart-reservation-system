@@ -20,6 +20,74 @@ export interface ChatbotResponse {
   }
 }
 
+/** How a person is affiliated with NORSU. Blank = not yet chosen. */
+export type Affiliation =
+  | 'NORSU_STUDENT'
+  | 'NORSU_FACULTY_STAFF'
+  | 'NORSU_OFFICE'
+  | 'EXTERNAL_ORGANIZATION'
+
+/** Organization types for external organizations (distinct from
+ *  `OrganizationType`, which is the reservation requester snapshot). */
+export type ExternalOrganizationType =
+  | 'GOVERNMENT_AGENCY'
+  | 'NGO'
+  | 'PRIVATE_ORGANIZATION'
+  | 'COMMUNITY_ORGANIZATION'
+  | 'SCHOOL_UNIVERSITY'
+  | 'OTHER'
+
+export type VerificationStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED'
+
+/** An external organization. Never an authentication mechanism. */
+export interface Organization {
+  id: number
+  organization_code: string
+  organization_name: string
+  organization_type: ExternalOrganizationType
+  organization_type_label: string
+  verification_status: VerificationStatus
+  verification_status_label: string
+  contact_person?: string
+  contact_email?: string
+  contact_number?: string
+  member_count?: number
+  created_by_name?: string
+  created_at?: string
+  // Detail-only fields.
+  address?: string
+  purpose?: string
+  review_notes?: string
+  reviewed_by_name?: string
+  reviewed_at?: string | null
+  updated_at?: string
+  members?: OrganizationMember[]
+}
+
+export interface OrganizationMember {
+  id: number
+  username: string
+  display_name: string
+  email: string
+  role: Role
+  affiliation: string
+  affiliation_label: string
+  is_active: boolean
+  date_joined: string
+}
+
+/** The affiliation block returned by /api/auth/affiliation/. */
+export interface MyAffiliation {
+  affiliation: Affiliation | ''
+  affiliation_label: string
+  has_affiliation: boolean
+  organization_text: string
+  organization: Organization | null
+  organization_verification_status: VerificationStatus | ''
+  can_create_reservations: boolean
+  reservation_block_reason: string
+}
+
 export interface User {
   id: number
   username: string
@@ -29,6 +97,14 @@ export interface User {
   role: Role
   organization: string
   display_name: string
+  affiliation: Affiliation | ''
+  affiliation_label: string
+  organization_ref: Organization | null
+  organization_verification_status: VerificationStatus | ''
+  /** False only for accounts that have never completed the affiliation step. */
+  has_affiliation: boolean
+  can_create_reservations: boolean
+  reservation_block_reason: string
 }
 
 export type FacilityStatus = 'OPERATIONAL' | 'MAINTENANCE'
@@ -298,6 +374,9 @@ export interface ReservationSummary {
   requester_type: RequesterType
   requester_type_label: string
   organization: string
+  affiliation: string
+  affiliation_label: string
+  organization_code: string
   organization_type: string
   organization_type_label: string
   expected_participants: number

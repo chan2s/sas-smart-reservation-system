@@ -144,7 +144,10 @@ function HeaderActions() {
                   ? 'SAS Administrator'
                   : user?.role === 'STAFF'
                     ? 'SAS Staff'
-                    : user?.organization || 'Requester'}
+                    : user?.organization_ref?.organization_name ||
+                        user?.affiliation_label ||
+                        user?.organization ||
+                        'Requester'}
               </span>
             </span>
             <ChevronDown className="hidden size-3.5 text-muted xl:block" aria-hidden />
@@ -162,7 +165,10 @@ function HeaderActions() {
                   ? 'SAS Administrator'
                   : user?.role === 'STAFF'
                     ? 'SAS Staff'
-                    : user?.organization || 'Requester'}
+                    : user?.organization_ref?.organization_name ||
+                        user?.affiliation_label ||
+                        user?.organization ||
+                        'Requester'}
               </p>
             </div>
             <div className="my-1 h-px bg-line md:hidden" aria-hidden />
