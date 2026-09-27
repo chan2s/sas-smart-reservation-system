@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from reservations.models import Reservation
 
-from .models import Equipment, MaintenanceRecord
+from .models import Equipment, FacilityResource, MaintenanceRecord
 
 
 def _open_maintenance_quantities() -> dict:
@@ -64,6 +64,73 @@ def _reserved_quantities(date_str=None, start=None, end=None, exclude_reservatio
     return {row["items__equipment_id"]: row["total"] for row in rows}
 
 
+def facility_has_resources(facility_id) -> bool:
+    """True when the facility has any active resource assignment.
+
+    When false the facility keeps the legacy global-equipment behavior.
+    """
+    if not facility_id:
+        return False
+    return FacilityResource.objects.filter(
+        facility_id=facility_id, is_active=True
+    ).exists()
+
+
+def facility_resource_equipment_ids(facility_id) -> set:
+    """Ids of equipment assigned (and active) at a facility.
+
+    Empty when the facility has no assignments configured — callers treat an
+    empty set as "no restriction" via :func:`facility_has_resources`.
+    """
+    if not facility_id:
+        return set()
+    return set(
+        FacilityResource.objects.filter(facility_id=facility_id, is_active=True)
+        .values_list("equipment_id", flat=True)
+    )
+
+
+def facility_resource_limits(facility_id) -> dict:
+    """equipment_id -> units available at the facility (from active rows).
+
+    Only resources whose facility status is AVAILABLE contribute a limit; the
+    others are treated as fully out of service at that facility.
+    """
+    if not facility_id:
+        return {}
+    rows = FacilityResource.objects.filter(
+        facility_id=facility_id, is_active=True
+    ).select_related("equipment")
+    limits = {}
+    for row in rows:
+        limits[row.equipment_id] = (
+            row.effective_quantity
+            if row.status == FacilityResource.Status.AVAILABLE
+            else 0
+        )
+    return limits
+
+
+def unassigned_equipment_for_facility(facility_id, items) -> list:
+    """Selected items that do NOT belong to the facility.
+
+    Returns a list of ``(equipment_id, name)``. The selection is only
+    validated when the facility actually has assignments configured, so a
+    facility that has not been set up keeps working with global equipment.
+    """
+    if not facility_has_resources(facility_id):
+        return []
+    allowed = facility_resource_equipment_ids(facility_id)
+    unassigned = []
+    for item in items or []:
+        equipment_id = item.get("equipment_id")
+        if not equipment_id or int(equipment_id) in allowed:
+            continue
+        equipment = Equipment.objects.filter(pk=equipment_id).first()
+        unassigned.append((equipment_id, equipment.name if equipment else str(equipment_id)))
+    return unassigned
+
+
 def committed_quantity(equipment) -> int:
     """Units of ``equipment`` that are committed across all active reservations.
 
@@ -107,6 +174,46 @@ def equipment_availability(equipment, request=None):
         availability_status = "AVAILABLE"
     return {
         "total": equipment.total_quantity,
+        "available": available,
+        "reserved": reserved,
+        "under_maintenance": maintenance,
+        "status": availability_status,
+    }
+
+
+def facility_resource_availability(resource, date_str=None, start=None, end=None) -> dict:
+    """Availability of one facility resource during a window.
+
+    Caps the equipment's global availability by the facility's own assigned
+    quantity, and takes the resource's facility status into account. Without a
+    window this is an at-a-glance view (today's active reservations).
+    """
+    equipment = resource.equipment
+    maintenance = _open_maintenance_quantities().get(equipment.id, 0)
+    reserved = _reserved_quantities(date_str, start, end).get(equipment.id, 0)
+    limit = (
+        resource.effective_quantity
+        if resource.status == FacilityResource.Status.AVAILABLE
+        else 0
+    )
+
+    if not equipment.is_active or equipment.status != Equipment.Status.AVAILABLE:
+        available = 0
+    else:
+        available = max(
+            min(equipment.total_quantity - maintenance - reserved, limit), 0
+        )
+
+    total = min(equipment.total_quantity, limit) if limit else 0
+    if available == 0:
+        availability_status = "UNAVAILABLE"
+    elif available < total:
+        availability_status = "PARTIAL"
+    else:
+        availability_status = "AVAILABLE"
+
+    return {
+        "total": total,
         "available": available,
         "reserved": reserved,
         "under_maintenance": maintenance,

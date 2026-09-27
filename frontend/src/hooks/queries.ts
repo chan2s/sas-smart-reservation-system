@@ -35,6 +35,19 @@ export function useFacility(id: number | null) {
   })
 }
 
+/**
+ * Resources/equipment assigned to a facility. The wizard uses this instead of
+ * the global equipment list so a requester only ever sees resources that
+ * belong to the facility they picked.
+ */
+export function useFacilityResources(id: number | null, params?: Record<string, string>) {
+  return useQuery({
+    queryKey: ['facility-resources', id, params],
+    queryFn: () => endpoints.facilityResources(id as number, params),
+    enabled: id != null,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Equipment
 // ---------------------------------------------------------------------------
@@ -316,7 +329,7 @@ export function useAvailabilityCheck() {
       date: string
       start_time: string
       end_time: string
-      items: { equipment_id: number; quantity: number }[]
+      items: { equipment_id: number; quantity: number; operator?: boolean }[]
       requester_type?: RequesterType
     }) => endpoints.checkAvailability(payload),
   })

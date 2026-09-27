@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, Package, X } from 'lucide-react'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
-import type { Equipment } from '@/lib/types'
+import type { ReservableResource } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /**
@@ -21,7 +21,7 @@ export function EquipmentImageViewer({
   onClose,
 }: {
   /** The item being viewed; null closes the lightbox. */
-  equipment: Equipment | null
+  equipment: ReservableResource | null
   /** Resolved image URLs, primary first. */
   images: string[]
   initialIndex?: number

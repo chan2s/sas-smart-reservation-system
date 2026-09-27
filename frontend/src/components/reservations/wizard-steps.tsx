@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { CalendarDays, CheckCircle2, Minus, Plus, AlertTriangle } from 'lucide-react'
+import { CalendarDays, CheckCircle2, Info, Loader2, Minus, Plus, AlertTriangle, XCircle } from 'lucide-react'
 import { format } from 'date-fns'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -13,14 +13,14 @@ import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { EmptyState } from '@/components/ui/Misc'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import { EquipmentImageViewer } from '@/components/equipment/EquipmentImageViewer'
-import { cn, equipmentImageUrls, equipmentPrimaryImageUrl, formatTime } from '@/lib/utils'
+import { cn, equipmentImageUrls, equipmentPrimaryImageUrl, formatCurrency, formatTime } from '@/lib/utils'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
-  Equipment,
   EventType,
   PricingQuote,
   Recommendation,
+  ReservableResource,
 } from '@/lib/types'
 
 /**
@@ -48,6 +48,61 @@ export const EVENT_TYPE_OPTIONS: [EventType, string][] = [
 export function eventTypeLabel(type: EventType): string {
   const option = EVENT_TYPE_OPTIONS.find(([value]) => value === type)
   return option ? option[1] : type
+}
+
+// ---------------------------------------------------------------------------
+// Availability state
+// ---------------------------------------------------------------------------
+
+/**
+ * Explicit availability lifecycle. "Not yet checked" (IDLE) is deliberately
+ * distinct from "checked and available" (AVAILABLE) so the wizard never treats
+ * a filled-in form as a passed availability check.
+ */
+export type AvailabilityStatus = 'IDLE' | 'CHECKING' | 'AVAILABLE' | 'UNAVAILABLE' | 'ERROR'
+
+export const AVAILABILITY_STATUS_MESSAGE: Record<AvailabilityStatus, string> = {
+  IDLE: 'Check availability before continuing.',
+  CHECKING: 'Checking availability…',
+  AVAILABLE: 'Facility and selected resources are available.',
+  UNAVAILABLE:
+    'The selected facility or one or more resources are unavailable for this date and time.',
+  ERROR: 'We could not check availability. Please try again.',
+}
+
+/**
+ * Headline status for the availability check. Sits above the detailed report so
+ * the exact state (idle / checking / available / unavailable / error) is always
+ * spelled out, independent of whether a report has arrived yet.
+ */
+export function AvailabilityStatusNotice({ status }: { status: AvailabilityStatus }) {
+  const message = AVAILABILITY_STATUS_MESSAGE[status]
+  const tone = {
+    IDLE: 'border-line bg-soft text-body',
+    CHECKING: 'border-line bg-soft text-body',
+    AVAILABLE: 'border-status-available/25 bg-status-available-bg text-status-available',
+    UNAVAILABLE: 'border-status-rejected/25 bg-status-rejected-bg text-status-rejected',
+    ERROR: 'border-status-pending/25 bg-status-pending-bg text-status-pending',
+  }[status]
+
+  const icon = {
+    IDLE: <Info className="size-4 shrink-0" aria-hidden />,
+    CHECKING: <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />,
+    AVAILABLE: <CheckCircle2 className="size-4 shrink-0" aria-hidden />,
+    UNAVAILABLE: <XCircle className="size-4 shrink-0" aria-hidden />,
+    ERROR: <AlertTriangle className="size-4 shrink-0" aria-hidden />,
+  }[status]
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn('flex items-start gap-2.5 rounded-xl border px-4 py-3', tone)}
+    >
+      <span className="mt-0.5">{icon}</span>
+      <p className="text-sm font-medium leading-relaxed">{message}</p>
+    </div>
+  )
 }
 
 export interface EventDetails {
@@ -150,6 +205,9 @@ export interface ScheduleProps {
   onEndTime: (value: string) => void
   report: AvailabilityCheckResult | null
   checking: boolean
+  /** Explicit availability state — drives the headline notice and, in the
+   *  parent wizard, whether Continue is enabled. */
+  availabilityStatus?: AvailabilityStatus
   onUseAlternative: (alternative: AlternativeSlot) => void
 }
 
@@ -193,6 +251,7 @@ export function StepSchedule({
   onEndTime,
   report,
   checking,
+  availabilityStatus = 'IDLE',
   onUseAlternative,
   dateInvalid,
   isCancellationRestricted,
@@ -356,6 +415,7 @@ export function StepSchedule({
           </div>
         )}
 
+        {!dateInvalid && <AvailabilityStatusNotice status={availabilityStatus} />}
         {report && !dateInvalid && (
           <AvailabilityCheck report={report} onUseAlternative={onUseAlternative} />
         )}
@@ -504,10 +564,20 @@ export function StepDetails({
 // Step 4 — Resources
 // ---------------------------------------------------------------------------
 
+export interface OperatorConfig {
+  available: boolean
+  required: boolean
+  fee: string
+}
+
 export function StepResources({
   equipment,
   items,
   onQuantity,
+  operatorConfig,
+  operatorSelections,
+  onOperatorChange,
+  resourcesLoading,
   recommendations,
   recommendationLoading,
   recommendationApplied,
@@ -517,9 +587,14 @@ export function StepResources({
   pricing,
   pricingLoading,
 }: {
-  equipment: Equipment[]
+  equipment: ReservableResource[]
   items: Record<number, number>
   onQuantity: (equipmentId: number, quantity: number, available: number) => void
+  /** Operator/service configuration per equipment id, from the facility. */
+  operatorConfig?: Record<number, OperatorConfig>
+  operatorSelections?: Record<number, boolean>
+  onOperatorChange?: (equipmentId: number, selected: boolean) => void
+  resourcesLoading?: boolean
   recommendations: Recommendation[] | null
   recommendationLoading: boolean
   recommendationApplied: boolean
@@ -536,11 +611,11 @@ export function StepResources({
   )
   // Clicking an equipment item opens its image so requesters can identify
   // the physical resource before reserving it.
-  const [viewingItem, setViewingItem] = useState<Equipment | null>(null)
+  const [viewingItem, setViewingItem] = useState<ReservableResource | null>(null)
   const otherEquipment = useMemo(() => equipment.filter((item) => !recommendedIds.has(item.id)), [equipment, recommendedIds])
 
   const byCategory = useMemo(() => {
-    const groups = new Map<string, Equipment[]>()
+    const groups = new Map<string, ReservableResource[]>()
     for (const item of otherEquipment) {
       const key = item.category.name
       if (!groups.has(key)) groups.set(key, [])
@@ -589,10 +664,16 @@ export function StepResources({
         </div>
       )}
 
-      {byCategory.length === 0 ? (
+      {resourcesLoading ? (
+        <div className="mt-6 h-32 max-w-2xl animate-pulse rounded-xl bg-soft" aria-hidden />
+      ) : byCategory.length === 0 ? (
         <EmptyState
-          title="No other equipment available"
-          description="Everything you need is in the recommendations above. You can continue without additional resources."
+          title={recommendations && recommendations.length > 0 ? 'No other resources available' : 'No resources available'}
+          description={
+            recommendations && recommendations.length > 0
+              ? 'Everything you need is in the recommendations above. You can continue without additional resources.'
+              : 'This facility has no resources assigned yet. You can continue without additional resources.'
+          }
         />
       ) : (
         <div className="mt-8 space-y-6">
@@ -612,10 +693,11 @@ export function StepResources({
                     <div
                       key={item.id}
                       className={cn(
-                        'flex items-center gap-4 rounded-xl border border-line bg-surface p-4 transition-colors',
+                        'rounded-xl border border-line bg-surface p-4 transition-colors',
                         requested > 0 && 'border-brand/40 bg-brand-soft/40',
                       )}
                     >
+                      <div className="flex items-center gap-4">
                       <button
                         type="button"
                         onClick={() => setViewingItem(item)}
@@ -676,6 +758,31 @@ export function StepResources({
                           <Plus className="size-3.5" />
                         </button>
                       </div>
+                      </div>
+                      {operatorConfig?.[item.id]?.available && (
+                        <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line/70 pt-3 text-xs text-body">
+                          <input
+                            type="checkbox"
+                            className="size-3.5 accent-[var(--color-brand)]"
+                            checked={
+                              operatorSelections?.[item.id] ??
+                              Boolean(operatorConfig?.[item.id]?.required)
+                            }
+                            disabled={Boolean(operatorConfig?.[item.id]?.required)}
+                            onChange={(event) =>
+                              onOperatorChange?.(item.id, event.target.checked)
+                            }
+                          />
+                          <span>
+                            Operator service
+                            {operatorConfig?.[item.id]?.fee &&
+                            Number(operatorConfig?.[item.id]?.fee) > 0
+                              ? ` (+${formatCurrency(operatorConfig[item.id].fee)})`
+                              : ''}
+                            {operatorConfig?.[item.id]?.required ? ' · required' : ''}
+                          </span>
+                        </label>
+                      )}
                     </div>
                   )
                 })}
@@ -723,7 +830,7 @@ export function StepReview({
   endTime: string
   details: EventDetails
   participants: number
-  equipment: Equipment[]
+  equipment: ReservableResource[]
   items: Record<number, number>
   report: AvailabilityCheckResult | null
   checking: boolean

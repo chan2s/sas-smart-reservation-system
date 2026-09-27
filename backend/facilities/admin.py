@@ -1,11 +1,37 @@
 from django.contrib import admin
 
+from equipment.models import FacilityResource
+
 from .models import Facility, FacilityImage, OperatingHour
 
 
 class OperatingHourInline(admin.TabularInline):
     model = OperatingHour
     extra = 0
+
+
+class FacilityResourceInline(admin.TabularInline):
+    """Assign the resources/equipment that belong to this facility.
+
+    This is the facility-side view of the relationship; the same rows are
+    editable from the equipment side (Equipment admin). No code change is
+    needed to add or move a resource between facilities.
+    """
+
+    model = FacilityResource
+    extra = 0
+    autocomplete_fields = ("equipment",)
+    fields = (
+        "equipment",
+        "quantity",
+        "status",
+        "additional_fee",
+        "operator_available",
+        "operator_required",
+        "operator_fee",
+        "display_order",
+        "is_active",
+    )
 
 
 class FacilityImageInline(admin.TabularInline):
@@ -26,4 +52,4 @@ class FacilityAdmin(admin.ModelAdmin):
     list_display = ("name", "facility_type", "capacity", "status", "is_active")
     list_filter = ("facility_type", "status")
     search_fields = ("name", "location")
-    inlines = [FacilityImageInline, OperatingHourInline]
+    inlines = [FacilityImageInline, FacilityResourceInline, OperatingHourInline]

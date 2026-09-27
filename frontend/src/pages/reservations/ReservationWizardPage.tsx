@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -13,8 +13,8 @@ import {
   useAvailabilityCheck,
   useCampusUsers,
   useCreateReservation,
-  useEquipment,
   useFacilities,
+  useFacilityResources,
   useRecommendResources,
 } from '@/hooks/queries'
 import { useToast } from '@/components/ui/Toast'
@@ -31,7 +31,10 @@ import {
   StepResources,
   StepReview,
   ConfirmationRow,
+  AVAILABILITY_STATUS_MESSAGE,
+  type AvailabilityStatus,
   type EventDetails,
+  type OperatorConfig,
 } from '@/components/reservations/wizard-steps'
 import { useAuth } from '@/hooks/useAuth'
 import { OrganizationStatusNotice } from '@/components/organizations/OrganizationStatusNotice'
@@ -43,6 +46,7 @@ import type {
   CampusUserOption,
   Recommendation,
   ReservationDetail,
+  ReservableResource,
 } from '@/lib/types'
 
 const CAMPUS_STEPS = [
@@ -96,6 +100,9 @@ export function ReservationWizardPage() {
   const [endTime, setEndTime] = useState('')
   const [details, setDetails] = useState<EventDetails>(EMPTY_DETAILS)
   const [items, setItems] = useState<Record<number, number>>({})
+  // Operator/service opt-in per equipment id (e.g. the Gymnasium sound system
+  // operator). Only resources the facility marks operator-available appear.
+  const [operatorSelections, setOperatorSelections] = useState<Record<number, boolean>>({})
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null)
   const [recommendationsFetchedFor, setRecommendationsFetchedFor] = useState<string | null>(null)
   const [recommendationDismissed, setRecommendationDismissed] = useState(false)
@@ -132,7 +139,44 @@ export function ReservationWizardPage() {
     if (endTime) params.end = endTime
     return params
   }, [dateISO, startTime, endTime])
-  const { data: equipment } = useEquipment(Object.keys(equipmentParams).length ? equipmentParams : undefined)
+  // Resources come from the SELECTED FACILITY, not a global equipment list.
+  // The backend is the source of truth; changing the facility replaces the
+  // list. Availability reflects the date/time window when set.
+  const { data: resourcesData, isFetching: resourcesLoading } = useFacilityResources(
+    facilityId,
+    Object.keys(equipmentParams).length ? equipmentParams : undefined,
+  )
+  const resources = resourcesData?.resources ?? []
+  const equipment = useMemo<ReservableResource[]>(
+    () =>
+      resources.map((resource) => ({
+        id: resource.equipment_id,
+        name: resource.name,
+        category: resource.category,
+        description: resource.description || resource.equipment_description,
+        total_quantity: resource.total_quantity,
+        unit: resource.unit,
+        status: resource.equipment_status,
+        status_label: resource.status_label,
+        image: resource.image,
+        images: resource.images,
+        availability: resource.availability,
+      })),
+    [resources],
+  )
+  const operatorConfig = useMemo<Record<number, OperatorConfig>>(() => {
+    const config: Record<number, OperatorConfig> = {}
+    for (const resource of resources) {
+      if (resource.operator_available || resource.operator_required) {
+        config[resource.equipment_id] = {
+          available: resource.operator_available,
+          required: resource.operator_required,
+          fee: resource.operator_fee,
+        }
+      }
+    }
+    return config
+  }, [resources])
 
   const availabilityCheck = useAvailabilityCheck()
   const recommendResources = useRecommendResources()
@@ -146,18 +190,13 @@ export function ReservationWizardPage() {
   const dayDiff = date != null ? Math.round((date.getTime() - today.getTime()) / 86_400_000) : -1
   const inCancellationWindow = dayDiff >= 0 && dayDiff <= 1
   const scheduleComplete = Boolean(facilityId && date && startTime && endTime)
-  // Only the final submission is gated on a clean availability report. Step
-  // navigation stays clickable on every step and validates inline via goNext(),
-  // so Continue can never silently dead-end the wizard as a disabled button.
-  // A member of an organization that is not Approved cannot submit at all —
-  // the backend enforces this regardless, but say so up front.
+  // A member of an organization that is not Approved cannot continue or
+  // submit at all — the backend enforces this regardless, but say so up front.
+  // The Continue/Submit gates are derived below from the availability state
+  // machine so the UI and backend enforce exactly the same rule.
   const canCreateReservations = user?.can_create_reservations ?? true
-  const canSubmit =
-    scheduleComplete &&
-    !dateInvalid &&
-    canCreateReservations &&
-    availabilityCheck.data != null &&
-    availabilityCheck.data.overall.ok
+  // `canSubmit` / `canContinue` are derived below, once the availability state
+  // machine (which depends on the memoized items list) is established.
 
   // The Organization / Office is never typed by the requester when it can be
   // derived from an account. External members use the organization bound to
@@ -209,34 +248,111 @@ export function ReservationWizardPage() {
 
   const facility = facilities?.find((item) => item.id === facilityId)
   const itemsList = useMemo(
-    () => Object.entries(items).map(([equipmentId, quantity]) => ({ equipment_id: Number(equipmentId), quantity })),
-    [items],
+    () =>
+      Object.entries(items).map(([equipmentId, quantity]) => {
+        const id = Number(equipmentId)
+        return {
+          equipment_id: id,
+          quantity,
+          // Explicit opt-in/out so the backend never adds the operator fee
+          // unless it was actually requested (or the resource requires it).
+          operator: operatorSelections[id] ?? Boolean(operatorConfig[id]?.required),
+        }
+      }),
+    [items, operatorSelections, operatorConfig],
   )
 
-  // Live availability check whenever the proposal changes.
-  // Stale results are cleared the moment the schedule becomes invalid so the
-  // UI never shows "Availability confirmed" for an unusable date/time.
+  // Changing the facility replaces its resource list: clear any selection made
+  // for the previous facility so Gymnasium resources never linger for the AVR.
   useEffect(() => {
-    if (!scheduleComplete || dateInvalid) {
-      if (dateInvalid) {
-        availabilityCheck.reset()
-      }
+    setItems({})
+    setOperatorSelections({})
+    setUserEditedItems(new Set())
+    setRecommendations(null)
+    setRecommendationsFetchedFor(null)
+    setRecommendationDismissed(false)
+    setRecommendationsApplied(false)
+  }, [facilityId])
+
+  // ------------------------------------------------------------------
+  // Availability state machine
+  //
+  // "Not yet checked" (IDLE) must never be confused with "checked and
+  // available" (AVAILABLE). The request is derived from exactly the inputs
+  // that affect availability (facility, date, start/end time, resources), so
+  // ANY change produces a new request key and immediately invalidates the
+  // previous result — a stale report can never authorise Continue.
+  // ------------------------------------------------------------------
+  const availabilityRequest = useMemo(() => {
+    if (!scheduleComplete || dateInvalid || facilityId == null) return null
+    return {
+      facility_id: facilityId,
+      date: dateISO,
+      start_time: startTime,
+      end_time: endTime,
+      items: itemsList,
+      // Trusted server-side: only staff can actually enable external fees.
+      requester_type: requesterType,
+    }
+  }, [
+    scheduleComplete,
+    dateInvalid,
+    facilityId,
+    dateISO,
+    startTime,
+    endTime,
+    itemsList,
+    requesterType,
+  ])
+
+  const availabilityKey = useMemo(
+    () => (availabilityRequest ? JSON.stringify(availabilityRequest) : null),
+    [availabilityRequest],
+  )
+
+  const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>('IDLE')
+  const [availabilityReport, setAvailabilityReport] = useState<AvailabilityCheckResult | null>(
+    null,
+  )
+  // Latest request key. A response that resolves after the inputs have changed
+  // belongs to a superseded configuration and must be discarded.
+  const availabilityKeyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    availabilityKeyRef.current = availabilityKey
+    if (!availabilityRequest) {
+      // Incomplete or invalid schedule → there is nothing to check yet.
+      setAvailabilityStatus('IDLE')
+      setAvailabilityReport(null)
       return
     }
+    // Invalidate whatever was on screen: the previous result no longer
+    // describes this configuration, so it is unchecked until the new
+    // response lands.
+    setAvailabilityStatus('CHECKING')
+    setAvailabilityReport(null)
+
+    let cancelled = false
     const timer = window.setTimeout(() => {
-      availabilityCheck.mutate({
-        facility_id: facilityId!,
-        date: dateISO,
-        start_time: startTime,
-        end_time: endTime,
-        items: itemsList,
-        // Trusted server-side: only staff can actually enable external fees.
-        requester_type: requesterType,
+      availabilityCheck.mutate(availabilityRequest, {
+        onSuccess: (data) => {
+          if (cancelled || availabilityKeyRef.current !== availabilityKey) return
+          setAvailabilityReport(data)
+          setAvailabilityStatus(data.overall.ok ? 'AVAILABLE' : 'UNAVAILABLE')
+        },
+        onError: () => {
+          if (cancelled || availabilityKeyRef.current !== availabilityKey) return
+          setAvailabilityReport(null)
+          setAvailabilityStatus('ERROR')
+        },
       })
     }, 350)
-    return () => window.clearTimeout(timer)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facilityId, dateISO, startTime, endTime, itemsList, dateInvalid, requesterType])
+  }, [availabilityKey])
 
   // Smart recommendations, recalculated live whenever the event details that
   // drive the rules change (event type, participants, facility, purpose,
@@ -304,6 +420,10 @@ export function ReservationWizardPage() {
     setRecommendationsApplied(true)
   }
 
+  function toggleOperator(equipmentId: number, selected: boolean) {
+    setOperatorSelections((current) => ({ ...current, [equipmentId]: selected }))
+  }
+
   function setQuantity(equipmentId: number, quantity: number, available: number) {
     setUserEditedItems((current) => new Set(current).add(equipmentId))
     setItems((current) => {
@@ -333,6 +453,42 @@ export function ReservationWizardPage() {
     }
     return missing
   }, [details, participants, organizationRequired])
+
+  const availabilityOk = availabilityStatus === 'AVAILABLE'
+  const scheduleStepIndex = steps.findIndex((item) => item.key === 'schedule')
+
+  // Final submission additionally re-validates on the backend (HTTP 409 on
+  // conflict), but the button stays disabled until a check for the CURRENT
+  // configuration has actually succeeded.
+  const canSubmit =
+    scheduleComplete && !dateInvalid && canCreateReservations && availabilityOk
+
+  // Per-step Continue gate. Required fields must be valid AND, on the steps
+  // where availability matters, the check must have succeeded for the current
+  // configuration. Users not allowed to reserve (e.g. a pending external
+  // organization) can never continue regardless of availability.
+  const requesterStepValid = !isAdmin
+    ? true
+    : requesterType === 'CAMPUS'
+      ? selectedUser != null
+      : Boolean(
+          external.organization.trim() &&
+            external.contact_person.trim() &&
+            external.contact_email.trim(),
+        )
+  const stepFieldsValid =
+    stepKey === 'requester'
+      ? requesterStepValid
+      : stepKey === 'facility'
+        ? facilityId != null
+        : stepKey === 'schedule'
+          ? scheduleComplete && !dateInvalid
+          : stepKey === 'details'
+            ? missingDetails.length === 0
+            : true
+  const availabilityRequired = stepKey === 'schedule' || stepKey === 'resources'
+  const canContinue =
+    canCreateReservations && stepFieldsValid && (!availabilityRequired || availabilityOk)
 
   /**
    * Advance one step. Members of an unapproved external organization are
@@ -378,12 +534,16 @@ export function ReservationWizardPage() {
       setStepError('Please choose a future date.')
       return
     }
-    if (stepKey === 'schedule' && availabilityCheck.data == null) {
-      setStepError('Check availability before continuing.')
+    if (stepKey === 'schedule' && !availabilityOk) {
+      setStepError(AVAILABILITY_STATUS_MESSAGE[availabilityStatus])
       return
     }
     if (stepKey === 'details' && missingDetails.length > 0) {
       setStepError(`Complete the highlighted fields to continue: ${missingDetails.join(', ')}.`)
+      return
+    }
+    if (stepKey === 'resources' && !availabilityOk) {
+      setStepError(AVAILABILITY_STATUS_MESSAGE[availabilityStatus])
       return
     }
     setStepError(null)
@@ -397,7 +557,10 @@ export function ReservationWizardPage() {
   }
 
   async function submit() {
-    if (!facilityId || !scheduleComplete || dateInvalid || availabilityCheck.data == null || !availabilityCheck.data.overall.ok) return
+    // Defence in depth: the backend re-validates availability on create and
+    // returns 409, but never send a request for a configuration that has not
+    // passed the current availability check.
+    if (!canSubmit || facilityId == null) return
     const requesterPayload = isAdmin
       ? requesterType === 'EXTERNAL'
         ? {
@@ -434,20 +597,15 @@ export function ReservationWizardPage() {
           document.querySelector('main')?.scrollTo({ top: 0 })
         },
         onError: (error) => {
+          // The backend refused the create because the facility/resources are
+          // no longer available (someone else booked first). Surface that
+          // report and send the requester back to the schedule step.
           if (error instanceof ApiError && error.status === 409 && error.data) {
             const data = error.data as { availability?: AvailabilityCheckResult }
             if (data.availability) {
-              availabilityCheck.mutate(
-                {
-                  facility_id: facilityId,
-                  date: dateISO,
-                  start_time: startTime,
-                  end_time: endTime,
-                  items: itemsList,
-                  requester_type: requesterType,
-                },
-                { onSuccess: () => setStep(1) },
-              )
+              setAvailabilityReport(data.availability)
+              setAvailabilityStatus(data.availability.overall.ok ? 'AVAILABLE' : 'UNAVAILABLE')
+              if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
             }
           }
           toast('Unable to submit reservation. Please review the schedule.', 'error')
@@ -602,8 +760,9 @@ export function ReservationWizardPage() {
             endTime={endTime}
             onStartTime={setStartTime}
             onEndTime={setEndTime}
-            report={availabilityCheck.data ?? null}
-            checking={availabilityCheck.isPending}
+            report={availabilityReport}
+            checking={availabilityStatus === 'CHECKING'}
+            availabilityStatus={availabilityStatus}
             onUseAlternative={useAlternative}
             dateInvalid={dateInvalid}
             isCancellationRestricted={inCancellationWindow}
@@ -623,9 +782,13 @@ export function ReservationWizardPage() {
 
         {stepKey === 'resources' && (
           <StepResources
-            equipment={equipment ?? []}
+            equipment={equipment}
             items={items}
             onQuantity={setQuantity}
+            operatorConfig={operatorConfig}
+            operatorSelections={operatorSelections}
+            onOperatorChange={toggleOperator}
+            resourcesLoading={resourcesLoading}
             recommendations={recommendations}
             recommendationLoading={recommendResources.isPending}
             recommendationApplied={recommendationsApplied}
@@ -637,8 +800,8 @@ export function ReservationWizardPage() {
               facilityName: facility?.name ?? '',
               schedule: startTime && endTime ? `${formatTime(startTime)} – ${formatTime(endTime)}` : '',
             }}
-            pricing={availabilityCheck.data?.pricing ?? null}
-            pricingLoading={availabilityCheck.isPending}
+            pricing={availabilityReport?.pricing ?? null}
+            pricingLoading={availabilityStatus === 'CHECKING'}
           />
         )}
 
@@ -651,14 +814,14 @@ export function ReservationWizardPage() {
             endTime={endTime}
             details={details}
             participants={participants}
-            equipment={equipment ?? []}
+            equipment={equipment}
             items={items}
-            report={availabilityCheck.data ?? null}
-            checking={availabilityCheck.isPending}
+            report={availabilityReport}
+            checking={availabilityStatus === 'CHECKING'}
             onUseAlternative={useAlternative}
             isAdmin={isAdmin}
             isCancellationRestricted={inCancellationWindow}
-            pricing={availabilityCheck.data?.pricing ?? null}
+            pricing={availabilityReport?.pricing ?? null}
             requesterSection={
               isAdmin ? (
                 <Card>
@@ -735,9 +898,13 @@ export function ReservationWizardPage() {
             {step < steps.length - 1 ? (
               <Button
                 onClick={goNext}
-                disabled={!canCreateReservations}
+                disabled={!canContinue}
                 title={
-                  !canCreateReservations ? user?.reservation_block_reason : undefined
+                  !canCreateReservations
+                    ? user?.reservation_block_reason
+                    : availabilityRequired && !availabilityOk
+                      ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
+                      : undefined
                 }
               >
                 Continue <ArrowRight className="size-4" />
@@ -750,8 +917,8 @@ export function ReservationWizardPage() {
                 title={
                   !canCreateReservations
                     ? user?.reservation_block_reason
-                    : availabilityCheck.data && !availabilityCheck.data.overall.ok
-                      ? 'Resolve the conflicts above before submitting'
+                    : !availabilityOk
+                      ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
                       : undefined
                 }
               >

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from equipment.models import Equipment
+from equipment.services import unassigned_equipment_for_facility
 
 from .models import (
     InspectionReport,
@@ -38,6 +39,7 @@ class ReservationItemSerializer(serializers.ModelSerializer):
             "category",
             "condition",
             "quantity",
+            "operator_requested",
             "returned",
         )
 
@@ -364,6 +366,32 @@ class _ReservationCreateMixin:
                     {"items": "One of the requested resources is not available for reservation."}
                 )
             item["quantity"] = quantity
+            # Operator/service opt-in. ``None`` (no flag) keeps the legacy
+            # auto behavior; an explicit true/false is honored as sent. The
+            # backend still owns the fee, so this only toggles the service.
+            operator = item.get("operator", None)
+            if operator is not None and not isinstance(operator, bool):
+                raise serializers.ValidationError(
+                    {"items": "The operator flag must be true or false."}
+                )
+            item["operator"] = operator
+
+        # The selected resources must belong to the selected facility. This is
+        # enforced whenever the facility has resource assignments configured —
+        # a client can never smuggle in another facility's equipment.
+        unassigned = unassigned_equipment_for_facility(
+            facility_id, attrs.get("items", [])
+        )
+        if unassigned:
+            names = ", ".join(name for _id, name in unassigned)
+            raise serializers.ValidationError(
+                {
+                    "items": (
+                        "The selected facility does not provide the following "
+                        f"resource(s): {names}."
+                    )
+                }
+            )
 
         report = check_availability(
             facility_id, target_date, start, end, attrs.get("items", [])
@@ -589,6 +617,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 reservation=reservation,
                 equipment_id=item["equipment_id"],
                 quantity=item.get("quantity", 1),
+                operator_requested=item.get("operator"),
             )
         # The backend computes and snapshots the amount from the reservation's
         # own fields. Any client-supplied total is ignored by construction.
@@ -661,6 +690,7 @@ class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.Mode
                 reservation=reservation,
                 equipment_id=item["equipment_id"],
                 quantity=item.get("quantity", 1),
+                operator_requested=item.get("operator"),
             )
         # The backend computes and snapshots the amount from the reservation's
         # own fields. Any client-supplied total is ignored by construction.

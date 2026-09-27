@@ -6,8 +6,11 @@ import { cn, formatCurrency } from '@/lib/utils'
  * Estimated-cost breakdown for a reservation.
  *
  * Every amount is rendered from the backend's quote — the frontend never
- * computes a rate. For internal campus requesters the backend returns an empty
- * quote (`external: false`), which this component shows as "No external
+ * computes a rate. The backend prices the facility as a *flat* fee for the
+ * standard 9-hour day (8:00 AM–5:00 PM) plus ₱300/hour of overtime beyond
+ * that, plus the ₱500 sound-system operator service charge when a sound
+ * system is reserved. For internal campus requesters the backend returns an
+ * empty quote (`external: false`), which this component shows as "No external
  * organization fees apply" rather than displaying external prices as if
  * charged. The amount is explicitly labelled an estimate until the reservation
  * is approved.
@@ -44,6 +47,44 @@ export function PricingBreakdown({
   const external = pricing.external
   const heading = title ?? (external ? 'Estimated external organization fee' : 'Estimated cost')
 
+  const facilityLine = pricing.fees.find((line) => line.fee_type === 'FACILITY')
+  const overtimeLine = pricing.fees.find((line) => line.fee_type === 'OVERTIME')
+  const operatorLines = pricing.fees.filter((line) => line.fee_type === 'OPERATOR')
+  const equipmentLines = pricing.fees.filter((line) => line.fee_type === 'EQUIPMENT')
+
+  const hours = Number(pricing.duration_hours || 0)
+  const rows: BreakdownRow[] = external
+    ? [
+        {
+          label: 'Facility Fee',
+          detail: facilityLine?.description ?? 'No facility fee',
+          amount: facilityLine?.subtotal ?? '0.00',
+        },
+        {
+          label: 'Reservation Duration',
+          detail: `${formatHours(hours)}`,
+          amount: null,
+        },
+        {
+          label: 'Overtime',
+          detail: overtimeLine
+            ? `${formatHours(Number(overtimeLine.quantity))} × ${formatCurrency(overtimeLine.unit_price)}`
+            : 'No overtime',
+          amount: overtimeLine?.subtotal ?? '0.00',
+        },
+        ...operatorLines.map((line) => ({
+          label: line.description,
+          detail: 'Service charge',
+          amount: line.subtotal,
+        })),
+        ...equipmentLines.map((line) => ({
+          label: line.description,
+          detail: equipmentDetail(line),
+          amount: line.subtotal,
+        })),
+      ]
+    : []
+
   return (
     <section
       className={cn(
@@ -73,23 +114,33 @@ export function PricingBreakdown({
         </div>
       </div>
 
-      {external && pricing.fees.length > 0 ? (
-        <ul className="mt-4 divide-y divide-line/70 border-t border-line/70">
-          {pricing.fees.map((line, index) => (
-            <FeeRow key={`${line.fee_type}-${line.equipment_category_id ?? index}-${index}`} line={line} />
+      {external ? (
+        <dl className="mt-4 divide-y divide-line/70 border-t border-line/70">
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-start justify-between gap-4 px-5 py-3.5">
+              <dt className="min-w-0">
+                <p className="break-words text-sm font-medium text-ink">{row.label}</p>
+                {row.detail && (
+                  <p className="mt-0.5 break-words text-xs tabular-nums text-muted">{row.detail}</p>
+                )}
+              </dt>
+              {row.amount !== null && (
+                <dd className="shrink-0 text-sm font-semibold tabular-nums text-ink">
+                  {formatCurrency(row.amount)}
+                </dd>
+              )}
+            </div>
           ))}
-        </ul>
+        </dl>
       ) : (
         <p className="mt-4 border-t border-line/70 px-5 py-4 text-sm text-body">
-          {external
-            ? 'No fees apply to this reservation with the selected facility and resources.'
-            : 'No external organization fees apply.'}
+          No external organization fees apply.
         </p>
       )}
 
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-line/70 bg-surface/60 px-5 py-4">
         <span className="text-sm font-semibold uppercase tracking-[0.08em] text-muted">
-          Estimated total
+          Total Amount
         </span>
         <span className="text-xl font-semibold tabular-nums text-ink" aria-live="polite">
           {formatCurrency(pricing.total)}
@@ -107,33 +158,21 @@ export function PricingBreakdown({
   )
 }
 
-function FeeRow({ line }: { line: PricingFeeLine }) {
-  return (
-    <li className="flex items-start justify-between gap-4 px-5 py-3.5">
-      <div className="min-w-0">
-        <p className="break-words text-sm font-medium text-ink">{line.description}</p>
-        <p className="mt-0.5 break-words text-xs tabular-nums text-muted">
-          {feeCalculation(line)}
-        </p>
-      </div>
-      <p className="shrink-0 text-sm font-semibold tabular-nums text-ink">
-        {formatCurrency(line.subtotal)}
-      </p>
-    </li>
-  )
+interface BreakdownRow {
+  label: string
+  detail: string | null
+  /** Formatted amount, or null when the row only conveys information. */
+  amount: string | null
 }
 
-/** Human-readable arithmetic for one fee line, e.g. "100 × ₱5.00 = ₱500.00". */
-function feeCalculation(line: PricingFeeLine): string {
-  const unitPrice = formatCurrency(line.unit_price)
-  const subtotal = formatCurrency(line.subtotal)
+/** "9 hours" / "1 hour" — keeps the duration row readable. */
+function formatHours(hours: number): string {
+  if (!Number.isFinite(hours)) return '0 hours'
+  const value = Number.isInteger(hours) ? String(hours) : String(hours)
+  return `${value} ${hours === 1 ? 'hour' : 'hours'}`
+}
 
-  if (line.unit === 'flat') {
-    return `Flat fee = ${subtotal}`
-  }
-  if (line.unit === 'hour') {
-    const hours = line.quantity === '1' ? 'hour' : 'hours'
-    return `${line.quantity} ${hours} × ${unitPrice} = ${subtotal}`
-  }
-  return `${line.quantity} × ${unitPrice} = ${subtotal}`
+/** Human-readable arithmetic for an equipment line, e.g. "100 × ₱5.00". */
+function equipmentDetail(line: PricingFeeLine): string {
+  return `${line.quantity} × ${formatCurrency(line.unit_price)}`
 }

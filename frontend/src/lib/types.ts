@@ -216,6 +216,67 @@ export interface Equipment {
   updated_at: string
 }
 
+/**
+ * The minimal shape the reservation form needs from a resource. Both the
+ * global `Equipment` item and a facility-scoped `FacilityResource` satisfy it,
+ * so the wizard can render either without special-casing.
+ */
+export interface ReservableResource {
+  id: number
+  name: string
+  category: EquipmentCategory
+  description: string
+  total_quantity: number
+  unit: string
+  status: string
+  status_label: string
+  /** Optional location shown in the image lightbox (Equipment only). */
+  storage_location?: string
+  image: string | null
+  images?: EquipmentImage[]
+  availability: EquipmentAvailability
+}
+
+/** Facility-side availability status set by staff. */
+export type FacilityResourceStatus = 'AVAILABLE' | 'UNAVAILABLE' | 'MAINTENANCE'
+
+/**
+ * One resource/equipment item assigned to a specific facility.
+ *
+ * `equipment_id` is the equipment identity (what a reservation references);
+ * `id` is the assignment row itself. `availability` is window-aware and capped
+ * by the facility's own assigned quantity.
+ */
+export interface FacilityResource {
+  id: number
+  facility: number
+  equipment_id: number
+  name: string
+  equipment_description: string
+  category: EquipmentCategory
+  unit: string
+  condition: EquipmentCondition
+  condition_label: string
+  equipment_status: EquipmentStatus
+  status: FacilityResourceStatus
+  status_label: string
+  /** Units assigned to this facility (0 inherits the global inventory). */
+  quantity: number
+  total_quantity: number
+  description: string
+  notes: string
+  additional_fee: string
+  /** Whether the requester may opt in to the operator/service. */
+  operator_available: boolean
+  /** When true the operator fee is always charged for this resource. */
+  operator_required: boolean
+  operator_fee: string
+  display_order: number
+  availability: EquipmentAvailability
+  image: string | null
+  images: EquipmentImage[]
+}
+
 export interface EquipmentStats {
   equipment_types: number
   total_units: number
@@ -278,13 +339,15 @@ export interface ReservationItem {
   category: string
   condition: string
   quantity: number
+  /** Opt-in state for the resource operator/service (null = legacy auto). */
+  operator_requested: boolean | null
   returned: boolean
 }
 
 /** One snapshotted priced line item on a reservation (external org only). */
 export interface ReservationFee {
   id: number
-  fee_type: 'FACILITY' | 'EQUIPMENT' | 'OPERATOR'
+  fee_type: 'FACILITY' | 'OVERTIME' | 'EQUIPMENT' | 'OPERATOR'
   fee_type_label: string
   description: string
   /** Formatted quantity, e.g. "100" or "4" (hours). */
@@ -302,7 +365,7 @@ export interface ReservationFee {
  * of truth for every amount.
  */
 export interface PricingFeeLine {
-  fee_type: 'FACILITY' | 'EQUIPMENT' | 'OPERATOR'
+  fee_type: 'FACILITY' | 'OVERTIME' | 'EQUIPMENT' | 'OPERATOR'
   fee_type_label: string
   description: string
   quantity: string
@@ -326,6 +389,10 @@ export interface PricingQuote {
   facility_id: number | null
   /** Scheduled duration in hours (from start_time → end_time), e.g. "4". */
   duration_hours: string
+  /** Hours covered by the flat facility fee (e.g. 9 for the standard day). */
+  included_hours: string
+  /** Hours beyond the included base period, billed as overtime (e.g. "2"). */
+  overtime_hours: string
   fees: PricingFeeLine[]
   total: string
   /** Human note clarifying that the amount is an estimate until approval. */

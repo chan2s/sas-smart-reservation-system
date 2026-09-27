@@ -7,6 +7,9 @@ from rest_framework.response import Response
 from accounts.models import AuditLog
 from accounts.permissions import IsSasStaffOrReadOnly
 
+from equipment.models import FacilityResource
+from equipment.serializers import FacilityResourceSerializer
+
 from .models import Facility, FacilityImage
 from .serializers import (
     MAX_IMAGES_PER_UPLOAD,
@@ -35,6 +38,26 @@ class FacilityViewSet(viewsets.ModelViewSet):
         if status_param:
             qs = qs.filter(status=status_param)
         return qs
+
+    @action(detail=True, methods=["get"], url_path="resources")
+    def resources(self, request, pk=None):
+        """The resources/equipment available for THIS facility.
+
+        The database is the source of truth: only ``FacilityResource`` rows
+        assigned to the facility are returned, never a globally available
+        resource. Optional ``date``/``start``/``end`` query params make each
+        item's availability reflect the window being reserved.
+        """
+        facility = self.get_object()
+        queryset = (
+            FacilityResource.objects.filter(facility=facility, is_active=True)
+            .select_related("equipment__category")
+            .prefetch_related("equipment__equipment_images")
+        )
+        serializer = FacilityResourceSerializer(
+            queryset, many=True, context={"request": request}
+        )
+        return Response({"facility_id": facility.id, "resources": serializer.data})
 
     # ------------------------------------------------------------------
     # Image gallery

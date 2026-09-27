@@ -147,10 +147,17 @@ class PricingRule(models.Model):
     SAS Office can change a rate in Django admin without touching any source
     code or the frontend. One row describes one chargeable thing:
 
-    * ``FACILITY`` — a flat fee for a facility *type* (e.g. Gymnasium).
+    * ``FACILITY`` — a flat fee for a facility *type* (e.g. Gymnasium
+      ₱5,000). ``included_hours`` records how many hours that flat fee
+      covers (the standard 8:00 AM–5:00 PM window = 9 hours).
+    * ``OVERTIME`` — an hourly fee for a facility *type*, charged only for the
+      hours beyond the matching facility rule's ``included_hours``
+      (e.g. ₱300 per hour past the 9-hour base period).
     * ``EQUIPMENT`` — a per-unit fee for an equipment *category* (e.g. chairs).
-    * ``OPERATOR``  — an hourly fee triggered by an equipment category being
-      part of the reservation (e.g. a sound system requires its operator).
+    * ``OPERATOR``  — a fee triggered by an equipment category being part of
+      the reservation (e.g. a sound system requires its operator). Charged
+      ``flat`` for the whole reservation by default (₱500 service pay), and
+      ``hour`` per event hour when a per-hour operator rate is configured.
 
     These rules never apply to internal campus requesters; the pricing
     service decides that from the trusted ``Reservation.requester_type``.
@@ -158,6 +165,7 @@ class PricingRule(models.Model):
 
     class FeeType(models.TextChoices):
         FACILITY = "FACILITY", "Facility fee"
+        OVERTIME = "OVERTIME", "Overtime fee"
         EQUIPMENT = "EQUIPMENT", "Equipment fee"
         OPERATOR = "OPERATOR", "Operator fee"
 
@@ -196,6 +204,16 @@ class PricingRule(models.Model):
         help_text="How the price is charged: flat, per unit, or per hour.",
     )
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    included_hours = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text=(
+            "Hours covered by the flat fee (facility rules) — or, for an "
+            "overtime rule, the base period it is measured against. E.g. 9 "
+            "for the standard 8:00 AM–5:00 PM facility day."
+        ),
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -236,6 +254,7 @@ class ReservationFee(models.Model):
 
     class FeeType(models.TextChoices):
         FACILITY = "FACILITY", "Facility"
+        OVERTIME = "OVERTIME", "Overtime"
         EQUIPMENT = "EQUIPMENT", "Equipment"
         OPERATOR = "OPERATOR", "Operator"
 
@@ -545,6 +564,11 @@ class ReservationItem(models.Model):
         "equipment.Equipment", on_delete=models.PROTECT, related_name="reservation_items"
     )
     quantity = models.PositiveIntegerField(default=1)
+    #: Whether the requester opted in to the resource's operator/service.
+    #: ``None`` keeps the legacy behavior for rows/requests created before this
+    #: field existed (a configured operator service applies automatically);
+    #: ``True``/``False`` are explicit choices from the reservation form.
+    operator_requested = models.BooleanField(null=True, blank=True, default=None)
     returned = models.BooleanField(default=False)
 
     class Meta:

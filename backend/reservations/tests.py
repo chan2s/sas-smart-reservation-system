@@ -6,7 +6,12 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from equipment.models import Equipment, EquipmentCategory, MaintenanceRecord
+from equipment.models import (
+    Equipment,
+    EquipmentCategory,
+    FacilityResource,
+    MaintenanceRecord,
+)
 from facilities.models import Facility, OperatingHour
 from .models import (
     PricingRule,
@@ -1668,12 +1673,14 @@ class ExternalOrganizationPricingTests(TestCase):
             unit=PricingRule.Unit.UNIT,
             unit_price=D("1000.00"),
         )
+        # Sound-system operator is a ₱500 flat service charge for the whole
+        # reservation (not an hourly rate).
         self.operator_rule = PricingRule.objects.create(
             fee_type=PricingRule.FeeType.OPERATOR,
             equipment_category=self.sound_category,
             label="Sound System Operator",
-            unit=PricingRule.Unit.HOUR,
-            unit_price=D("5.00"),
+            unit=PricingRule.Unit.FLAT,
+            unit_price=D("500.00"),
         )
 
     # -- helpers ----------------------------------------------------------
@@ -1737,11 +1744,11 @@ class ExternalOrganizationPricingTests(TestCase):
             f for f in quote["fees"] if f["description"] == "Sound System"
         )
         self.assertEqual(self._money(sound_line["subtotal"]), "2000.00")
-        # 2 systems also trigger one operator line for the event duration.
-        self.assertEqual(self._money(quote["total"]), "2020.00")
+        # 2 systems also trigger one flat ₱500 operator service charge.
+        self.assertEqual(self._money(quote["total"]), "2500.00")
 
-    def test_external_operator_fee_from_duration(self):
-        """TEST 6: sound system + 5-hour event = 5 × ₱5 = ₱25."""
+    def test_external_operator_is_flat_service_charge(self):
+        """TEST 6: sound system = ₱500 operator, independent of duration."""
         quote = self._quote(
             Reservation.RequesterType.EXTERNAL,
             self.avr,
@@ -1752,8 +1759,9 @@ class ExternalOrganizationPricingTests(TestCase):
         operator = next(
             f for f in quote["fees"] if f["fee_type"] == PricingRule.FeeType.OPERATOR
         )
-        self.assertEqual(self._money(operator["subtotal"]), "25.00")
-        self.assertEqual(self._money(operator["quantity"]), "5.00")
+        self.assertEqual(self._money(operator["subtotal"]), "500.00")
+        self.assertEqual(self._money(operator["quantity"]), "1.00")
+        self.assertEqual(operator["unit"], PricingRule.Unit.FLAT)
 
     def test_chair_quantity_change_recalculates(self):
         """TEST 7: 100 → 120 chairs changes ₱500 → ₱600."""
@@ -1762,20 +1770,46 @@ class ExternalOrganizationPricingTests(TestCase):
         self.assertEqual(self._money(first["total"]), "500.00")
         self.assertEqual(self._money(second["total"]), "600.00")
 
-    def test_duration_change_recalculates_operator(self):
-        """TEST 8: 4h → 6h changes the operator fee ₱20 → ₱30."""
-        four = self._quote(
-            Reservation.RequesterType.EXTERNAL, self.avr, self._sound(1),
-            start=time(13, 0), end=time(17, 0),
+    def test_duration_change_recalculates_overtime(self):
+        """TEST 8: 9h → 11h on the Gymnasium adds 2 × ₱300 overtime."""
+        nine = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.gym,
+            start=time(8, 0), end=time(17, 0),
         )
-        six = self._quote(
-            Reservation.RequesterType.EXTERNAL, self.avr, self._sound(1),
-            start=time(13, 0), end=time(19, 0),
+        eleven = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.gym,
+            start=time(8, 0), end=time(19, 0),
         )
-        operator_four = next(f for f in four["fees"] if f["fee_type"] == "OPERATOR")
-        operator_six = next(f for f in six["fees"] if f["fee_type"] == "OPERATOR")
-        self.assertEqual(self._money(operator_four["subtotal"]), "20.00")
-        self.assertEqual(self._money(operator_six["subtotal"]), "30.00")
+        self.assertEqual(self._money(nine["total"]), "5000.00")
+        self.assertEqual(self._money(eleven["total"]), "5600.00")
+        overtime = next(f for f in eleven["fees"] if f["fee_type"] == "OVERTIME")
+        self.assertEqual(self._money(overtime["quantity"]), "2.00")
+        self.assertEqual(self._money(overtime["unit_price"]), "300.00")
+        self.assertEqual(self._money(overtime["subtotal"]), "600.00")
+
+    def test_overtime_price_ladder(self):
+        """The documented 9/10/11/12-hour facility totals."""
+        for end, expected in (
+            (time(17, 0), "5000.00"),
+            (time(18, 0), "5300.00"),
+            (time(19, 0), "5600.00"),
+            (time(20, 0), "5900.00"),
+        ):
+            quote = self._quote(
+                Reservation.RequesterType.EXTERNAL, self.gym,
+                start=time(8, 0), end=end,
+            )
+            self.assertEqual(self._money(quote["total"]), expected)
+            self.assertEqual(str(quote["included_hours"]), "9.00")
+
+    def test_operator_added_to_overtime_total(self):
+        """12-hour Gymnasium + sound system = ₱5,900 + ₱500 operator."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.gym, self._sound(1),
+            start=time(8, 0), end=time(20, 0),
+        )
+        # Facility ₱5,000 + overtime ₱900 + sound ₱1,000 + operator ₱500.
+        self.assertEqual(self._money(quote["total"]), "7400.00")
 
     def test_facility_change_removes_fee(self):
         """TEST 9: Gymnasium → AVR drops the ₱5,000 facility fee."""
@@ -1811,7 +1845,8 @@ class ExternalOrganizationPricingTests(TestCase):
         self.assertEqual(chairs["quantity"], 100)
         self.assertEqual(chairs["unit_price"], "5.00")
         self.assertEqual(chairs["estimated_cost"], "500.00")
-        self.assertEqual(result["pricing"]["total"], "1520.00")
+        # AVR is free; chairs ₱500 + sound ₱1,000 + ₱500 flat operator.
+        self.assertEqual(result["pricing"]["total"], "2000.00")
 
     def test_recommendation_is_free_for_internal_requester(self):
         """The same event for a campus requester shows no external fees."""
@@ -1849,7 +1884,7 @@ class ExternalOrganizationPricingTests(TestCase):
     # -- backend authority + snapshot -------------------------------------
 
     def test_backend_recalculates_manipulated_total(self):
-        """TEST 11: a forged total is ignored; the backend computes ₱6,520."""
+        """TEST 11: a forged total is ignored; the backend computes ₱7,000."""
         self.client.force_authenticate(self.staff)
         response = self.client.post(
             "/api/reservations/",
@@ -1880,11 +1915,12 @@ class ExternalOrganizationPricingTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
-        self.assertEqual(body["estimated_total"], "6520.00")
+        # Facility ₱5,000 + chairs ₱500 + sound ₱1,000 + operator ₱500.
+        self.assertEqual(body["estimated_total"], "7000.00")
         self.assertEqual(len(body["fees"]), 4)
 
         stored = Reservation.objects.get(pk=body["id"])
-        self.assertEqual(str(stored.estimated_total), "6520.00")
+        self.assertEqual(str(stored.estimated_total), "7000.00")
         self.assertEqual(stored.fees.count(), 4)
 
     def test_internal_reservation_snapshots_zero(self):
@@ -1975,7 +2011,7 @@ class ExternalOrganizationPricingTests(TestCase):
             },
             format="json",
         )
-        self.assertEqual(response.json()["pricing"]["total"], "1520.00")
+        self.assertEqual(response.json()["pricing"]["total"], "2000.00")
 
     def test_availability_endpoint_recalculates_pricing_per_slot(self):
         """Alternative scheduling never keeps a stale total (TEST 13)."""
@@ -1994,7 +2030,8 @@ class ExternalOrganizationPricingTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["pricing"]["total"], "1020.00")
+        # AVR is free; sound ₱1,000 + ₱500 flat operator.
+        self.assertEqual(body["pricing"]["total"], "1500.00")
         for slot in body["alternatives"]:
             self.assertIn("pricing", slot)
 

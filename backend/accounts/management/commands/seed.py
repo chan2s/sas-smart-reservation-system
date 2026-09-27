@@ -13,7 +13,12 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from equipment.models import Equipment, EquipmentCategory, MaintenanceRecord
+from equipment.models import (
+    Equipment,
+    EquipmentCategory,
+    FacilityResource,
+    MaintenanceRecord,
+)
 from facilities.models import Facility, OperatingHour
 from reservations.models import (
     PricingRule,
@@ -119,6 +124,7 @@ class Command(BaseCommand):
         self.seed_users()
         self.seed_facilities()
         self.seed_equipment()
+        self.seed_facility_resources()
         self.seed_pricing()
         if options["with_demo_reservations"]:
             self.seed_demo_reservations()
@@ -206,33 +212,125 @@ class Command(BaseCommand):
                 if created:
                     self.stdout.write(f"    + {eq.name} ({eq.total_quantity})")
 
+    def seed_facility_resources(self):
+        """Assign resources/equipment to the facilities that actually use them.
+
+        This is the reference data behind the reservation form's facility →
+        resource filtering. Assignments mirror the real SAS inventory:
+
+        * Gymnasium — sound systems, microphones, chairs, tables.
+        * Audio-Visual Room — projector, sound system, microphones, chairs.
+        * Cafeteria — tables, chairs, sound system.
+
+        Sound systems carry the ₱500 operator service (opt-in by default).
+        Resources have no additional per-unit fee (chairs/tables are free), and
+        the facility's own facility/overtime fees still apply on top.
+        """
+        OPERATOR_FEE = "500.00"
+        assignments = {
+            "Gymnasium": [
+                ("Portable Sound System", True),
+                ("Stage Sound System", True),
+                ("Wireless Microphone", False),
+                ("Wired Microphone", False),
+                ("Folding Chair", False),
+                ("Stackable Chair", False),
+                ("Folding Table (6 ft)", False),
+                ("Round Table", False),
+            ],
+            "Audio-Visual Room": [
+                ("Portable Projector", False),
+                ("Projector Screen", False),
+                ("Portable Sound System", True),
+                ("Wireless Microphone", False),
+                ("Folding Chair", False),
+                ("Stackable Chair", False),
+            ],
+            "Cafeteria": [
+                ("Folding Table (6 ft)", False),
+                ("Round Table", False),
+                ("Folding Chair", False),
+                ("Stackable Chair", False),
+                ("Portable Sound System", True),
+            ],
+        }
+
+        for facility_name, resources in assignments.items():
+            facility = Facility.objects.filter(name=facility_name).first()
+            if facility is None:
+                continue
+            for equipment_name, has_operator in resources:
+                equipment = Equipment.objects.filter(name=equipment_name).first()
+                if equipment is None:
+                    continue
+                _, created = FacilityResource.objects.get_or_create(
+                    facility=facility,
+                    equipment=equipment,
+                    defaults={
+                        "additional_fee": "0.00",
+                        "operator_available": has_operator,
+                        "operator_required": False,
+                        "operator_fee": OPERATOR_FEE if has_operator else "0.00",
+                    },
+                )
+                if created:
+                    self.stdout.write(
+                        f"  + {facility.name} resource: {equipment.name}"
+                    )
+
     def seed_pricing(self):
         """Default external-organization rates (staff-editable in admin).
 
         Idempotent: ``get_or_create`` keyed on the fee target, so re-running
         seed never duplicates a rate or overwrites a price staff have changed.
         """
+        # Facility base rates: ₱5,000 flat for the standard 9-hour day
+        # (8:00 AM–5:00 PM). ``included_hours`` records the hours the flat fee
+        # covers; anything beyond it is billed as overtime below.
         facilities = [
             (Facility.FacilityType.GYMNASIUM, "Gymnasium", "5000.00"),
             (Facility.FacilityType.CAFETERIA, "Cafeteria", "5000.00"),
         ]
         for facility_type, label, price in facilities:
-            _, created = PricingRule.objects.get_or_create(
+            rule, created = PricingRule.objects.get_or_create(
                 fee_type=PricingRule.FeeType.FACILITY,
                 facility_type=facility_type,
                 defaults={
                     "label": label,
                     "unit": PricingRule.Unit.FLAT,
                     "unit_price": price,
+                    "included_hours": 9,
                 },
             )
             if created:
-                self.stdout.write(f"  + Pricing: {label} ₱{price}")
+                self.stdout.write(f"  + Pricing: {label} ₱{price} / {9}h")
+            elif not rule.included_hours:
+                rule.included_hours = 9
+                rule.save(update_fields=["included_hours"])
+
+        # Overtime: ₱300 for every hour past the facility's 9-hour base period.
+        for facility_type, label in (
+            (Facility.FacilityType.GYMNASIUM, "Gymnasium Overtime"),
+            (Facility.FacilityType.CAFETERIA, "Cafeteria Overtime"),
+        ):
+            _, created = PricingRule.objects.get_or_create(
+                fee_type=PricingRule.FeeType.OVERTIME,
+                facility_type=facility_type,
+                defaults={
+                    "label": label,
+                    "unit": PricingRule.Unit.HOUR,
+                    "unit_price": "300.00",
+                    "included_hours": 9,
+                },
+            )
+            if created:
+                self.stdout.write(f"  + Pricing: {label} ₱300.00/hour")
 
         equipment_rates = [
             ("Chairs", "Chairs", "5.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
             ("Sound Systems", "Sound System", "1000.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
-            ("Sound Systems", "Sound System Operator", "5.00", PricingRule.Unit.HOUR, PricingRule.FeeType.OPERATOR),
+            # Sound-system operator service pay: ₱500 flat for the reservation.
+            ("Sound Systems", "Sound System Operator", "500.00", PricingRule.Unit.FLAT, PricingRule.FeeType.OPERATOR),
         ]
         for category_name, label, price, unit, fee_type in equipment_rates:
             category = EquipmentCategory.objects.filter(name=category_name).first()

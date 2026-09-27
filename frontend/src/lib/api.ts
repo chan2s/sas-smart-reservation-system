@@ -14,6 +14,7 @@ import type {
   EquipmentStatus,
   EventType,
   Facility,
+  FacilityResource,
   Insights,
   MaintenanceRecord,
   MyAffiliation,
@@ -421,7 +422,7 @@ export interface CreateReservationPayload {
   contact_email?: string
   special_requirements: string
   notes: string
-  items: { equipment_id: number; quantity: number }[]
+  items: { equipment_id: number; quantity: number; operator?: boolean }[]
   /** Staff only: create on behalf of another campus user. */
   requester_id?: number
   /** Staff only: CAMPUS (default) or EXTERNAL. */
@@ -443,7 +444,7 @@ export interface GuestReservationPayload {
   contact_person: string
   contact_email: string
   special_requirements: string
-  items: { equipment_id: number; quantity: number }[]
+  items: { equipment_id: number; quantity: number; operator?: boolean }[]
 }
 
 export const endpoints = {
@@ -452,6 +453,17 @@ export const endpoints = {
     return api.get<Facility[]>(`/api/facilities/${qs ? `?${qs}` : ''}`)
   },
   facility: (id: number) => api.get<Facility>(`/api/facilities/${id}/`),
+  /**
+   * Resources/equipment assigned to a facility (the DB is the source of
+   * truth). Optional `date`/`start`/`end` params make `availability` reflect
+   * the window being reserved.
+   */
+  facilityResources: (id: number, params?: Record<string, string>) => {
+    const qs = new URLSearchParams(params).toString()
+    return api.get<{ facility_id: number; resources: FacilityResource[] }>(
+      `/api/facilities/${id}/resources/${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   equipment: (params?: Record<string, string>) => {
     const qs = new URLSearchParams(params).toString()
@@ -534,7 +546,7 @@ export const endpoints = {
     date: string
     start_time: string
     end_time: string
-    items: { equipment_id: number; quantity: number }[]
+    items: { equipment_id: number; quantity: number; operator?: boolean }[]
     /** Staff only: EXTERNAL enables the external-organization fee estimate. */
     requester_type?: RequesterType
   }) => api.post<AvailabilityCheck>('/api/availability/check/', payload),

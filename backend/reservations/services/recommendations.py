@@ -38,6 +38,7 @@ from datetime import date as date_cls
 from datetime import time as time_cls
 
 from equipment.models import Equipment, EquipmentCategory
+from equipment.services import facility_has_resources, facility_resource_equipment_ids
 from facilities.models import Facility
 
 from . import pricing
@@ -403,10 +404,19 @@ def recommend_resources(
             "facility_type", flat=True
         ).first()
 
+    # Only resources that belong to the selected facility may be recommended.
+    # ``None`` means the facility has no assignments configured, so the
+    # engine keeps its global behavior for backwards compatibility.
+    assigned_ids = None
+    if facility_id is not None and facility_has_resources(facility_id):
+        assigned_ids = facility_resource_equipment_ids(facility_id)
+
     profile = _adjust_profile(profile, facility_type, purpose)
     quantities = _evaluate_quantities(profile, participants)
 
-    availability = equipment_availability_map(target_date, start_time, end_time)
+    availability = equipment_availability_map(
+        target_date, start_time, end_time, facility_id=facility_id
+    )
 
     # ------------------------------------------------------------------
     # Build the recommendation set. DB rules (staff-configured) win over
@@ -456,15 +466,14 @@ def recommend_resources(
         # is archived, retired, or fully under maintenance is skipped entirely
         # (no point recommending an item that cannot be reserved at all);
         # schedule-level shortages are still surfaced as PARTIAL/UNAVAILABLE.
-        equipment = (
-            Equipment.objects.filter(
-                category=category,
-                is_active=True,
-                status=Equipment.Status.AVAILABLE,
-            )
-            .order_by("name")
-            .first()
+        candidates = Equipment.objects.filter(
+            category=category,
+            is_active=True,
+            status=Equipment.Status.AVAILABLE,
         )
+        if assigned_ids is not None:
+            candidates = candidates.filter(id__in=assigned_ids)
+        equipment = candidates.order_by("name").first()
         if not equipment:
             continue
 

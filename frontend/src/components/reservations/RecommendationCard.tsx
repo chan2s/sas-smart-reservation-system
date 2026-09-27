@@ -1,7 +1,7 @@
 import { Sparkles, Check, Minus, Plus, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
-import type { Equipment, Recommendation } from '@/lib/types'
+import type { Recommendation, ReservableResource } from '@/lib/types'
 import { cn, equipmentPrimaryImageUrl, formatCurrency } from '@/lib/utils'
 
 interface EventContext {
@@ -23,7 +23,7 @@ export function RecommendationCard({
   onDismiss,
 }: {
   recommendations: Recommendation[]
-  equipment: Equipment[]
+  equipment: ReservableResource[]
   items: Record<number, number>
   onQuantity: (equipmentId: number, quantity: number, available: number) => void
   eventContext?: EventContext

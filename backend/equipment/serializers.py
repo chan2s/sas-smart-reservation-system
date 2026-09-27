@@ -1,10 +1,17 @@
 from rest_framework import serializers
 
-from .models import Equipment, EquipmentCategory, EquipmentImage, MaintenanceRecord
+from .models import (
+    Equipment,
+    EquipmentCategory,
+    EquipmentImage,
+    FacilityResource,
+    MaintenanceRecord,
+)
 from .services import (
     committed_quantity,
     equipment_availability,
     equipment_stats,
+    facility_resource_availability,
 )
 
 ALLOWED_IMAGE_TYPES = {
@@ -246,6 +253,113 @@ class EquipmentDetailSerializer(EquipmentSerializer):
 
     def get_open_maintenance(self, obj):
         return obj.maintenance_records.filter(status=MaintenanceRecord.Status.OPEN).count()
+
+
+class FacilityResourceSerializer(serializers.ModelSerializer):
+    """A facility's own resource, as the reservation form consumes it.
+
+    Piictures come from the equipment gallery (legacy single image included as
+    a fallback), so the existing image feature is preserved. ``availability``
+    is window-aware via ``date``/``start``/``end`` query params and is capped
+    by the facility's assigned quantity.
+    """
+
+    equipment_id = serializers.IntegerField(source="equipment.id", read_only=True)
+    name = serializers.CharField(source="equipment.name", read_only=True)
+    equipment_description = serializers.CharField(
+        source="equipment.description", read_only=True
+    )
+    category = EquipmentCategorySerializer(source="equipment.category", read_only=True)
+    unit = serializers.CharField(source="equipment.unit", read_only=True)
+    condition = serializers.CharField(source="equipment.condition", read_only=True)
+    condition_label = serializers.CharField(
+        source="equipment.get_condition_display", read_only=True
+    )
+    equipment_status = serializers.CharField(source="equipment.status", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    quantity = serializers.IntegerField(source="effective_quantity", read_only=True)
+    total_quantity = serializers.IntegerField(
+        source="equipment.total_quantity", read_only=True
+    )
+    additional_fee = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
+    operator_fee = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
+    availability = serializers.SerializerMethodField()
+    image = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FacilityResource
+        fields = (
+            "id",
+            "facility",
+            "equipment_id",
+            "name",
+            "equipment_description",
+            "category",
+            "unit",
+            "condition",
+            "condition_label",
+            "equipment_status",
+            "status",
+            "status_label",
+            "quantity",
+            "total_quantity",
+            "description",
+            "notes",
+            "additional_fee",
+            "operator_available",
+            "operator_required",
+            "operator_fee",
+            "display_order",
+            "availability",
+            "image",
+            "images",
+        )
+
+    def _window(self):
+        request = self.context.get("request")
+        if request is None:
+            return None, None, None
+        params = request.query_params
+        return params.get("date"), params.get("start"), params.get("end")
+
+    def get_availability(self, obj):
+        date_str, start, end = self._window()
+        return facility_resource_availability(obj, date_str, start, end)
+
+    def _gallery(self, equipment):
+        gallery = list(equipment.equipment_images.all())
+        if gallery:
+            return EquipmentImageSerializer(
+                gallery, many=True, context=self.context
+            ).data
+        legacy_url = _absolute_image_url(
+            getattr(equipment, "image", None), self.context.get("request")
+        )
+        if not legacy_url:
+            return []
+        return [
+            {
+                "id": None,
+                "url": legacy_url,
+                "caption": "",
+                "display_order": 0,
+                "is_primary": True,
+            }
+        ]
+
+    def get_images(self, obj):
+        return self._gallery(obj.equipment)
+
+    def get_image(self, obj):
+        images = self._gallery(obj.equipment)
+        if images:
+            return images[0]["url"]
+        return None
 
 
 class MaintenanceRecordSerializer(serializers.ModelSerializer):

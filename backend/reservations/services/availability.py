@@ -13,6 +13,7 @@ from datetime import datetime, time as time_cls, timedelta
 from django.db.models import Sum
 
 from equipment.models import Equipment, MaintenanceRecord
+from equipment.services import facility_has_resources, facility_resource_limits
 from facilities.models import Facility, OperatingHour
 from reservations.models import Reservation
 
@@ -69,15 +70,23 @@ def operating_hour_for(facility, target_date):
         return None
 
 
-def equipment_availability_map(target_date, start, end, exclude_id=None) -> dict:
+def equipment_availability_map(target_date, start, end, exclude_id=None, facility_id=None) -> dict:
     """id -> {total, reserved, under_maintenance, available} for every active item.
 
     Items whose status is not AVAILABLE (e.g. under maintenance, retired) or
     that are archived report ``available = 0`` so they can never be reserved,
     while still being visible to the availability report.
+
+    When ``facility_id`` names a facility that has resource assignments
+    configured, availability is capped by that facility's own inventory (the
+    resource may be dedicated to the facility) and equipment not assigned to
+    the facility reports ``available = 0``. Facilities with no assignments
+    keep the global behavior unchanged.
     """
     reserved = reserved_quantities(target_date, start, end, exclude_id)
     maintenance = maintenance_quantities()
+    has_facility_resources = bool(facility_id) and facility_has_resources(facility_id)
+    limits = facility_resource_limits(facility_id) if has_facility_resources else {}
     result = {}
     for eq in Equipment.objects.filter(is_active=True).only(
         "id", "name", "total_quantity", "condition", "status"
@@ -86,8 +95,13 @@ def equipment_availability_map(target_date, start, end, exclude_id=None) -> dict
         maint_qty = maintenance.get(eq.id, 0)
         if eq.status != Equipment.Status.AVAILABLE:
             available_qty = 0
+        elif has_facility_resources and eq.id not in limits:
+            # Not a resource of this facility.
+            available_qty = 0
         else:
             available_qty = max(eq.total_quantity - reserved_qty - maint_qty, 0)
+            if has_facility_resources:
+                available_qty = min(available_qty, limits.get(eq.id, 0))
         result[eq.id] = {
             "total": eq.total_quantity,
             "reserved": reserved_qty,
@@ -124,7 +138,9 @@ def check_availability(facility_id, target_date, start, end, items=None, exclude
         hours_ok = start >= oh.open_time and end <= oh.close_time
 
     # Equipment -------------------------------------------------------------
-    av = equipment_availability_map(target_date, start, end, exclude_id)
+    av = equipment_availability_map(
+        target_date, start, end, exclude_id, facility_id=facility_id
+    )
     item_results = []
     for item in items or []:
         eq_id = int(item["equipment_id"])
