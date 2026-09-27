@@ -15,6 +15,7 @@ import type {
   EventType,
   Facility,
   FacilityResource,
+  FacilityResourcePayload,
   Insights,
   MaintenanceRecord,
   MyAffiliation,
@@ -464,6 +465,30 @@ export const endpoints = {
       `/api/facilities/${id}/resources/${qs ? `?${qs}` : ''}`,
     )
   },
+  /**
+   * Admin configuration of facility <-> resource assignments (staff only).
+   * The list is filterable by facility; `include_inactive=true` also returns
+   * deactivated assignments so staff can restore them.
+   */
+  facilityResourceAssignments: (params?: {
+    facility?: number
+    include_inactive?: string
+  }) => {
+    const qs = new URLSearchParams(
+      Object.entries(params ?? {})
+        .filter(([, value]) => value !== undefined && value !== '')
+        .map(([key, value]) => [key, String(value)]),
+    ).toString()
+    return api.get<FacilityResource[]>(
+      `/api/facility-resources/${qs ? `?${qs}` : ''}`,
+    )
+  },
+  createFacilityResource: (payload: FacilityResourcePayload) =>
+    api.post<FacilityResource>('/api/facility-resources/', payload),
+  updateFacilityResource: (id: number, payload: Partial<FacilityResourcePayload>) =>
+    api.patch<FacilityResource>(`/api/facility-resources/${id}/`, payload),
+  deleteFacilityResource: (id: number) =>
+    api.delete<void>(`/api/facility-resources/${id}/`),
 
   equipment: (params?: Record<string, string>) => {
     const qs = new URLSearchParams(params).toString()

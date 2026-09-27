@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
-import { ArrowRight, CalendarDays, MapPin, Users } from 'lucide-react'
+import { ArrowRight, CalendarDays, MapPin, Settings2, Users } from 'lucide-react'
 import { useFacilities } from '@/hooks/queries'
+import { useAuth } from '@/hooks/useAuth'
 import { PageHeader, Skeleton } from '@/components/ui/Misc'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { Badge } from '@/components/ui/Badge'
@@ -111,6 +112,7 @@ function facilityTypeLabel(type: string): string {
 }
 
 function FacilityCard({ facility }: { facility: Facility }) {
+  const { isStaff } = useAuth()
   const availability = facility.availability
   const maintenance = facility.status === 'MAINTENANCE'
 
@@ -166,12 +168,23 @@ function FacilityCard({ facility }: { facility: Facility }) {
         </div>
 
         <div className="mt-5 flex items-center justify-between border-t border-line pt-4">
-          <Link
-            to={`/facilities/${facility.id}`}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-brand transition-colors hover:text-brand-dark"
-          >
-            View facility <ArrowRight className="size-4" />
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/facilities/${facility.id}`}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-brand transition-colors hover:text-brand-dark"
+            >
+              View facility <ArrowRight className="size-4" />
+            </Link>
+            {isStaff && (
+              <Link
+                to={`/facilities/${facility.id}/resources`}
+                title="Manage equipment"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-body transition-colors hover:text-ink"
+              >
+                <Settings2 className="size-3.5" /> Manage equipment
+              </Link>
+            )}
+          </div>
           {availability.is_operational && (
             <span className="flex items-center gap-1.5 text-xs text-status-available">
               <span className="size-1.5 rounded-full bg-status-available" aria-hidden />

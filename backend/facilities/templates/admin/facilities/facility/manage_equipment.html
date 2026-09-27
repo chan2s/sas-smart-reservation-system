@@ -1,0 +1,156 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:facilities_facility_changelist' %}">Facilities</a>
+  &rsaquo; <a href="{% url 'admin:facilities_facility_change' facility.pk %}">{{ facility.name }}</a>
+  &rsaquo; Manage equipment
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Manage equipment &mdash; {{ facility.name }}</h1>
+
+  <div class="module aligned" style="padding: 12px 16px; margin-bottom: 20px;">
+    <p style="margin: 0 0 6px;">
+      <strong>{{ facility.get_facility_type_display }}</strong>
+      {% if facility.location %} &middot; {{ facility.location }}{% endif %}
+      {% if facility.capacity %} &middot; Capacity {{ facility.capacity }}{% endif %}
+    </p>
+    {% if rates %}
+      <p style="margin: 0; color: var(--body-quiet-color);">
+        Facility pricing (kept separate from equipment fees):
+        {% for rate in rates %}
+          {{ rate.label }} &mdash; ₱{{ rate.unit_price }}
+          {% if rate.included_hours %}/ {{ rate.included_hours }} included hours{% endif %}
+          {% if not forloop.last %} &middot; {% endif %}
+        {% endfor %}
+      </p>
+    {% endif %}
+    <p style="margin: 8px 0 0; color: var(--body-quiet-color);">
+      Ticked items are the resources a requester can choose when reserving
+      {{ facility.name }}. Untick to remove; tick to add. Use <em>Edit</em> to
+      configure quantity, availability, and fees for an assignment.
+    </p>
+  </div>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <fieldset class="module">
+      <h2>Currently assigned ({{ assigned_count }})</h2>
+      <table style="width: 100%;">
+        <thead>
+          <tr>
+            <th style="width: 44px;">&nbsp;</th>
+            <th>Equipment / resource</th>
+            <th>Quantity</th>
+            <th>Availability</th>
+            <th>Service fee</th>
+            <th style="width: 200px;">&nbsp;</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% if row.assigned %}
+              <tr>
+                <td>
+                  <input type="checkbox" name="equipment" value="{{ row.equipment.id }}" checked>
+                </td>
+                <td>
+                  <strong>{{ row.equipment.name }}</strong>
+                  <div style="color: var(--body-quiet-color); font-size: 12px;">
+                    {{ row.equipment.category.name }}
+                    {% if not row.equipment.is_active %}&middot; <em>archived</em>{% endif %}
+                    {% if not row.assignment.is_active %}&middot; <em>deactivated</em>{% endif %}
+                  </div>
+                </td>
+                <td>
+                  {% if row.assignment.quantity %}
+                    {{ row.assignment.quantity }}
+                  {% else %}
+                    <span style="color: var(--body-quiet-color);">inherit ({{ row.equipment.total_quantity }})</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.assignment.get_status_display }}</td>
+                <td>
+                  {% if row.assignment.operator_available %}
+                    ₱{{ row.assignment.operator_fee }}
+                    {% if row.assignment.operator_required %}<em>(required)</em>{% endif %}
+                  {% else %}
+                    &mdash;
+                  {% endif %}
+                </td>
+                <td style="text-align: right;">
+                  <a class="button"
+                     href="{% url 'admin:equipment_facilityresource_change' row.assignment.id %}">Edit</a>
+                  <button type="submit" name="remove" value="{{ row.equipment.id }}"
+                          class="button" style="margin-left: 4px;">Remove</button>
+                </td>
+              </tr>
+            {% endif %}
+          {% empty %}
+            <tr>
+              <td colspan="6" style="color: var(--body-quiet-color);">
+                No resources assigned yet. Add them from the list below.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </fieldset>
+
+    <fieldset class="module" style="margin-top: 20px;">
+      <h2>Available equipment</h2>
+      <table style="width: 100%;">
+        <thead>
+          <tr>
+            <th style="width: 44px;">&nbsp;</th>
+            <th>Equipment / resource</th>
+            <th>Category</th>
+            <th>Inventory</th>
+            <th style="width: 120px;">&nbsp;</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% if not row.assigned %}
+              <tr>
+                <td>
+                  <input type="checkbox" name="equipment" value="{{ row.equipment.id }}">
+                </td>
+                <td>
+                  <strong>{{ row.equipment.name }}</strong>
+                  {% if not row.equipment.is_active %}
+                    <em style="color: var(--body-quiet-color);">(archived)</em>
+                  {% endif %}
+                </td>
+                <td>{{ row.equipment.category.name }}</td>
+                <td>{{ row.equipment.total_quantity }} {{ row.equipment.unit }}</td>
+                <td style="text-align: right;">
+                  <button type="submit" name="add" value="{{ row.equipment.id }}"
+                          class="button">Add</button>
+                </td>
+              </tr>
+            {% endif %}
+          {% empty %}
+            <tr>
+              <td colspan="5" style="color: var(--body-quiet-color);">
+                Every equipment item is already assigned to this facility.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </fieldset>
+
+    <div class="submit-row" style="margin-top: 20px;">
+      <input type="submit" value="Save assignment" name="_save" class="default">
+    </div>
+  </form>
+</div>
+{% endblock %}

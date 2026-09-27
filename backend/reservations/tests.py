@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, time, timedelta
 from unittest import mock
 
@@ -22,6 +23,9 @@ from .models import (
 from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, snapshot_reservation_fees
 from .services.recommendations import (
+    _MICROPHONE_OVERSIZED_QUANTITY,
+    _MICROPHONE_TIERS,
+    _microphones,
     recommend_resources,
     recommend_resources_with_pricing,
 )
@@ -333,6 +337,159 @@ class AvailabilityServiceTests(TestCase):
         self.assertEqual(by_category["Microphones"]["quantity"], 1)
         self.assertEqual(by_category["Tables"]["quantity"], 1)
         self.assertEqual(by_category["Microphones"]["calculation"], "1 × 1")
+
+
+def _claimed_quantity(reason):
+    """The count a justification asserts, or ``None`` if it states a rate.
+
+    Rate-based sentences ("1 chair per participant", "1 table per 10
+    participants") deliberately do not restate the total, so there is nothing
+    to cross-check; every other sentence opens with an absolute count that
+    must equal the recommended quantity.
+    """
+    if " per " in reason:
+        return None
+    match = re.match(r"(\d+)", reason)
+    return int(match.group(1)) if match else None
+
+
+class RecommendationDescriptionSyncTests(TestCase):
+    """A rule's justification must never contradict its computed quantity.
+
+    The microphone rule once advertised "1 microphone for medium events (up to
+    200 participants)" while recommending 2, because the sentence restated a
+    literal instead of the value the rule had already computed. These tests
+    pin the quantity *and* the text for every tier, then sweep the whole rule
+    set so the same drift is caught wherever it reappears.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        for name in (
+            "Chairs",
+            "Tables",
+            "Sound Systems",
+            "Microphones",
+            "Projectors",
+        ):
+            EquipmentCategory.objects.get_or_create(name=name)
+        for name, category, total in (
+            ("Folding Chair", "Chairs", 500),
+            ("Folding Table (6 ft)", "Tables", 60),
+            ("Portable Sound System", "Sound Systems", 4),
+            ("Wired Microphone", "Microphones", 20),
+            ("Portable Projector", "Projectors", 3),
+        ):
+            Equipment.objects.create(
+                name=name,
+                category=EquipmentCategory.objects.get(name=category),
+                total_quantity=total,
+            )
+
+    def _microphones_entry(self, participants):
+        by_category = {r["category"]: r for r in recommend_resources("SEMINAR", participants)}
+        self.assertIn("Microphones", by_category, participants)
+        return by_category["Microphones"]
+
+    def test_microphone_tier_table_is_ordered_and_authoritative(self):
+        """``_MICROPHONE_TIERS`` is the ladder ``_microphones`` really applies."""
+        limits = [tier[0] for tier in _MICROPHONE_TIERS]
+        quantities = [tier[1] for tier in _MICROPHONE_TIERS]
+        self.assertEqual(limits, sorted(limits), "tier limits must ascend")
+        self.assertEqual(quantities, sorted(quantities), "tier quantities must not regress")
+
+        # Each limit is inclusive and hands over to the next tier immediately.
+        self.assertEqual(_microphones(limits[0]), quantities[0])
+        for index, (limit, quantity) in enumerate(zip(limits, quantities)):
+            self.assertEqual(_microphones(limit), quantity, f"limit={limit}")
+            if index + 1 < len(limits):
+                self.assertEqual(
+                    _microphones(limit + 1), quantities[index + 1], f"limit={limit}"
+                )
+        self.assertEqual(
+            _microphones(limits[-1] + 1), _MICROPHONE_OVERSIZED_QUANTITY
+        )
+
+    def test_microphone_reason_matches_quantity_for_every_tier(self):
+        """Quantity and justification agree at every tier boundary."""
+        cases = [
+            (29, 1, "1 microphone for small events (up to 60 participants)"),
+            (60, 1, "1 microphone for small events (up to 60 participants)"),
+            (61, 2, "2 microphones for medium events (up to 200 participants)"),
+            (150, 2, "2 microphones for medium events (up to 200 participants)"),
+            (200, 2, "2 microphones for medium events (up to 200 participants)"),
+            (201, 4, "4 microphones for large events (up to 400 participants)"),
+            (400, 4, "4 microphones for large events (up to 400 participants)"),
+            (401, 6, "6 microphones for very large events (over 400 participants)"),
+            (900, 6, "6 microphones for very large events (over 400 participants)"),
+        ]
+        for participants, quantity, reason in cases:
+            entry = self._microphones_entry(participants)
+            context = f"{participants} participants"
+            self.assertEqual(entry["quantity"], quantity, context)
+            self.assertEqual(entry["reason"], reason, context)
+            self.assertEqual(
+                entry["calculation"], f"{participants} participants → {quantity}", context
+            )
+            # The count printed in the sentence is the count on the badge.
+            self.assertEqual(_claimed_quantity(entry["reason"]), quantity, context)
+
+    def test_fixed_allocation_reason_states_the_fixed_quantity(self):
+        """A fixed-spec rule reports the spec, never a tier-derived count."""
+        entry = {
+            r["category"]: r for r in recommend_resources("MEETING", 250)
+        }["Microphones"]
+        self.assertEqual(entry["quantity"], 1)
+        self.assertEqual(
+            entry["reason"], "Fixed allocation for this event type: 1 microphone."
+        )
+        self.assertEqual(entry["calculation"], "1 × 1")
+
+    def test_other_rules_state_their_own_quantities(self):
+        """Audit of the remaining built-in rules, per tier."""
+        cases = [
+            # Rate-based rules state a ratio, not a total.
+            (29, "Chairs", 29, "1 chair per participant"),
+            (29, "Tables", 3, "1 table per 10 participants, rounded up"),
+            (29, "Projectors", 1, "1 projector for this event type"),
+            (250, "Chairs", 250, "1 chair per participant"),
+            (250, "Tables", 25, "1 table per 10 participants, rounded up"),
+            # Absolute-quantity rules must name the number they recommend.
+            (30, "Sound Systems", 1, "1 sound system for events under 200 participants"),
+            (199, "Sound Systems", 1, "1 sound system for events under 200 participants"),
+            (200, "Sound Systems", 2, "2 sound systems for events of 200 participants or more"),
+            (500, "Sound Systems", 2, "2 sound systems for events of 200 participants or more"),
+        ]
+        for participants, category, quantity, reason in cases:
+            by_category = {
+                r["category"]: r for r in recommend_resources("SEMINAR", participants)
+            }
+            self.assertIn(category, by_category, f"{participants} participants")
+            entry = by_category[category]
+            context = f"{participants} participants / {category}"
+            self.assertEqual(entry["quantity"], quantity, context)
+            self.assertEqual(entry["reason"], reason, context)
+            claimed = _claimed_quantity(entry["reason"])
+            if claimed is not None:
+                self.assertEqual(claimed, quantity, context)
+
+    def test_no_built_in_reason_contradicts_its_quantity(self):
+        """Sweep every tier boundary across all categories looking for drift."""
+        checked = 0
+        for participants in (1, 29, 30, 59, 60, 61, 150, 199, 200, 201, 400, 401, 900):
+            recommendations = recommend_resources("SEMINAR", participants)
+            self.assertTrue(recommendations, participants)
+            for entry in recommendations:
+                claimed = _claimed_quantity(entry["reason"])
+                if claimed is None:
+                    continue
+                checked += 1
+                self.assertEqual(
+                    claimed,
+                    entry["quantity"],
+                    f'{participants}p {entry["category"]}: {entry["reason"]!r}',
+                )
+        self.assertGreater(checked, 0, "sweep asserted nothing")
 
 
 class ReservationApiTests(TestCase):

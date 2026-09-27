@@ -82,6 +82,11 @@ const OrganizationsPage = lazy(() =>
     default: module.OrganizationsPage,
   })),
 )
+const FacilityResourcesPage = lazy(() =>
+  import('@/pages/admin/FacilityResourcesPage').then((module) => ({
+    default: module.FacilityResourcesPage,
+  })),
+)
 const AffiliationPage = lazy(() =>
   import('@/pages/onboarding/AffiliationPage').then((module) => ({
     default: module.AffiliationPage,
@@ -139,6 +144,14 @@ export default function App() {
           <Route path="/onboarding/affiliation" element={<AffiliationPage />} />
           <Route path="/facilities" element={<FacilitiesPage />} />
           <Route path="/facilities/:id" element={<FacilityDetailPage />} />
+          <Route
+            path="/facilities/:id/resources"
+            element={
+              <RequireStaff>
+                <FacilityResourcesPage />
+              </RequireStaff>
+            }
+          />
           <Route path="/reservations" element={<ReservationsPage />} />
           <Route path="/reservations/new" element={<ReservationWizardPage />} />
           <Route path="/reservations/:id" element={<ReservationDetailPage />} />

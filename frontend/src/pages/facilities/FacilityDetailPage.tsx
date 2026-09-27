@@ -5,12 +5,14 @@ import {
   Clock,
   MapPin,
   Package,
+  Settings2,
   ShieldCheck,
   Users,
   Wrench,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { useEquipment, useFacility, useReservations } from '@/hooks/queries'
+import { useFacility, useFacilityResources, useReservations } from '@/hooks/queries'
+import { useAuth } from '@/hooks/useAuth'
 import { Skeleton, EmptyState } from '@/components/ui/Misc'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
@@ -23,9 +25,12 @@ export function FacilityDetailPage() {
   const { id } = useParams()
   const facilityId = Number(id)
   const navigate = useNavigate()
+  const { isStaff } = useAuth()
   const { data: facility, isLoading } = useFacility(facilityId)
   const { data: reservations } = useReservations({ facility: facilityId })
-  const { data: equipment } = useEquipment()
+  // Resources assigned to THIS facility — the admin-configured list, never
+  // the global equipment inventory.
+  const { data: resources } = useFacilityResources(facilityId)
 
   if (isLoading || !facility) {
     return (
@@ -44,7 +49,7 @@ export function FacilityDetailPage() {
   const upcoming = (reservations?.results ?? []).filter(
     (reservation) => reservation.date >= format(new Date(), 'yyyy-MM-dd'),
   )
-  const facilityEquipment = (equipment ?? []).filter(
+  const facilityEquipment = (resources?.resources ?? []).filter(
     (item) => item.availability.status !== 'UNAVAILABLE',
   )
 
@@ -101,6 +106,15 @@ export function FacilityDetailPage() {
             </span>
           </div>
           <div className="flex items-center gap-2.5">
+            {isStaff && (
+              <Button
+                variant="outline"
+                icon={<Settings2 className="size-4" />}
+                onClick={() => navigate(`/facilities/${facility.id}/resources`)}
+              >
+                Manage equipment
+              </Button>
+            )}
             <Button variant="outline" icon={<CalendarDays className="size-4" />} onClick={() => navigate('/calendar')}>
               View calendar
             </Button>
@@ -221,7 +235,7 @@ export function FacilityDetailPage() {
                 {facilityEquipment.slice(0, 6).map((item) => (
                   <li key={item.id}>
                     <Link
-                      to={`/equipment/${item.id}`}
+                      to={`/equipment/${item.equipment_id}`}
                       className="flex items-center gap-3 rounded-lg border border-line p-3 transition-colors hover:border-line-strong hover:bg-soft"
                     >
                       <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">

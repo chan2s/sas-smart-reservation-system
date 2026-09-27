@@ -238,7 +238,7 @@ export interface ReservableResource {
 }
 
 /** Facility-side availability status set by staff. */
-export type FacilityResourceStatus = 'AVAILABLE' | 'UNAVAILABLE' | 'MAINTENANCE'
+export type FacilityResourceStatus = 'AVAILABLE' | 'UNAVAILABLE' | 'MAINTENANCE' | 'DAMAGED'
 
 /**
  * One resource/equipment item assigned to a specific facility.
@@ -272,9 +272,33 @@ export interface FacilityResource {
   operator_required: boolean
   operator_fee: string
   display_order: number
+  /** False when staff deactivate the assignment (hidden from the form). */
+  is_active: boolean
   availability: EquipmentAvailability
   image: string | null
   images: EquipmentImage[]
+}
+
+/**
+ * Writable payload for configuring which equipment belongs to a facility.
+ *
+ * Only the fields an administrator manages live here; the read shape
+ * (`FacilityResource`) carries derived availability and display data.
+ */
+export interface FacilityResourcePayload {
+  facility: number
+  equipment: number
+  /** Units at this facility; 0 inherits the equipment's total inventory. */
+  quantity?: number
+  status?: FacilityResourceStatus
+  additional_fee?: string
+  operator_available?: boolean
+  operator_required?: boolean
+  operator_fee?: string
+  description?: string
+  notes?: string
+  display_order?: number
+  is_active?: boolean
 }
 
 export interface EquipmentStats {

@@ -9,7 +9,7 @@ import {
   type EquipmentPayload,
   type ReservationFilters,
 } from '@/lib/api'
-import type { RequesterType } from '@/lib/types'
+import type { FacilityResourcePayload, RequesterType } from '@/lib/types'
 import type {
   AffiliationPayload,
   OrganizationFilters,
@@ -45,6 +45,64 @@ export function useFacilityResources(id: number | null, params?: Record<string, 
     queryKey: ['facility-resources', id, params],
     queryFn: () => endpoints.facilityResources(id as number, params),
     enabled: id != null,
+  })
+}
+
+/**
+ * Admin view of one facility's resource assignments (staff only).
+ *
+ * Distinct from {@link useFacilityResources}: that one is the reservation
+ * form's read of *selectable* resources, while this one is the configuration
+ * list and can include deactivated assignments.
+ */
+export function useFacilityResourceAssignments(
+  facilityId: number | null,
+  includeInactive = false,
+) {
+  return useQuery({
+    queryKey: ['facility-resource-assignments', facilityId, includeInactive],
+    queryFn: () =>
+      endpoints.facilityResourceAssignments({
+        facility: facilityId as number,
+        ...(includeInactive ? { include_inactive: 'true' } : {}),
+      }),
+    enabled: facilityId != null,
+  })
+}
+
+/** Admin mutations that keep the reservation form's resource list in sync. */
+function invalidateFacilityResources(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['facility-resource-assignments'] })
+  void queryClient.invalidateQueries({ queryKey: ['facility-resources'] })
+  void queryClient.invalidateQueries({ queryKey: ['facility'] })
+}
+
+export function useCreateFacilityResource() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: FacilityResourcePayload) =>
+      endpoints.createFacilityResource(payload),
+    onSuccess: () => invalidateFacilityResources(queryClient),
+  })
+}
+
+export function useUpdateFacilityResource() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...payload
+    }: Partial<FacilityResourcePayload> & { id: number }) =>
+      endpoints.updateFacilityResource(id, payload),
+    onSuccess: () => invalidateFacilityResources(queryClient),
+  })
+}
+
+export function useDeleteFacilityResource() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => endpoints.deleteFacilityResource(id),
+    onSuccess: () => invalidateFacilityResources(queryClient),
   })
 }
 

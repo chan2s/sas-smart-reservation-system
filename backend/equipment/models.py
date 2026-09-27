@@ -91,6 +91,10 @@ class FacilityResource(models.Model):
         AVAILABLE = "AVAILABLE", "Available"
         UNAVAILABLE = "UNAVAILABLE", "Unavailable"
         MAINTENANCE = "MAINTENANCE", "Under Maintenance"
+        DAMAGED = "DAMAGED", "Damaged"
+
+    #: Statuses that keep the resource selectable in the reservation form.
+    SELECTABLE_STATUSES = ("AVAILABLE",)
 
     facility = models.ForeignKey(
         "facilities.Facility",

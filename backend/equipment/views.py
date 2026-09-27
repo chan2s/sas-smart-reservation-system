@@ -11,7 +11,13 @@ from reservations.models import ReservationItem
 from accounts.models import AuditLog
 from accounts.permissions import IsSasStaff, IsSasStaffOrReadOnly
 
-from .models import Equipment, EquipmentCategory, EquipmentImage, MaintenanceRecord
+from .models import (
+    Equipment,
+    EquipmentCategory,
+    EquipmentImage,
+    FacilityResource,
+    MaintenanceRecord,
+)
 from .serializers import (
     MAX_IMAGES_PER_UPLOAD,
     EquipmentCategorySerializer,
@@ -19,6 +25,8 @@ from .serializers import (
     EquipmentImageSerializer,
     EquipmentSerializer,
     EquipmentStatsSerializer,
+    FacilityResourceSerializer,
+    FacilityResourceWriteSerializer,
     MaintenanceRecordSerializer,
     validate_equipment_image,
 )
@@ -457,6 +465,105 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         record = serializer.save(reported_by=request.user)
         reconcile_status(equipment)
         return Response(MaintenanceRecordSerializer(record).data, status=status.HTTP_201_CREATED)
+
+
+class FacilityResourceViewSet(viewsets.ModelViewSet):
+    """Admin configuration of which resources belong to which facility.
+
+    The write side of the facility <-> equipment relationship. The reservation
+    form reads the very same rows through ``GET /api/facilities/{id}/resources/``
+    (facility-scoped), while this endpoint lets administrators assign, edit, and
+    remove resources for a facility without touching code or the database.
+
+    Writes require SAS staff; reads require authentication. Deleting an
+    assignment never touches reservation history, because reservations
+    reference ``Equipment``, not the assignment row.
+    """
+
+    queryset = (
+        FacilityResource.objects.select_related("equipment__category", "facility")
+        .prefetch_related("equipment__equipment_images")
+        .all()
+    )
+    permission_classes = [IsSasStaffOrReadOnly]
+    pagination_class = None
+    search_fields = ("equipment__name", "facility__name", "description")
+
+    def get_serializer_class(self):
+        if self.action in ("create", "update", "partial_update"):
+            return FacilityResourceWriteSerializer
+        return FacilityResourceSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        facility = self.request.query_params.get("facility")
+        if facility:
+            qs = qs.filter(facility_id=facility)
+        # Active assignments are the norm; administrators can opt in to see
+        # deactivated rows (e.g. to reactivate one) instead of losing them.
+        if self.request.query_params.get("include_inactive") != "true":
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def _read(self, instance, status_code=status.HTTP_200_OK):
+        """Answer mutations with the full read representation."""
+        serializer = FacilityResourceSerializer(
+            instance, context=self.get_serializer_context()
+        )
+        return Response(serializer.data, status=status_code)
+
+    def _audit(self, resource, detail):
+        AuditLog.record(
+            self.request.user,
+            AuditLog.Action.FACILITY_EDITED,
+            object_type="facility",
+            object_id=resource.facility_id,
+            object_repr=resource.facility.name,
+            detail=detail,
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        resource = serializer.save()
+        self._audit(
+            resource,
+            f"Assigned {resource.equipment.name} to {resource.facility.name}",
+        )
+        return self._read(resource, status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        resource = self.get_object()
+        serializer = self.get_serializer(resource, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        resource = serializer.save()
+        self._audit(
+            resource,
+            (
+                f"Updated resource configuration for {resource.equipment.name} "
+                f"at {resource.facility.name}"
+            ),
+        )
+        return self._read(resource)
+
+    def destroy(self, request, *args, **kwargs):
+        resource = self.get_object()
+        # Captured before deletion: the FK rows are gone afterwards.
+        detail = (
+            f"Removed {resource.equipment.name} from {resource.facility.name}"
+        )
+        facility = resource.facility
+        response = super().destroy(request, *args, **kwargs)
+        AuditLog.record(
+            request.user,
+            AuditLog.Action.FACILITY_EDITED,
+            object_type="facility",
+            object_id=facility.id,
+            object_repr=facility.name,
+            detail=detail,
+        )
+        return response
 
 
 class MaintenanceRecordViewSet(viewsets.ReadOnlyModelViewSet):

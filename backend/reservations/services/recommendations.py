@@ -59,22 +59,35 @@ def _tables(participants: int) -> int:
     return max(math.ceil(participants / 10), 1)
 
 
+# A second sound system is required from this participant count up.
+_SOUND_LARGE_THRESHOLD = 200
+
+# Microphone tiers: ``(inclusive participant limit, quantity, label)``.
+# This table is the single source of truth for the microphone ladder; the
+# quantity in ``_microphones`` and the human justification in ``_explain`` are
+# both derived from it, so the displayed text can never contradict the
+# computed quantity.
+_MICROPHONE_TIERS = (
+    (60, 1, "small events"),
+    (200, 2, "medium events"),
+    (400, 4, "large events"),
+)
+_MICROPHONE_OVERSIZED_QUANTITY = 6
+
+
 def _sound(participants: int) -> int:
     if participants < 30:
         return 0
-    if participants < 200:
+    if participants < _SOUND_LARGE_THRESHOLD:
         return 1
     return 2
 
 
 def _microphones(participants: int) -> int:
-    if participants <= 60:
-        return 1
-    if participants <= 200:
-        return 2
-    if participants <= 400:
-        return 4
-    return 6
+    for limit, quantity, _label in _MICROPHONE_TIERS:
+        if participants <= limit:
+            return quantity
+    return _MICROPHONE_OVERSIZED_QUANTITY
 
 
 # ---------------------------------------------------------------------------
@@ -304,27 +317,32 @@ def _explain(key: str, spec, quantity: int, participants: int) -> tuple[str, str
     if key == "sound":
         if quantity == 0:
             return ("Not needed for this event size", "")
+        noun = singular if quantity == 1 else plural
         if quantity == 1:
-            return ("1 sound system covers events up to 200 participants", "1 × 1")
+            return (
+                f"1 {singular} for events under {_SOUND_LARGE_THRESHOLD} participants",
+                "1 × 1",
+            )
         return (
-            "2 sound systems for very large events",
-            "participants > 200 → 2",
+            f"{quantity} {noun} for events of {_SOUND_LARGE_THRESHOLD} "
+            f"participants or more",
+            f"participants >= {_SOUND_LARGE_THRESHOLD} → {quantity}",
         )
     if key == "microphones":
-        tiers = (
-            (60, 1, "small events"),
-            (200, 2, "medium events"),
-            (400, 4, "large events"),
-        )
-        for limit, qty, label in tiers:
+        # The justification quotes ``quantity`` — the value already computed by
+        # ``_microphones`` — rather than restating a literal, so the text and
+        # the recommended quantity stay in sync across every tier.
+        noun = singular if quantity == 1 else plural
+        for limit, _tier_quantity, label in _MICROPHONE_TIERS:
             if participants <= limit:
                 return (
-                    f"1 {singular} for {label} (up to {limit} participants)",
-                    f"{participants} participants → {qty}",
+                    f"{quantity} {noun} for {label} (up to {limit} participants)",
+                    f"{participants} participants → {quantity}",
                 )
         return (
-            f"6 {plural} for very large events",
-            f"{participants} participants → 6",
+            f"{quantity} {noun} for very large events (over "
+            f"{_MICROPHONE_TIERS[-1][0]} participants)",
+            f"{participants} participants → {quantity}",
         )
     # projector and any future fixed-1 rule
     return ("1 projector for this event type", "1 × 1")

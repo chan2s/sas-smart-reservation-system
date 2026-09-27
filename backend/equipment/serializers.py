@@ -315,6 +315,7 @@ class FacilityResourceSerializer(serializers.ModelSerializer):
             "operator_required",
             "operator_fee",
             "display_order",
+            "is_active",
             "availability",
             "image",
             "images",
@@ -360,6 +361,66 @@ class FacilityResourceSerializer(serializers.ModelSerializer):
         if images:
             return images[0]["url"]
         return None
+
+
+class FacilityResourceWriteSerializer(serializers.ModelSerializer):
+    """Writable admin view of one facility <-> equipment assignment.
+
+    The read serializer (:class:`FacilityResourceSerializer`) carries a lot of
+    derived/display data for the reservation form; this one exposes only what
+    an administrator configures. ``FacilityResourceViewSet`` still answers
+    create/update with the read serializer, so the admin UI always receives
+    the complete row.
+    """
+
+    class Meta:
+        model = FacilityResource
+        fields = (
+            "id",
+            "facility",
+            "equipment",
+            "quantity",
+            "status",
+            "additional_fee",
+            "operator_available",
+            "operator_required",
+            "operator_fee",
+            "description",
+            "notes",
+            "display_order",
+            "is_active",
+        )
+        # Suppress DRF's generic unique-together message; ``validate`` below
+        # explains exactly which item is already assigned to which facility.
+        validators = []
+
+    def validate(self, attrs):
+        facility = attrs.get("facility") or getattr(self.instance, "facility", None)
+        equipment = attrs.get("equipment") or getattr(self.instance, "equipment", None)
+        if facility and equipment:
+            clash = FacilityResource.objects.filter(
+                facility=facility, equipment=equipment
+            )
+            if self.instance is not None:
+                clash = clash.exclude(pk=self.instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError(
+                    {
+                        "equipment": (
+                            f"{equipment.name} is already assigned to "
+                            f"{facility.name}. Edit that assignment instead."
+                        )
+                    }
+                )
+
+        # A required operator service must also be selectable, otherwise the
+        # fee would be charged for a line the reservation form never shows.
+        operator_required = attrs.get(
+            "operator_required", getattr(self.instance, "operator_required", False)
+        )
+        if operator_required:
+            attrs["operator_available"] = True
+        return attrs
 
 
 class MaintenanceRecordSerializer(serializers.ModelSerializer):
