@@ -264,10 +264,11 @@ def quote_fees(
             )
 
     # Equipment + operator fees ---------------------------------------------
-    # A facility's own ``FacilityResource`` row is authoritative for the
-    # resources it defines (so a resource can legitimately be free, or priced
-    # differently from facility to facility). Only resources the facility has
-    # not configured fall back to the global per-category ``PricingRule``.
+    # A facility's own ``FacilityResource`` row may override the price for a
+    # resource it defines (so the same item can cost differently from facility
+    # to facility). A zero ``additional_fee`` means "no override", so the
+    # global per-category ``PricingRule`` still applies; resources the facility
+    # has not configured use the category rule directly.
     equipment_rules = _rules_by_category(PricingRule.FeeType.EQUIPMENT)
     operator_rules = _rules_by_category(PricingRule.FeeType.OPERATOR)
     facility_resources = _facility_resources(facility)
@@ -276,17 +277,27 @@ def quote_fees(
     for equipment, quantity, operator_requested in _resolve_items(items):
         category_id = equipment.category_id
         resource = facility_resources.get(equipment.id)
+        rule = equipment_rules.get(category_id)
 
         if resource is not None:
-            # Facility-configured resource: ``additional_fee`` is authoritative.
+            # Facility-configured resource. A non-zero ``additional_fee`` is a
+            # facility-specific override; when it is zero no override is
+            # configured, so the global per-category rate still applies. A
+            # resource is therefore free only when neither is set.
             unit_price = money(resource.additional_fee)
+            unit = PricingRule.Unit.UNIT
+            if unit_price <= 0 and rule is not None:
+                unit_price = money(rule.unit_price)
+                unit = rule.unit or PricingRule.Unit.UNIT
             if unit_price > 0:
                 fees.append(
                     {
                         "fee_type": PricingRule.FeeType.EQUIPMENT,
+                        # Show the resource the requester actually selected
+                        # rather than the generic category label.
                         "description": equipment.name,
                         "quantity": money(quantity),
-                        "unit": PricingRule.Unit.UNIT,
+                        "unit": unit,
                         "unit_price": unit_price,
                         "subtotal": money(unit_price * quantity),
                         "equipment_id": equipment.id,
@@ -295,6 +306,8 @@ def quote_fees(
                 )
             # Operator service: only when explicitly requested (or forced by
             # the resource configuration), never just because it is present.
+            # The facility resource stays authoritative here — a facility that
+            # does not offer the operator is never charged for one.
             operator_fee = money(resource.operator_fee)
             if (
                 (resource.operator_required or operator_requested is True)
@@ -314,7 +327,6 @@ def quote_fees(
                 )
             continue
 
-        rule = equipment_rules.get(category_id)
         if rule is not None:
             unit_price = money(rule.unit_price)
             fees.append(

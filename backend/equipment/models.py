@@ -75,9 +75,10 @@ class FacilityResource(models.Model):
       ``0`` means "inherit the equipment's full inventory".
     * ``status`` — operational availability at this facility.
     * ``additional_fee`` — a per-unit fee for external organizations at this
-      facility. When a row exists it is authoritative: ``0`` means explicitly
-      "no additional fee" (so chairs/tables can be free) and the global
-      per-category ``PricingRule`` is ignored.
+      facility. A non-zero value overrides the global per-category
+      ``PricingRule`` for this facility; ``0`` means "no override", so the
+      configured category rate still applies. A resource is free only when
+      neither is set.
     * ``operator_available`` / ``operator_required`` / ``operator_fee`` — the
       sound-system-operator style service. The fee is only charged when the
       requester opts in (or ``operator_required`` forces it), never merely
@@ -122,7 +123,7 @@ class FacilityResource(models.Model):
         default=Decimal("0.00"),
         help_text=(
             "Per-unit fee for external organizations at this facility. "
-            "0 = no additional fee (this overrides any category rate)."
+            "0 = use the configured per-category rate (no override)."
         ),
     )
     operator_available = models.BooleanField(

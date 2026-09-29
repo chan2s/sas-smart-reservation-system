@@ -2009,6 +2009,68 @@ class ExternalOrganizationPricingTests(TestCase):
             any(f["fee_type"] == PricingRule.FeeType.OPERATOR for f in quote["fees"])
         )
 
+    # -- facility resource pricing fallback -------------------------------
+
+    def test_facility_resource_zero_fee_inherits_category_rate(self):
+        """A facility resource with no override still charges the category rate.
+
+        Regression: the Cafeteria's Portable Sound System row carries
+        ``additional_fee = 0`` and used to suppress the ₱1,000 category rule,
+        so only the facility fee appeared on the estimate.
+        """
+        FacilityResource.objects.create(
+            facility=self.cafeteria, equipment=self.sound, additional_fee="0.00"
+        )
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.cafeteria, self._sound(1)
+        )
+        sound_line = next(
+            f for f in quote["fees"] if f["fee_type"] == PricingRule.FeeType.EQUIPMENT
+        )
+        self.assertEqual(sound_line["description"], "Portable Sound System")
+        self.assertEqual(self._money(sound_line["subtotal"]), "1000.00")
+        # Cafeteria ₱5,000 + sound ₱1,000.
+        self.assertEqual(self._money(quote["total"]), "6000.00")
+
+    def test_facility_resource_fee_overrides_category_rate(self):
+        """A non-zero facility-specific fee wins over the category rate."""
+        FacilityResource.objects.create(
+            facility=self.cafeteria, equipment=self.sound, additional_fee="250.00"
+        )
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL, self.cafeteria, self._sound(1)
+        )
+        sound_line = next(
+            f for f in quote["fees"] if f["fee_type"] == PricingRule.FeeType.EQUIPMENT
+        )
+        self.assertEqual(self._money(sound_line["unit_price"]), "250.00")
+        self.assertEqual(self._money(quote["total"]), "5250.00")
+
+    def test_unpriced_facility_resource_stays_free(self):
+        """Neither a facility fee nor a category rate means no charge."""
+        mic_category = EquipmentCategory.objects.create(name="Microphones")
+        mic = Equipment.objects.create(
+            name="Wired Microphone", category=mic_category, total_quantity=6
+        )
+        FacilityResource.objects.create(
+            facility=self.cafeteria, equipment=mic, additional_fee="0.00"
+        )
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.cafeteria,
+            [{"equipment_id": mic.id, "quantity": 2}],
+        )
+        self.assertEqual(
+            [
+                f
+                for f in quote["fees"]
+                if f["fee_type"] == PricingRule.FeeType.EQUIPMENT
+            ],
+            [],
+        )
+        # Only the ₱5,000 cafeteria flat fee remains.
+        self.assertEqual(self._money(quote["total"]), "5000.00")
+
     # -- recommendation engine integration --------------------------------
 
     def test_recommendation_prices_the_seminar_example(self):
