@@ -447,6 +447,13 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         required=False,
         allow_blank=True,
     )
+    # Optional free-text event details. Declared explicitly so an omitted or
+    # blank value is always accepted and stored as an empty string, regardless
+    # of any future model change. These are deliberately NOT required.
+    special_requirements = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
 
     class Meta:
         model = Reservation
@@ -636,6 +643,10 @@ class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.Mode
         child=serializers.DictField(), write_only=True, required=False
     )
     facility_id = serializers.IntegerField(write_only=True)
+    # Optional free-text detail — see ReservationCreateSerializer above.
+    special_requirements = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
 
     class Meta:
         model = Reservation

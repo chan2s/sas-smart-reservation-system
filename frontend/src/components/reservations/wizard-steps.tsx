@@ -538,20 +538,27 @@ export function StepDetails({
               placeholder="Briefly describe the event."
             />
           </Field>
-          <Field label="Special requirements" htmlFor="special-requirements" className="sm:col-span-2">
+          {/* Both fields below are intentionally OPTIONAL: no required
+              indicator, no entry in `missingDetails`, and an empty value is
+              accepted by the backend. */}
+          <Field
+            label="Special requirements (Optional)"
+            htmlFor="special-requirements"
+            className="sm:col-span-2"
+          >
             <Textarea
               id="special-requirements"
               value={details.special_requirements}
               onChange={(event) => set('special_requirements', event.target.value)}
-              placeholder="e.g. Stage setup, podium, table layout for 10 guests"
+              placeholder="Optional — e.g. setup requirements, room arrangement, etc."
             />
           </Field>
-          <Field label="Notes for SAS staff" htmlFor="notes" className="sm:col-span-2">
+          <Field label="Notes for SAS staff (Optional)" htmlFor="notes" className="sm:col-span-2">
             <Textarea
               id="notes"
               value={details.notes}
               onChange={(event) => set('notes', event.target.value)}
-              placeholder="Optional — setup needs, AV preferences, etc."
+              placeholder="Optional — additional information for SAS staff"
             />
           </Field>
         </div>

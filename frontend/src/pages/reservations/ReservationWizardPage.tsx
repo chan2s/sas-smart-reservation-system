@@ -442,6 +442,8 @@ export function ReservationWizardPage() {
 
   const missingDetails = useMemo(() => {
     const missing: string[] = []
+    // NOTE: `special_requirements` and `notes` are deliberately NOT listed
+    // here — both are optional and may be submitted empty.
     if (!details.event_name.trim()) missing.push('Event name')
     if (!details.event_type) missing.push('Event type')
     if (!details.purpose.trim()) missing.push('Event purpose')

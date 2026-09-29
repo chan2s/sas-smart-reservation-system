@@ -550,6 +550,31 @@ class ReservationApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 1)
 
+    def test_optional_special_requirements_and_notes_accept_empty(self):
+        """Special requirements and notes are optional and may be submitted empty."""
+        self._auth(self.requester)
+        # Omitted entirely from the payload.
+        response = self.client.post("/api/reservations/", self._payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        omitted = Reservation.objects.get(pk=response.json()["id"])
+        self.assertEqual(omitted.special_requirements, "")
+        self.assertEqual(omitted.notes, "")
+
+        # Explicitly empty strings.
+        response = self.client.post(
+            "/api/reservations/",
+            self._payload(
+                date=(self.day + timedelta(days=7)).isoformat(),
+                special_requirements="",
+                notes="",
+            ),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        blank = Reservation.objects.get(pk=response.json()["id"])
+        self.assertEqual(blank.special_requirements, "")
+        self.assertEqual(blank.notes, "")
+
     def test_requester_only_sees_own_reservations(self):
         self._auth(self.admin)
         self.client.post("/api/reservations/", self._payload(), format="json")
