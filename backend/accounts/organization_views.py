@@ -19,6 +19,7 @@ from accounts.models import AuditLog, Organization, User
 from accounts.permissions import IsSasStaff
 from accounts.serializers import (
     AffiliationUpdateSerializer,
+    OrganizationBriefSerializer,
     OrganizationListSerializer,
     OrganizationSerializer,
     OrganizationVerificationSerializer,
@@ -79,11 +80,17 @@ class MyAffiliationView(generics.GenericAPIView):
         previous_affiliation = user.affiliation
         affiliation = data["affiliation"]
 
-        # Once attached to an organization, a user cannot re-affiliate
-        # themselves out of the external restrictions (that would be a way to
-        # bypass the Pending/Rejected/Suspended block). Only SAS staff may
-        # move a user off an organization.
-        if user.organization_ref_id and affiliation != User.Affiliation.EXTERNAL_ORGANIZATION:
+        # Once attached to an EXTERNAL organization, a user cannot
+        # re-affiliate themselves out of the external restrictions (that would
+        # be a way to bypass the Pending/Rejected/Suspended block). Only SAS
+        # staff may move a user off an external organization. An internal
+        # organization link is a normal managed selection and may be changed.
+        if (
+            user.organization_ref_id
+            and user.organization_ref.organization_type
+            != Organization.OrganizationType.INTERNAL
+            and affiliation != User.Affiliation.EXTERNAL_ORGANIZATION
+        ):
             return Response(
                 {
                     "detail": (
@@ -171,13 +178,19 @@ class MyAffiliationView(generics.GenericAPIView):
                 user.organization_ref = organization
                 user.save(update_fields=["affiliation", "organization_ref"])
             else:
-                # Internal NORSU affiliation: free-text unit/department only.
+                # Internal NORSU affiliation: optionally link a managed
+                # internal organization (validated as INTERNAL + active in the
+                # serializer). The free-text unit is kept as a legacy
+                # fallback for departments outside the managed list.
                 user.affiliation = affiliation
+                update_fields = ["affiliation"]
                 if "organization" in data:
                     user.organization = data["organization"]
-                    user.save(update_fields=["affiliation", "organization"])
-                else:
-                    user.save(update_fields=["affiliation"])
+                    update_fields.append("organization")
+                if "organization_id" in data:
+                    user.organization_ref = data.get("_internal_organization")
+                    update_fields.append("organization_ref")
+                user.save(update_fields=update_fields)
 
         if previous_affiliation != affiliation:
             AuditLog.record(
@@ -197,6 +210,25 @@ class MyAffiliationView(generics.GenericAPIView):
         return Response(_affiliation_payload(user))
 
 
+class InternalOrganizationListView(generics.ListAPIView):
+    """GET /api/auth/internal-organizations/ — active managed internal orgs.
+
+    Public: the sign-up form needs the list before the visitor has an account.
+    Only the brief identity fields are exposed — never contact details,
+    members, or external organizations.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    serializer_class = OrganizationBriefSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return Organization.objects.filter(
+            organization_type=Organization.OrganizationType.INTERNAL,
+            is_active=True,
+        ).order_by("organization_name")
+
+
 class OrganizationListView(generics.ListAPIView):
     """GET /api/auth/organizations/ — staff verification queue.
 
@@ -211,12 +243,19 @@ class OrganizationListView(generics.ListAPIView):
         from django.db.models import Q
 
         qs = Organization.objects.select_related("created_by", "reviewed_by")
-        status_filter = self.request.query_params.get("status")
-        if status_filter:
-            qs = qs.filter(verification_status=status_filter)
         type_filter = self.request.query_params.get("type")
         if type_filter:
             qs = qs.filter(organization_type=type_filter)
+        else:
+            # Default view is the external-organization verification queue:
+            # managed INTERNAL organizations are only listed when explicitly
+            # requested with ?type=INTERNAL (or ?type=).
+            qs = qs.exclude(
+                organization_type=Organization.OrganizationType.INTERNAL
+            )
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(verification_status=status_filter)
         search = (self.request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(
@@ -264,6 +303,45 @@ class OrganizationVerifyView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         action = serializer.validated_data["action"]
         notes = serializer.validated_data.get("notes", "")
+
+        # Managed internal organizations are never "verified" — they are
+        # seeded APPROVED. For them, suspend/reject deactivate and
+        # approve/reactivate reactivate, which hides them from selection and
+        # blocks new reservations without touching historical records.
+        if organization.organization_type == Organization.OrganizationType.INTERNAL:
+            deactivating = action in (
+                OrganizationVerificationSerializer.Action.SUSPEND,
+                OrganizationVerificationSerializer.Action.REJECT,
+            )
+            organization.is_active = not deactivating
+            organization.verification_status = Organization.VerificationStatus.APPROVED
+            organization.review_notes = notes
+            organization.reviewed_by = request.user
+            from django.utils import timezone as _timezone
+
+            organization.reviewed_at = _timezone.now()
+            organization.save(
+                update_fields=[
+                    "is_active",
+                    "verification_status",
+                    "review_notes",
+                    "reviewed_by",
+                    "reviewed_at",
+                    "updated_at",
+                ]
+            )
+            AuditLog.record(
+                request.user,
+                AuditLog.Action.ORGANIZATION_SUSPENDED
+                if deactivating
+                else AuditLog.Action.ORGANIZATION_REACTIVATED,
+                object_type="organization",
+                object_id=organization.pk,
+                object_repr=str(organization),
+                detail=notes or ("Deactivated" if deactivating else "Activated"),
+                request=request,
+            )
+            return Response(OrganizationSerializer(organization).data)
 
         new_status = OrganizationVerificationSerializer.STATUS_FOR_ACTION[action]
         was_suspended = (

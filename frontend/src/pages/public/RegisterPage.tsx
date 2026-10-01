@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Lock, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError } from '@/lib/api'
+import { useInternalOrganizations } from '@/hooks/queries'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
@@ -14,6 +15,13 @@ const AFFILIATION_OPTIONS: { value: Affiliation; label: string }[] = [
   { value: 'NORSU_FACULTY_STAFF', label: 'NORSU Faculty/Staff' },
   { value: 'NORSU_OFFICE', label: 'NORSU Office/Department' },
   { value: 'EXTERNAL_ORGANIZATION', label: 'External Organization' },
+]
+
+/** Affiliations that belong to a managed campus (INTERNAL) organization. */
+const INTERNAL_AFFILIATIONS: Affiliation[] = [
+  'NORSU_STUDENT',
+  'NORSU_FACULTY_STAFF',
+  'NORSU_OFFICE',
 ]
 
 const ORGANIZATION_TYPE_OPTIONS: { value: ExternalOrganizationType; label: string }[] = [
@@ -49,11 +57,18 @@ export function RegisterPage() {
   })
   // Blank affiliation keeps the legacy behavior (a plain campus account).
   const [affiliation, setAffiliation] = useState<Affiliation | ''>('')
+  // Managed campus organization id, chosen from the seeded list. The backend
+  // re-reads its type and active state — the client never sends a type.
+  const [internalOrganizationId, setInternalOrganizationId] = useState<number | ''>('')
   const [external, setExternal] = useState(EMPTY_EXTERNAL)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  const { data: internalOrganizations } = useInternalOrganizations()
+
   const isExternal = affiliation === 'EXTERNAL_ORGANIZATION'
+  const isInternalAffiliation =
+    affiliation !== '' && INTERNAL_AFFILIATIONS.includes(affiliation)
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = event.target
@@ -84,6 +99,10 @@ export function RegisterPage() {
       setError('Email is required')
       return
     }
+    if (isInternalAffiliation && internalOrganizationId === '') {
+      setError('Please select your organization')
+      return
+    }
     if (isExternal) {
       if (!external.organization_name.trim()) {
         setError('Organization name is required')
@@ -109,6 +128,9 @@ export function RegisterPage() {
         email: formData.email.trim().toLowerCase(),
         organization: isExternal ? '' : formData.organization.trim(),
         ...(affiliation ? { affiliation } : {}),
+        ...(isInternalAffiliation && internalOrganizationId !== ''
+          ? { organization_id: internalOrganizationId }
+          : {}),
         ...(isExternal ? external : {}),
       })
 
@@ -240,7 +262,33 @@ export function RegisterPage() {
                 </Select>
               </Field>
 
-              {!isExternal && (
+              {isInternalAffiliation && (
+                <Field
+                  label="Organization"
+                  htmlFor="internal_organization"
+                  hint="Choose the NORSU college, office, or department you belong to."
+                >
+                  <Select
+                    id="internal_organization"
+                    value={internalOrganizationId}
+                    onChange={(event) =>
+                      setInternalOrganizationId(
+                        event.target.value ? Number(event.target.value) : '',
+                      )
+                    }
+                    required
+                  >
+                    <option value="">Select your organization…</option>
+                    {(internalOrganizations ?? []).map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {organization.display_name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+
+              {!isExternal && !isInternalAffiliation && (
                 <Field label="Organization" htmlFor="organization">
                   <Input
                     id="organization"

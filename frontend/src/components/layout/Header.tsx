@@ -144,7 +144,8 @@ function HeaderActions() {
                   ? 'SAS Administrator'
                   : user?.role === 'STAFF'
                     ? 'SAS Staff'
-                    : user?.organization_ref?.organization_name ||
+                    : user?.organization_ref?.display_name ||
+                        user?.organization_ref?.organization_name ||
                         user?.affiliation_label ||
                         user?.organization ||
                         'Requester'}
@@ -165,7 +166,8 @@ function HeaderActions() {
                   ? 'SAS Administrator'
                   : user?.role === 'STAFF'
                     ? 'SAS Staff'
-                    : user?.organization_ref?.organization_name ||
+                    : user?.organization_ref?.display_name ||
+                        user?.organization_ref?.organization_name ||
                         user?.affiliation_label ||
                         user?.organization ||
                         'Requester'}

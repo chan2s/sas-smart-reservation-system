@@ -113,6 +113,11 @@ urlpatterns = [
         name="affiliation",
     ),
     path(
+        "internal-organizations/",
+        organization_views.InternalOrganizationListView.as_view(),
+        name="internal-organization-list",
+    ),
+    path(
         "organizations/",
         organization_views.OrganizationListView.as_view(),
         name="organization-list",

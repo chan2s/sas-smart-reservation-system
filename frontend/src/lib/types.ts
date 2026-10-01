@@ -44,8 +44,16 @@ export interface Organization {
   id: number
   organization_code: string
   organization_name: string
+  /** Acronym for managed INTERNAL organizations (CAS, CTED, …). */
+  acronym?: string
+  /** "CAS — College of Arts and Sciences"; the name alone when there is no acronym. */
+  display_name?: string
   organization_type: ExternalOrganizationType
   organization_type_label: string
+  /** True for the seeded campus organizations (never external). */
+  is_internal?: boolean
+  is_active?: boolean
+  status_label?: string
   verification_status: VerificationStatus
   verification_status_label: string
   contact_person?: string
@@ -62,6 +70,28 @@ export interface Organization {
   reviewed_at?: string | null
   updated_at?: string
   members?: OrganizationMember[]
+}
+
+/**
+ * A managed campus (INTERNAL) organization — CAS, CTED, CRIM, …
+ *
+ * Returned by /api/auth/internal-organizations/ for the registration and
+ * affiliation pickers. The backend derives the requester type from these
+ * records, so the client only ever submits the id.
+ */
+export interface InternalOrganization {
+  id: number
+  organization_code: string
+  acronym: string
+  organization_name: string
+  display_name: string
+  organization_type: 'INTERNAL'
+  organization_type_label: string
+  is_internal: true
+  is_active: boolean
+  verification_status: VerificationStatus
+  verification_status_label: string
+  status_label: string
 }
 
 export interface OrganizationMember {

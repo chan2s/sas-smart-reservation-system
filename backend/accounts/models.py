@@ -8,7 +8,7 @@ from django.utils import timezone
 
 
 class Organization(models.Model):
-    """An external organization affiliated with SAS RESERVE.
+    """An organization affiliated with SAS RESERVE (internal or external).
 
     Google identifies the *person*; this entity identifies the *institution*
     that person represents. It is deliberately NOT an authentication
@@ -16,18 +16,43 @@ class Organization(models.Model):
     is linked here by ``User.organization_ref``, so one organization can have
     many users (and one user belongs to at most one organization).
 
-    Registration is self-service but inert until SAS staff verify it: new
-    organizations start ``PENDING`` and their members cannot create
-    reservations until the status is ``APPROVED``.
+    Two kinds exist:
+
+    * ``INTERNAL`` — the official NORSU colleges/offices (CAS, CTED, CRIM,
+      CIT, CBA, CAF, CARE, GHAD, CSSG). These are managed records seeded by
+      migration, always ``APPROVED`` and never priced as external.
+    * Every other type — an external organization. Registration is
+      self-service but inert until SAS staff verify it: new organizations
+      start ``PENDING`` and their members cannot create reservations until
+      the status is ``APPROVED``.
+
+    The organization type is always read from this server-side record — a
+    client can never submit a type and have it trusted.
     """
 
     class OrganizationType(models.TextChoices):
+        INTERNAL = "INTERNAL", "Internal Organization"
         GOVERNMENT_AGENCY = "GOVERNMENT_AGENCY", "Government Agency"
         NGO = "NGO", "NGO"
         PRIVATE_ORGANIZATION = "PRIVATE_ORGANIZATION", "Private Organization"
         COMMUNITY_ORGANIZATION = "COMMUNITY_ORGANIZATION", "Community Organization"
         SCHOOL_UNIVERSITY = "SCHOOL_UNIVERSITY", "School/University"
         OTHER = "OTHER", "Other"
+
+    #: The nine official internal organizations, keyed by acronym. Shared by
+    #: the seed migration and the ``seed`` management command so both stay in
+    #: sync. CARE / GHAD / CSSG intentionally have no expanded name.
+    INTERNAL_ORGANIZATIONS = (
+        ("CAS", "College of Arts and Sciences"),
+        ("CTED", "College of Teacher Education"),
+        ("CRIM", "College of Criminology and Justice"),
+        ("CIT", "College of Industrial Technology"),
+        ("CBA", "College of Business Administration"),
+        ("CAF", "College of Agricultural and Forestry"),
+        ("CARE", "CARE"),
+        ("GHAD", "GHAD"),
+        ("CSSG", "CSSG"),
+    )
 
     class VerificationStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -41,10 +66,28 @@ class Organization(models.Model):
         max_length=16, unique=True, editable=False, db_index=True
     )
     organization_name = models.CharField(max_length=160)
+    # Short code used by internal NORSU organizations (e.g. CAS). Unique when
+    # set; external organizations leave it blank and rely on the generated
+    # organization_code instead.
+    acronym = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Short code for internal organizations (e.g. CAS).",
+    )
     organization_type = models.CharField(
         max_length=32,
         choices=OrganizationType.choices,
         default=OrganizationType.OTHER,
+    )
+    # Active/inactive state, distinct from verification_status. Deactivating an
+    # organization hides it from selection and blocks new reservations without
+    # deleting historical records that reference it.
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Inactive organizations cannot be selected or used on new reservations.",
     )
     contact_person = models.CharField(max_length=120)
     contact_email = models.EmailField()
@@ -85,8 +128,15 @@ class Organization(models.Model):
         indexes = [
             models.Index(fields=["verification_status", "organization_type"]),
         ]
-        verbose_name = "external organization"
-        verbose_name_plural = "external organizations"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["acronym"],
+                condition=~models.Q(acronym=""),
+                name="unique_organization_acronym",
+            ),
+        ]
+        verbose_name = "organization"
+        verbose_name_plural = "organizations"
 
     # ------------------------------------------------------------------
 
@@ -126,7 +176,31 @@ class Organization(models.Model):
 
     @property
     def is_verified(self) -> bool:
-        return self.verification_status == self.VerificationStatus.APPROVED
+        return (
+            self.verification_status == self.VerificationStatus.APPROVED
+            and self.is_active
+        )
+
+    @property
+    def is_internal(self) -> bool:
+        return self.organization_type == self.OrganizationType.INTERNAL
+
+    @property
+    def is_external(self) -> bool:
+        return not self.is_internal
+
+    @property
+    def display_name(self) -> str:
+        """Human label, e.g. ``CAS — College of Arts and Sciences``."""
+        if self.acronym and self.acronym != self.organization_name:
+            return f"{self.acronym} — {self.organization_name}"
+        return self.organization_name
+
+    @property
+    def status_label(self) -> str:
+        if not self.is_active:
+            return "Inactive"
+        return self.get_verification_status_display()
 
     @property
     def member_count(self) -> int:
@@ -179,8 +253,9 @@ class User(AbstractUser):
         blank=True,
         related_name="members",
         help_text=(
-            "External organization this user belongs to. Set only through the "
-            "backend from the authenticated user — never from a client-sent id."
+            "Organization this user belongs to (internal NORSU college/office "
+            "or external organization). Set only through the backend from the "
+            "authenticated user — never from a client-sent id."
         ),
     )
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
@@ -221,6 +296,42 @@ class User(AbstractUser):
         return self.affiliation == self.Affiliation.EXTERNAL_ORGANIZATION
 
     @property
+    def organization_is_internal(self) -> bool:
+        """True when the linked organization is one of the managed INTERNAL ones."""
+        return bool(
+            self.organization_ref_id
+            and self.organization_ref.organization_type
+            == Organization.OrganizationType.INTERNAL
+        )
+
+    @property
+    def organization_is_external(self) -> bool:
+        return bool(
+            self.organization_ref_id
+            and self.organization_ref.organization_type
+            != Organization.OrganizationType.INTERNAL
+        )
+
+    @property
+    def trusted_requester_type(self) -> str:
+        """The requester/pricing context decided from server-side records only.
+
+        Returns ``"EXTERNAL"`` only when the authenticated account is an
+        external-organization member whose linked organization is itself an
+        external, approved, active organization. Every internal organization
+        (and every legacy campus account) reads as ``"CAMPUS"``, so internal
+        requesters never receive external-organization facility/resource
+        fees. A client-supplied flag can never change this.
+        """
+        if (
+            self.is_external_organization
+            and self.organization_is_external
+            and self.can_create_reservations
+        ):
+            return "EXTERNAL"
+        return "CAMPUS"
+
+    @property
     def has_affiliation(self) -> bool:
         """False only for accounts that have never completed the step.
 
@@ -246,13 +357,21 @@ class User(AbstractUser):
     def reservation_block_reason(self) -> str:
         """Why this user may not submit a reservation, or '' when allowed.
 
-        Pending / Rejected / Suspended organizations cannot create normal
-        reservations — the message is surfaced verbatim by the API so the
-        frontend can show the matching status notice.
+        A deactivated organization (internal or external) blocks all of its
+        members. Pending / Rejected / Suspended external organizations cannot
+        create normal reservations either — the message is surfaced verbatim
+        by the API so the frontend can show the matching status notice.
         """
+        organization = self.organization_ref
+        # A deactivated managed organization (CAS, CTED, …) disables its
+        # members just like a suspended external one.
+        if organization is not None and not organization.is_active:
+            return (
+                "Your organization is currently inactive. Reservations are "
+                "disabled until the SAS Office reactivates it."
+            )
         if not self.is_external_organization:
             return ""
-        organization = self.organization_ref
         if organization is None:
             return (
                 "Complete your external organization registration before "

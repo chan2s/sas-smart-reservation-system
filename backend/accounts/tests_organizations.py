@@ -1,21 +1,26 @@
-"""Tests for the external-organization affiliation layer (Task: External Organizations).
+"""Tests for the organization affiliation layer.
 
-These cover the affiliation/registration/verification API and the guarantees
-that the feature is additive: existing (legacy) users keep working exactly as
-before, and nothing about the organization model is reachable from the client
-in a way that could be tampered with.
+These cover the affiliation/registration/verification API — both the external
+organizations and the nine managed INTERNAL campus organizations — and the
+guarantees that the feature is additive: existing (legacy) users keep working
+exactly as before, and nothing about the organization model is reachable from
+the client in a way that could be tampered with.
 """
+
+from io import StringIO
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from accounts.management.commands.seed import Command as SeedCommand
 from accounts.models import AuditLog, Organization
 
 User = get_user_model()
 
 AFFILIATION_URL = "/api/auth/affiliation/"
 ORGANIZATIONS_URL = "/api/auth/organizations/"
+INTERNAL_ORGANIZATIONS_URL = "/api/auth/internal-organizations/"
 
 
 def _rows(payload):
@@ -23,6 +28,17 @@ def _rows(payload):
     if isinstance(payload, dict) and "results" in payload:
         return payload["results"]
     return payload
+
+
+def _external_organizations():
+    """External organizations only.
+
+    Nine managed INTERNAL organizations are seeded by migration, so tests
+    that count "organizations" must exclude them to stay meaningful.
+    """
+    return Organization.objects.exclude(
+        organization_type=Organization.OrganizationType.INTERNAL
+    )
 
 
 def _organization_payload(**overrides):
@@ -162,7 +178,7 @@ class AffiliationApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(Organization.objects.count(), 0)
+        self.assertEqual(_external_organizations().count(), 0)
 
     def test_organization_codes_are_sequential_and_unique(self):
         first = Organization.objects.create(
@@ -179,7 +195,7 @@ class AffiliationApiTests(TestCase):
         )
         self.assertEqual(first.organization_code, "EXT-0001")
         self.assertEqual(second.organization_code, "EXT-0002")
-        self.assertEqual(Organization.objects.count(), 2)
+        self.assertEqual(_external_organizations().count(), 2)
 
     def test_members_cannot_re_affiliate_out_of_an_organization(self):
         """A pending org member cannot escape the block by switching to NORSU."""
@@ -202,14 +218,14 @@ class AffiliationApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(Organization.objects.count(), 1)
-        organization = Organization.objects.get()
+        self.assertEqual(_external_organizations().count(), 1)
+        organization = Organization.objects.get(organization_name="ABC Foundation")
         self.assertEqual(organization.contact_number, "09999999999")
 
     def test_rejected_organization_resubmission_returns_to_pending(self):
         self.client.force_authenticate(self.user)
         self.client.post(AFFILIATION_URL, _organization_payload(), format="json")
-        organization = Organization.objects.get()
+        organization = Organization.objects.get(organization_name="ABC Foundation")
         organization.verification_status = Organization.VerificationStatus.REJECTED
         organization.review_notes = "Incomplete documents"
         organization.save()
@@ -231,7 +247,7 @@ class AffiliationApiTests(TestCase):
     def test_suspended_organization_cannot_be_edited(self):
         self.client.force_authenticate(self.user)
         self.client.post(AFFILIATION_URL, _organization_payload(), format="json")
-        organization = Organization.objects.get()
+        organization = Organization.objects.get(organization_name="ABC Foundation")
         organization.verification_status = Organization.VerificationStatus.SUSPENDED
         organization.save()
         self.user.refresh_from_db()
@@ -261,7 +277,7 @@ class AffiliationApiTests(TestCase):
         """Organization 1 → Many Users; each user has their own account."""
         self.client.force_authenticate(self.user)
         self.client.post(AFFILIATION_URL, _organization_payload(), format="json")
-        organization = Organization.objects.get()
+        organization = Organization.objects.get(organization_name="ABC Foundation")
 
         colleague = User.objects.create_user(
             username="maria", password="pass12345", role=User.Role.REQUESTER
@@ -447,7 +463,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertNotIn("access", body)
         self.assertNotIn("refresh", body)
 
-        organization = Organization.objects.get()
+        organization = Organization.objects.get(organization_name="Bayawan National High School")
         self.assertEqual(organization.organization_code, "EXT-0001")
         self.assertEqual(
             organization.verification_status, Organization.VerificationStatus.PENDING
@@ -477,7 +493,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
             response = self.client.post(REGISTER_URL, payload, format="json")
             self.assertEqual(response.status_code, 400, (field, response.content))
         self.assertEqual(User.objects.count(), 0)
-        self.assertEqual(Organization.objects.count(), 0)
+        self.assertEqual(_external_organizations().count(), 0)
 
     def test_new_external_user_can_log_in_and_is_still_blocked(self):
         self.client.post(REGISTER_URL, _external_registration(), format="json")
@@ -505,9 +521,244 @@ class ExternalOrganizationRegistrationTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 201, response.content)
-        self.assertEqual(Organization.objects.count(), 0)
+        self.assertEqual(_external_organizations().count(), 0)
         user = User.objects.get(username="campusnew")
         self.assertEqual(user.affiliation, User.Affiliation.NORSU_STUDENT)
         self.assertEqual(user.organization, "College of Engineering")
         self.assertIsNone(user.organization_ref)
         self.assertTrue(user.can_create_reservations)
+
+
+class InternalOrganizationTests(TestCase):
+    """The nine managed INTERNAL campus organizations.
+
+    Covers the data migration/seed, the public picker, registration and
+    affiliation linkage, spoof-prevention, and staff management. Internal
+    requesters must always read as CAMPUS (never external pricing), and an
+    external registration must never be able to claim an internal org.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.internal = Organization.objects.get(organization_code="CAS")
+        self.staff = User.objects.create_user(
+            username="staff", password="pass12345", role=User.Role.STAFF
+        )
+
+    def _internal_user(self, username="faculty"):
+        user = User.objects.create_user(
+            username=username, password="pass12345", role=User.Role.REQUESTER
+        )
+        user.affiliation = User.Affiliation.NORSU_FACULTY_STAFF
+        user.organization_ref = self.internal
+        user.save(update_fields=["affiliation", "organization_ref"])
+        return user
+
+    # -- Seeded data ----------------------------------------------------
+
+    def test_all_nine_internal_organizations_are_seeded_active(self):
+        self.assertEqual(len(Organization.INTERNAL_ORGANIZATIONS), 9)
+        for code, name in Organization.INTERNAL_ORGANIZATIONS:
+            organization = Organization.objects.get(organization_code=code)
+            self.assertEqual(
+                organization.organization_type,
+                Organization.OrganizationType.INTERNAL,
+            )
+            self.assertEqual(
+                organization.verification_status,
+                Organization.VerificationStatus.APPROVED,
+            )
+            self.assertTrue(organization.is_active)
+            self.assertTrue(organization.is_internal)
+            self.assertEqual(organization.acronym, code)
+            self.assertEqual(organization.organization_name, name)
+            self.assertTrue(organization.is_verified)
+
+    def test_display_name_and_status_label(self):
+        self.assertEqual(self.internal.display_name, "CAS — College of Arts and Sciences")
+        self.assertEqual(self.internal.status_label, "Approved")
+        care = Organization.objects.get(organization_code="CARE")
+        # No expanded name was provided, so CARE stands alone.
+        self.assertEqual(care.display_name, "CARE")
+
+    def test_seeding_is_idempotent(self):
+        SeedCommand(stdout=StringIO()).seed_organizations()
+        SeedCommand(stdout=StringIO()).seed_organizations()
+        self.assertEqual(
+            Organization.objects.filter(
+                organization_type=Organization.OrganizationType.INTERNAL
+            ).count(),
+            9,
+        )
+
+    # -- Public picker --------------------------------------------------
+
+    def test_public_list_returns_only_active_internal_organizations(self):
+        response = self.client.get(INTERNAL_ORGANIZATIONS_URL)
+        self.assertEqual(response.status_code, 200)
+        rows = _rows(response.json())
+        self.assertEqual(len(rows), 9)
+        self.assertEqual(
+            {row["acronym"] for row in rows},
+            {code for code, _ in Organization.INTERNAL_ORGANIZATIONS},
+        )
+        self.assertTrue(all("display_name" in row for row in rows))
+
+        # An inactive organization disappears from the picker.
+        self.internal.is_active = False
+        self.internal.save(update_fields=["is_active"])
+        rows = _rows(self.client.get(INTERNAL_ORGANIZATIONS_URL).json())
+        self.assertEqual(len(rows), 8)
+
+    # -- Registration and affiliation -----------------------------------
+
+    def test_registration_links_internal_organization(self):
+        response = self.client.post(
+            REGISTER_URL,
+            {
+                "username": "newstudent",
+                "password": "pass12345",
+                "first_name": "Maria",
+                "last_name": "Santos",
+                "email": "maria@norsu.edu.ph",
+                "affiliation": "NORSU_STUDENT",
+                "organization_id": self.internal.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        user = User.objects.get(username="newstudent")
+        self.assertEqual(user.organization_ref, self.internal)
+        self.assertTrue(user.can_create_reservations)
+        # Internal organizations never price as external.
+        self.assertEqual(user.trusted_requester_type, "CAMPUS")
+
+    def test_registration_rejects_inactive_internal_organization(self):
+        self.internal.is_active = False
+        self.internal.save(update_fields=["is_active"])
+        response = self.client.post(
+            REGISTER_URL,
+            {
+                "username": "newstudent",
+                "password": "pass12345",
+                "first_name": "Maria",
+                "last_name": "Santos",
+                "email": "maria@norsu.edu.ph",
+                "affiliation": "NORSU_STUDENT",
+                "organization_id": self.internal.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(User.objects.filter(username="newstudent").exists())
+
+    def test_affiliation_endpoint_links_internal_organization(self):
+        user = User.objects.create_user(
+            username="campus", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.client.force_authenticate(user)
+        response = self.client.post(
+            AFFILIATION_URL,
+            {"affiliation": "NORSU_OFFICE", "organization_id": self.internal.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        user.refresh_from_db()
+        self.assertEqual(user.organization_ref, self.internal)
+
+    def test_affiliation_rejects_an_external_organization_id(self):
+        external = Organization.objects.create(
+            organization_name="ABC Foundation",
+            organization_type=Organization.OrganizationType.NGO,
+            contact_person="Juan Dela Cruz",
+            contact_email="juan@abcfoundation.org",
+        )
+        user = User.objects.create_user(
+            username="campus", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.client.force_authenticate(user)
+        response = self.client.post(
+            AFFILIATION_URL,
+            {"affiliation": "NORSU_STUDENT", "organization_id": external.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        user.refresh_from_db()
+        self.assertIsNone(user.organization_ref_id)
+
+    # -- Spoof prevention ------------------------------------------------
+
+    def test_internal_user_cannot_inject_an_external_organization(self):
+        """A client-supplied type/name is ignored for internal affiliations."""
+        response = self.client.post(
+            REGISTER_URL,
+            {
+                "username": "spoofer",
+                "password": "pass12345",
+                "first_name": "Eve",
+                "last_name": "Spoof",
+                "email": "eve@norsu.edu.ph",
+                "affiliation": "NORSU_STUDENT",
+                "organization_id": self.internal.id,
+                "organization_name": "Fake NGO",
+                "organization_type": "NGO",
+                "contact_person": "Eve",
+                "contact_email": "eve@fake.org",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        user = User.objects.get(username="spoofer")
+        self.assertEqual(user.organization_ref, self.internal)
+        self.assertEqual(_external_organizations().count(), 0)
+
+    def test_external_registration_cannot_claim_an_internal_organization(self):
+        response = self.client.post(
+            REGISTER_URL,
+            _external_registration(organization_id=self.internal.id),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        user = User.objects.get(username="bnhs")
+        self.assertNotEqual(user.organization_ref_id, self.internal.id)
+        self.assertFalse(user.organization_ref.is_internal)
+        self.assertEqual(user.organization_ref.organization_type, "SCHOOL_UNIVERSITY")
+
+    # -- Reservation gating ----------------------------------------------
+
+    def test_deactivated_internal_organization_blocks_reservations(self):
+        user = self._internal_user()
+        self.assertTrue(user.can_create_reservations)
+        self.internal.is_active = False
+        self.internal.save(update_fields=["is_active"])
+        # Re-fetch so the linked organization is not served from cache.
+        user = User.objects.get(pk=user.pk)
+        self.assertFalse(user.can_create_reservations)
+        self.assertTrue(user.reservation_block_reason)
+
+    # -- Staff management ------------------------------------------------
+
+    def test_staff_listing_hides_internal_organizations_by_default(self):
+        self.client.force_authenticate(self.staff)
+        self.assertEqual(_rows(self.client.get(ORGANIZATIONS_URL).json()), [])
+        rows = _rows(self.client.get(f"{ORGANIZATIONS_URL}?type=INTERNAL").json())
+        self.assertEqual(len(rows), 9)
+
+    def test_staff_can_deactivate_and_reactivate_an_internal_organization(self):
+        self.client.force_authenticate(self.staff)
+        url = f"{ORGANIZATIONS_URL}{self.internal.id}/verify/"
+
+        response = self.client.post(url, {"action": "suspend"}, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.internal.refresh_from_db()
+        self.assertFalse(self.internal.is_active)
+        # Status stays APPROVED — only the active flag changes.
+        self.assertEqual(
+            self.internal.verification_status,
+            Organization.VerificationStatus.APPROVED,
+        )
+
+        response = self.client.post(url, {"action": "reactivate"}, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.internal.refresh_from_db()
+        self.assertTrue(self.internal.is_active)

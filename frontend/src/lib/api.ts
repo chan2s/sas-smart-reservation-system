@@ -17,6 +17,7 @@ import type {
   FacilityResource,
   FacilityResourcePayload,
   Insights,
+  InternalOrganization,
   MaintenanceRecord,
   MyAffiliation,
   Notification,
@@ -301,6 +302,9 @@ export const api = {
   organization: (id: number) => api.get<Organization>(`/api/auth/organizations/${id}/`),
   verifyOrganization: (id: number, action: OrganizationVerificationAction, notes = '') =>
     api.post<Organization>(`/api/auth/organizations/${id}/verify/`, { action, notes }),
+  /** Seeded campus organizations for the register/affiliation pickers. */
+  internalOrganizations: () =>
+    api.get<InternalOrganization[]>('/api/auth/internal-organizations/'),
 }
 
 export type OrganizationVerificationAction =
@@ -320,6 +324,8 @@ export interface AffiliationPayload {
   affiliation: Affiliation
   /** NORSU office/department, for internal affiliations. */
   organization?: string
+  /** Managed internal organization id, for internal affiliations. */
+  organization_id?: number | null
   // Present only when registering an external organization.
   organization_name?: string
   organization_type?: string
@@ -346,6 +352,8 @@ export interface AuditLogEntry {
 export interface ReservationFilters {
   status?: ReservationStatus
   requester_type?: RequesterType
+  /** Internal organization acronym/code, or "EXTERNAL" for any external requester. */
+  organization?: string
   date?: string
   from?: string
   to?: string

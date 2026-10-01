@@ -408,17 +408,33 @@ class _ReservationCreateMixin:
 def account_organization(user):
     """The organization/office an account is linked to, or "" when none.
 
-    Prefers the structured external organization bound to the profile and
-    falls back to the free-text NORSU unit. This is the authoritative value a
-    reservation snapshots — the request body's own ``organization`` is only
-    consulted for accounts that have never declared one, so a requester cannot
-    swap in a different organization through the API.
+    Prefers the structured organization bound to the profile (internal
+    NORSU college/office or external organization) and falls back to the
+    free-text NORSU unit. This is the authoritative value a reservation
+    snapshots — the request body's own ``organization`` is only consulted for
+    accounts that have never declared one, so a requester cannot swap in a
+    different organization through the API.
     """
     if user is None:
         return ""
     if user.organization_ref_id:
-        return user.organization_ref.organization_name
-    return (user.organization or "").strip()
+        return user.organization_ref.display_name[:120]
+    return (user.organization or "").strip()[:120]
+
+
+def account_organization_ref(user):
+    """The managed organization bound to an account when it is INTERNAL.
+
+    External organizations have their own dedicated resolution path; only
+    internal ones are linked here automatically so reservations carry the
+    structured record. Returns ``None`` for unlinked/external accounts.
+    """
+    if user is None or not user.organization_ref_id:
+        return None
+    organization = user.organization_ref
+    if organization.organization_type == "INTERNAL":
+        return organization
+    return None
 
 
 class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSerializer):
@@ -564,21 +580,39 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                         {"requester_id": "Requested campus user not found."}
                     )
                 attrs["_on_behalf_of"] = target
+                # A deactivated organization blocks its members too.
+                block_reason = target.reservation_block_reason
+                if block_reason:
+                    raise serializers.ValidationError({"requester_type": block_reason})
                 # Resolve the office from the requester being booked for, never
                 # from the request body.
                 requester_org = account_organization(target)
                 if requester_org:
                     attrs["organization"] = requester_org
+                internal_ref = account_organization_ref(target)
+                if internal_ref is not None:
+                    attrs["_organization_ref"] = internal_ref
             else:
                 if user is None or not user.is_authenticated:
                     raise serializers.ValidationError(
                         {"requester_id": "Authentication is required for campus reservations."}
                     )
+                # A deactivated managed organization blocks its members — the
+                # same rule as a suspended external organization.
+                block_reason = user.reservation_block_reason
+                if block_reason:
+                    raise serializers.ValidationError({"requester_type": block_reason})
                 # A signed-in campus user's own office/affiliation takes
                 # precedence over anything the client submitted.
                 requester_org = account_organization(user)
                 if requester_org:
                     attrs["organization"] = requester_org
+                # Link the managed internal organization so the reservation
+                # always shows the proper record (CAS — College of Arts and
+                # Sciences), never a raw id or a client-typed value.
+                internal_ref = account_organization_ref(user)
+                if internal_ref is not None:
+                    attrs["_organization_ref"] = internal_ref
         return attrs
 
     def create(self, validated_data):

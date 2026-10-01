@@ -22,17 +22,25 @@ class OrganizationBriefSerializer(serializers.ModelSerializer):
     verification_status_label = serializers.CharField(
         source="get_verification_status_display", read_only=True
     )
+    display_name = serializers.CharField(read_only=True)
+    is_internal = serializers.BooleanField(read_only=True)
+    status_label = serializers.CharField(read_only=True)
 
     class Meta:
         model = Organization
         fields = (
             "id",
             "organization_code",
+            "acronym",
             "organization_name",
+            "display_name",
             "organization_type",
             "organization_type_label",
+            "is_internal",
+            "is_active",
             "verification_status",
             "verification_status_label",
+            "status_label",
         )
 
 
@@ -114,12 +122,49 @@ class OrganizationRegistrationSerializer(serializers.ModelSerializer):
         )
 
 
+# Affiliations that represent an internal (campus) user. These may link to a
+# managed INTERNAL organization; an EXTERNAL_ORGANIZATION affiliation never
+# may, and vice versa.
+INTERNAL_AFFILIATIONS = (
+    User.Affiliation.NORSU_STUDENT,
+    User.Affiliation.NORSU_FACULTY_STAFF,
+    User.Affiliation.NORSU_OFFICE,
+)
+
+
+def resolve_internal_organization(value):
+    """Validate a client-supplied id and return an active INTERNAL org.
+
+    A client can send *which* managed organization it belongs to, but never
+    the organization type — that always comes from this database record.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        organization_id = int(value)
+    except (TypeError, ValueError):
+        raise serializers.ValidationError(
+            {"organization_id": "Select a valid internal organization."}
+        )
+    organization = Organization.objects.filter(
+        pk=organization_id,
+        is_active=True,
+        organization_type=Organization.OrganizationType.INTERNAL,
+    ).first()
+    if organization is None:
+        raise serializers.ValidationError(
+            {"organization_id": "Select a valid, active internal organization."}
+        )
+    return organization
+
+
 class AffiliationUpdateSerializer(serializers.Serializer):
     """Choose an affiliation, and register an organization when external.
 
-    The organization is never chosen by id from the client — an external
-    requester either reuses the organization their profile is already
-    attached to, or creates a new one here (which is then bound to them).
+    An external requester either reuses the organization their profile is
+    already attached to, or creates a new one here (which is then bound to
+    them). An internal requester may additionally pick a managed internal
+    organization by id; the backend validates its type and active state.
     """
 
     affiliation = serializers.ChoiceField(choices=User.Affiliation.choices)
@@ -128,6 +173,11 @@ class AffiliationUpdateSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=120,
         help_text="NORSU office/department, for internal affiliations.",
+    )
+    organization_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text="Managed internal organization selected by an internal user.",
     )
     # External organization registration fields.
     organization_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
@@ -142,6 +192,10 @@ class AffiliationUpdateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if attrs["affiliation"] != User.Affiliation.EXTERNAL_ORGANIZATION:
+            # Internal affiliation: resolve an optional managed organization.
+            attrs["_internal_organization"] = resolve_internal_organization(
+                attrs.get("organization_id")
+            )
             return attrs
         request = self.context.get("request")
         user = getattr(request, "user", None)
@@ -251,6 +305,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     affiliation = serializers.ChoiceField(
         choices=User.Affiliation.choices, required=False, allow_blank=True
     )
+    # Managed internal organization (id) selected from the seeded list. The
+    # backend re-reads its type; the client never supplies a type here.
+    organization_id = serializers.IntegerField(required=False, allow_null=True)
     # External organization registration fields.
     organization_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
     organization_type = serializers.ChoiceField(
@@ -272,6 +329,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             "email",
             "organization",
             "affiliation",
+            "organization_id",
             "organization_name",
             "organization_type",
             "contact_person",
@@ -283,6 +341,10 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if attrs.get("affiliation") != User.Affiliation.EXTERNAL_ORGANIZATION:
+            if attrs.get("affiliation") in INTERNAL_AFFILIATIONS:
+                attrs["_internal_organization"] = resolve_internal_organization(
+                    attrs.get("organization_id")
+                )
             return attrs
         if not (attrs.get("organization_name") or "").strip():
             raise serializers.ValidationError(
@@ -315,6 +377,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop("password")
         affiliation = validated_data.pop("affiliation", "") or ""
+        internal_organization = validated_data.pop("_internal_organization", None)
+        # Not a model field — resolved into ``_internal_organization`` above.
+        validated_data.pop("organization_id", None)
         organization_fields = {
             field: validated_data.pop(field)
             for field in self._ORGANIZATION_FIELDS
@@ -333,6 +398,11 @@ class RegisterSerializer(serializers.ModelSerializer):
                 **organization_fields,
             )
             user.organization_ref = organization
+            user.save(update_fields=["organization_ref"])
+        elif internal_organization is not None:
+            # Managed internal organization (CAS, CTED, …). Type/active state
+            # were re-checked by the server in ``validate``.
+            user.organization_ref = internal_organization
             user.save(update_fields=["organization_ref"])
         return user
 

@@ -520,6 +520,19 @@ export function useMyAffiliation() {
 }
 
 /**
+ * Seeded campus (INTERNAL) organizations for the register/affiliation pickers.
+ *
+ * The list is stable, so it is cached for the session.
+ */
+export function useInternalOrganizations() {
+  return useQuery({
+    queryKey: ['internal-organizations'],
+    queryFn: () => api.internalOrganizations(),
+    staleTime: 30 * 60 * 1000,
+  })
+}
+
+/**
  * Set the caller's affiliation (and register an external organization).
  *
  * The backend derives the organization from the authenticated user, so the

@@ -479,3 +479,158 @@ class CampusOrganizationDerivationTests(TestCase):
         reservation = Reservation.objects.get()
         self.assertEqual(reservation.requester, self.user)
         self.assertEqual(reservation.organization, "Student Affairs Office")
+
+
+class InternalOrganizationReservationTests(TestCase):
+    """Reservations by members of a managed INTERNAL organization.
+
+    The linked campus organization is snapshotted onto the reservation, the
+    requester always reads as CAMPUS (so external-organization pricing never
+    applies), and the requester type cannot be forged from the request body.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.organization = Organization.objects.get(organization_code="CAS")
+        self.user = User.objects.create_user(
+            username="cas_member",
+            password="pass12345",
+            role=User.Role.REQUESTER,
+            first_name="Maria",
+            last_name="Santos",
+            email="maria@norsu.edu.ph",
+        )
+        self.user.affiliation = User.Affiliation.NORSU_STUDENT
+        self.user.organization_ref = self.organization
+        self.user.save(update_fields=["affiliation", "organization_ref"])
+
+        self.staff = User.objects.create_user(
+            username="staff", password="pass12345", role=User.Role.STAFF
+        )
+
+        self.facility = Facility.objects.create(
+            name="Cafeteria", facility_type=Facility.FacilityType.CAFETERIA, capacity=500
+        )
+        OperatingHour.objects.create(
+            facility=self.facility,
+            day_of_week=0,
+            open_time=time(6, 0),
+            close_time=time(22, 0),
+        )
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
+
+    def _payload(self, **overrides):
+        payload = {
+            "facility_id": self.facility.id,
+            "date": self.day.isoformat(),
+            "start_time": "13:00",
+            "end_time": "16:00",
+            "event_name": "College Assembly",
+            "event_type": "ACADEMIC",
+            "purpose": "College assembly",
+            "expected_participants": 112,
+            "items": [],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_internal_member_reservation_links_organization_and_is_campus(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(RESERVATIONS_URL, self._payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+
+        self.assertEqual(body["requester_type"], "CAMPUS")
+        self.assertEqual(body["organization"], "CAS — College of Arts and Sciences")
+
+        reservation = Reservation.objects.get(pk=body["id"])
+        self.assertEqual(reservation.organization_ref, self.organization)
+        self.assertEqual(reservation.requester_type, Reservation.RequesterType.CAMPUS)
+
+    def test_internal_member_cannot_claim_external_requester_type(self):
+        """A forged requester_type=EXTERNAL is rejected, not honoured."""
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            RESERVATIONS_URL,
+            self._payload(
+                requester_type="EXTERNAL",
+                organization="Some Other Foundation",
+                organization_type="NGO",
+                contact_email="attacker@example.com",
+            ),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("requester_type", response.json())
+        self.assertEqual(Reservation.objects.count(), 0)
+
+    def test_internal_member_never_gets_external_pricing(self):
+        PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.FACILITY,
+            facility_type=Facility.FacilityType.CAFETERIA,
+            unit=PricingRule.Unit.FLAT,
+            unit_price="5000.00",
+            label="Cafeteria external fee",
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            AVAILABILITY_URL,
+            {
+                "facility_id": self.facility.id,
+                "date": self.day.isoformat(),
+                "start_time": "13:00",
+                "end_time": "16:00",
+                "items": [],
+                "requester_type": "EXTERNAL",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        pricing = response.json()["pricing"]
+        self.assertFalse(pricing["external"])
+        self.assertEqual(pricing["requester_type"], "CAMPUS")
+        self.assertEqual(pricing["total"], "0.00")
+
+    def test_internal_member_reservation_has_no_external_cost(self):
+        PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.FACILITY,
+            facility_type=Facility.FacilityType.CAFETERIA,
+            unit=PricingRule.Unit.FLAT,
+            unit_price="5000.00",
+            label="Cafeteria external fee",
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.post(RESERVATIONS_URL, self._payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        # No internal fee rules exist, and the external rule must not apply.
+        self.assertEqual(body["estimated_total"], "0.00")
+        self.assertEqual(body["fees"], [])
+        reservation = Reservation.objects.get(pk=body["id"])
+        self.assertEqual(reservation.fees.count(), 0)
+
+    def test_admin_can_filter_reservations_by_internal_organization(self):
+        self.client.force_authenticate(self.user)
+        created = self.client.post(RESERVATIONS_URL, self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+
+        other = User.objects.create_user(
+            username="no_org", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.client.force_authenticate(other)
+        second = self.client.post(
+            RESERVATIONS_URL,
+            self._payload(event_name="Other event", start_time="17:00", end_time="18:00"),
+            format="json",
+        )
+        self.assertEqual(second.status_code, 201, second.content)
+
+        self.client.force_authenticate(self.staff)
+        response = self.client.get(f"{RESERVATIONS_URL}?organization=CAS")
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        rows = data.get("results", data)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["organization"], "CAS — College of Arts and Sciences")

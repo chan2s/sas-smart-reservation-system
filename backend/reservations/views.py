@@ -39,10 +39,11 @@ def _trusted_requester_type(request, requested) -> str:
         return Reservation.RequesterType.CAMPUS
     if requested == Reservation.RequesterType.EXTERNAL and user.is_sas_staff:
         return Reservation.RequesterType.EXTERNAL
-    # External-organization members are priced as external for their own
-    # reservations regardless of what the client sent (their own profile
-    # decides, and an unverified organization is blocked entirely).
-    if user.is_external_organization and user.can_create_reservations:
+    # Everyone else is decided by the authenticated profile: only a member of
+    # an external, approved, active organization is priced as external.
+    # Internal managed organizations (CAS, CTED, …) always read as CAMPUS, so
+    # they never receive external facility/resource fees.
+    if user.trusted_requester_type == Reservation.RequesterType.EXTERNAL:
         return Reservation.RequesterType.EXTERNAL
     return Reservation.RequesterType.CAMPUS
 
@@ -79,6 +80,19 @@ class ReservationViewSet(viewsets.ModelViewSet):
         requester_type = params.get("requester_type")
         if requester_type:
             qs = qs.filter(requester_type=requester_type)
+        # Organization filter: a managed internal organization's acronym/code
+        # (CAS, CTED, …), or "EXTERNAL" for any external requester.
+        organization = (params.get("organization") or "").strip()
+        if organization and organization.lower() not in ("undefined", "null", "all"):
+            if organization.upper() == Reservation.RequesterType.EXTERNAL:
+                qs = qs.filter(requester_type=Reservation.RequesterType.EXTERNAL)
+            else:
+                from django.db.models import Q
+
+                qs = qs.filter(
+                    Q(organization_ref__acronym__iexact=organization)
+                    | Q(organization_ref__organization_code__iexact=organization)
+                )
         if params.get("date"):
             qs = qs.filter(date=params["date"])
         if params.get("from"):

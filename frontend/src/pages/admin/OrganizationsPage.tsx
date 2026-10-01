@@ -57,14 +57,19 @@ function rows(payload: { results?: Organization[] } | Organization[] | undefined
  */
 export function OrganizationsPage() {
   const { toast } = useToast()
+  const [scope, setScope] = useState<'EXTERNAL' | 'INTERNAL'>('EXTERNAL')
   const [status, setStatus] = useState<VerificationStatus | ''>('PENDING')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
 
+  const isInternalScope = scope === 'INTERNAL'
   const filters: OrganizationFilters = {
-    status: status || undefined,
+    status: isInternalScope ? undefined : status || undefined,
+    // The staff list hides managed INTERNAL organizations unless explicitly
+    // requested, so the tab must ask for them by type.
+    type: isInternalScope ? 'INTERNAL' : undefined,
     search: query || undefined,
   }
   const list = useOrganizations(filters)
@@ -95,31 +100,63 @@ export function OrganizationsPage() {
     <div className="mx-auto max-w-6xl">
       <PageHeader
         eyebrow="Administration"
-        title="External organizations"
-        description="Review registrations from organizations outside NORSU. Only approved organizations may submit facility reservations."
+        title={isInternalScope ? 'Internal organizations' : 'External organizations'}
+        description={
+          isInternalScope
+            ? 'The campus colleges and offices managed by SAS RESERVE. These are internal requesters and never pay external-organization fees.'
+            : 'Review registrations from organizations outside NORSU. Only approved organizations may submit facility reservations.'
+        }
       />
+
+      {/* Scope — internal campus organizations vs external registrations */}
+      <div className="mt-5 inline-flex rounded-full border border-line bg-surface p-0.5">
+        {(
+          [
+            ['EXTERNAL', 'External'],
+            ['INTERNAL', 'Internal'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => {
+              setScope(value)
+              setSelectedId(null)
+            }}
+            className={cn(
+              'rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors duration-150',
+              scope === value
+                ? 'bg-brand text-white shadow-sm'
+                : 'text-body hover:text-ink',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {/* Filters */}
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-1.5">
-          {STATUS_FILTERS.map((option) => (
-            <button
-              key={option.value || 'all'}
-              type="button"
-              onClick={() => {
-                setStatus(option.value)
-                setSelectedId(null)
-              }}
-              className={cn(
-                'rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-150',
-                status === option.value
-                  ? 'bg-brand text-white shadow-sm'
-                  : 'border border-line bg-surface text-body hover:bg-soft',
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
+          {!isInternalScope &&
+            STATUS_FILTERS.map((option) => (
+              <button
+                key={option.value || 'all'}
+                type="button"
+                onClick={() => {
+                  setStatus(option.value)
+                  setSelectedId(null)
+                }}
+                className={cn(
+                  'rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-150',
+                  status === option.value
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'border border-line bg-surface text-body hover:bg-soft',
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
         </div>
         <form
           className="relative sm:w-64"
@@ -175,14 +212,20 @@ export function OrganizationsPage() {
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium">
-                          {row.organization_name}
+                          {row.display_name ?? row.organization_name}
                         </span>
-                        <Badge tone={VERIFICATION_TONE[row.verification_status]}>
-                          {VERIFICATION_LABEL[row.verification_status]}
-                        </Badge>
+                        {row.is_internal ? (
+                          <Badge tone={row.is_active === false ? 'rose' : 'emerald'}>
+                            {row.status_label ?? (row.is_active === false ? 'Inactive' : 'Active')}
+                          </Badge>
+                        ) : (
+                          <Badge tone={VERIFICATION_TONE[row.verification_status]}>
+                            {VERIFICATION_LABEL[row.verification_status]}
+                          </Badge>
+                        )}
                       </span>
                       <span className="mt-0.5 block truncate text-xs text-muted">
-                        {row.organization_code} · {row.organization_type_label}
+                        {row.acronym || row.organization_code} · {row.organization_type_label}
                       </span>
                       <span className="mt-0.5 flex items-center gap-3 text-xs text-muted">
                         <span className="inline-flex items-center gap-1">
@@ -233,7 +276,7 @@ export function OrganizationsPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                      {organization.organization_code}
+                      {organization.acronym || organization.organization_code}
                     </p>
                     <h2 className="mt-1 text-xl font-semibold tracking-tight text-ink">
                       {organization.organization_name}
@@ -242,9 +285,16 @@ export function OrganizationsPage() {
                       {organization.organization_type_label}
                     </p>
                   </div>
-                  <Badge tone={VERIFICATION_TONE[organization.verification_status]}>
-                    {VERIFICATION_LABEL[organization.verification_status]}
-                  </Badge>
+                  {organization.is_internal ? (
+                    <Badge tone={organization.is_active === false ? 'rose' : 'emerald'}>
+                      {organization.status_label ??
+                        (organization.is_active === false ? 'Inactive' : 'Active')}
+                    </Badge>
+                  ) : (
+                    <Badge tone={VERIFICATION_TONE[organization.verification_status]}>
+                      {VERIFICATION_LABEL[organization.verification_status]}
+                    </Badge>
+                  )}
                 </div>
 
                 <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
@@ -329,8 +379,12 @@ export function OrganizationsPage() {
               {/* Decision */}
               <Card className="mt-6">
                 <CardHeader
-                  title="Verification decision"
-                  description="Approve to allow reservations. Suspending or rejecting blocks all reservations for these members."
+                  title={organization.is_internal ? 'Availability' : 'Verification decision'}
+                  description={
+                    organization.is_internal
+                      ? 'Deactivating hides this organization from registration and blocks new reservations for its members. Existing records are kept.'
+                      : 'Approve to allow reservations. Suspending or rejecting blocks all reservations for these members.'
+                  }
                 />
                 <div className="mt-4">
                   <label
@@ -348,51 +402,78 @@ export function OrganizationsPage() {
                     placeholder="Recorded in the audit log and shown to the organization."
                   />
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {organization.verification_status !== 'APPROVED' && (
-                    <Button
-                      size="sm"
-                      loading={verify.isPending}
-                      onClick={() => decide('approve')}
-                      icon={<Check className="size-4" />}
-                    >
-                      Approve
-                    </Button>
-                  )}
-                  {organization.verification_status === 'SUSPENDED' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      loading={verify.isPending}
-                      onClick={() => decide('reactivate')}
-                      icon={<RotateCcw className="size-4" />}
-                    >
-                      Reactivate
-                    </Button>
-                  )}
-                  {organization.verification_status !== 'REJECTED' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      loading={verify.isPending}
-                      onClick={() => decide('reject')}
-                      icon={<X className="size-4" />}
-                    >
-                      Reject
-                    </Button>
-                  )}
-                  {organization.verification_status === 'APPROVED' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      loading={verify.isPending}
-                      onClick={() => decide('suspend')}
-                      icon={<ShieldOff className="size-4" />}
-                    >
-                      Suspend
-                    </Button>
-                  )}
-                </div>
+                {organization.is_internal ? (
+                  /* Managed internal organizations are always approved and
+                     never deleted — staff only activate/deactivate them. */
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {organization.is_active === false ? (
+                      <Button
+                        size="sm"
+                        loading={verify.isPending}
+                        onClick={() => decide('reactivate')}
+                        icon={<RotateCcw className="size-4" />}
+                      >
+                        Reactivate
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={verify.isPending}
+                        onClick={() => decide('suspend')}
+                        icon={<ShieldOff className="size-4" />}
+                      >
+                        Deactivate
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {organization.verification_status !== 'APPROVED' && (
+                      <Button
+                        size="sm"
+                        loading={verify.isPending}
+                        onClick={() => decide('approve')}
+                        icon={<Check className="size-4" />}
+                      >
+                        Approve
+                      </Button>
+                    )}
+                    {organization.verification_status === 'SUSPENDED' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={verify.isPending}
+                        onClick={() => decide('reactivate')}
+                        icon={<RotateCcw className="size-4" />}
+                      >
+                        Reactivate
+                      </Button>
+                    )}
+                    {organization.verification_status !== 'REJECTED' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={verify.isPending}
+                        onClick={() => decide('reject')}
+                        icon={<X className="size-4" />}
+                      >
+                        Reject
+                      </Button>
+                    )}
+                    {organization.verification_status === 'APPROVED' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={verify.isPending}
+                        onClick={() => decide('suspend')}
+                        icon={<ShieldOff className="size-4" />}
+                      >
+                        Suspend
+                      </Button>
+                    )}
+                  </div>
+                )}
               </Card>
             </>
           )}

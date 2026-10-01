@@ -205,7 +205,12 @@ export function ReservationWizardPage() {
   // backend independently resolves the same value, so this is presentation
   // only — the field is locked to prevent "Bayawan NHS" → "Another Org".
   const accountOrganization = useMemo(() => {
-    const linked = user?.organization_ref?.organization_name?.trim()
+    // Managed internal organizations carry a display_name of the form
+    // "CAS — College of Arts and Sciences"; prefer it so the reservation
+    // snapshots a human-readable value rather than a bare acronym.
+    const linked =
+      user?.organization_ref?.display_name?.trim() ||
+      user?.organization_ref?.organization_name?.trim()
     return linked || user?.organization?.trim() || ''
   }, [user])
   const lockedOrganization = isAdmin

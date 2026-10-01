@@ -199,8 +199,25 @@ export function SettingsPage() {
           <Field label="Email" htmlFor="email" className="sm:col-span-2">
             <Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
           </Field>
-          <Field label="Organization" htmlFor="organization">
-            <Input id="organization" value={organization} onChange={(event) => setOrganization(event.target.value)} />
+          <Field
+            label="Organization"
+            htmlFor="organization"
+            hint={
+              user?.organization_ref
+                ? 'Linked to your account — change it under Affiliation below.'
+                : undefined
+            }
+          >
+            <Input
+              id="organization"
+              value={
+                user?.organization_ref?.display_name ??
+                user?.organization_ref?.organization_name ??
+                organization
+              }
+              onChange={(event) => setOrganization(event.target.value)}
+              disabled={Boolean(user?.organization_ref)}
+            />
           </Field>
           <div className="sm:col-span-2">
             <Button type="submit" loading={saving}>
@@ -229,11 +246,17 @@ export function SettingsPage() {
           <div className="rounded-xl border border-line p-3.5">
             <dt className="text-xs font-medium uppercase tracking-wide text-muted">Organization</dt>
             <dd className="mt-1 text-sm text-ink">
-              {user.organization_ref?.organization_name || user.organization || '—'}
+              {user.organization_ref?.display_name ||
+                user.organization_ref?.organization_name ||
+                user.organization ||
+                '—'}
               {user.organization_ref && (
                 <span className="block text-xs text-muted">
-                  {user.organization_ref.organization_code} ·{' '}
+                  {user.organization_ref.acronym || user.organization_ref.organization_code} ·{' '}
                   {user.organization_ref.organization_type_label}
+                  {user.organization_ref.is_internal && user.organization_ref.is_active === false
+                    ? ' · Inactive'
+                    : ''}
                 </span>
               )}
             </dd>

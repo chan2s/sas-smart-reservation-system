@@ -13,6 +13,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from accounts.models import Organization
 from equipment.models import (
     Equipment,
     EquipmentCategory,
@@ -121,6 +122,7 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        self.seed_organizations()
         self.seed_users()
         self.seed_facilities()
         self.seed_equipment()
@@ -131,6 +133,32 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("Seed complete."))
 
     # ------------------------------------------------------------------
+
+    def seed_organizations(self):
+        """The nine managed internal organizations (idempotent).
+
+        Mirrors the data migration so a fresh ``manage.py seed`` deployment
+        gets the same managed list. Keyed by acronym/organization_code, so it
+        never duplicates and never clobbers staff edits.
+        """
+        for acronym, name in Organization.INTERNAL_ORGANIZATIONS:
+            organization, created = Organization.objects.get_or_create(
+                organization_code=acronym,
+                defaults={
+                    "acronym": acronym,
+                    "organization_name": name,
+                    "organization_type": Organization.OrganizationType.INTERNAL,
+                    "verification_status": Organization.VerificationStatus.APPROVED,
+                    "is_active": True,
+                    "contact_person": name,
+                    "contact_email": "",
+                },
+            )
+            if created:
+                self.stdout.write(f"  + Organization: {acronym} — {name}")
+            elif not organization.acronym:
+                organization.acronym = acronym
+                organization.save(update_fields=["acronym"])
 
     def seed_users(self):
         if not User.objects.filter(username="admin").exists():

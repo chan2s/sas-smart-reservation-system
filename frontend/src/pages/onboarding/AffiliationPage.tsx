@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
-import { useMyAffiliation, useSetAffiliation } from '@/hooks/queries'
+import { useInternalOrganizations, useMyAffiliation, useSetAffiliation } from '@/hooks/queries'
 import { useToast } from '@/components/ui/Toast'
 import { PageHeader, Skeleton } from '@/components/ui/Misc'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -103,8 +103,10 @@ export function AffiliationPage() {
   const { data, isLoading } = useMyAffiliation()
   const setAffiliation = useSetAffiliation()
 
+  const { data: internalOrganizations } = useInternalOrganizations()
+
   const [choice, setChoice] = useState<Affiliation>('NORSU_STUDENT')
-  const [organizationText, setOrganizationText] = useState('')
+  const [internalOrganizationId, setInternalOrganizationId] = useState<number | ''>('')
   const [organization, setOrganization] = useState<OrganizationForm>(EMPTY_ORGANIZATION)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
@@ -112,14 +114,17 @@ export function AffiliationPage() {
   const existingOrganization = data?.organization ?? null
   const status = data?.organization_verification_status || ''
   // A user already attached to an organization may only refine that
-  // organization — the backend refuses a switch, so don't offer one.
+  // organization — the backend refuses an affiliation switch, so don't offer
+  // one. An internal user may however change which campus org they link to.
   const lockedToOrganization = Boolean(existingOrganization)
+  const linkedIsInternal = Boolean(existingOrganization?.is_internal)
 
   useEffect(() => {
     if (!data) return
-    setOrganizationText(data.organization_text ?? '')
     if (data.affiliation) setChoice(data.affiliation)
-    if (data.organization) {
+    if (data.organization?.is_internal) {
+      setInternalOrganizationId(data.organization.id)
+    } else if (data.organization) {
       setOrganization({
         organization_name: data.organization.organization_name,
         organization_type: data.organization.organization_type,
@@ -160,7 +165,10 @@ export function AffiliationPage() {
             // a different one); a rejected organization returns to Pending.
             ...organization,
           }
-        : { affiliation: choice, organization: organizationText.trim() }
+        : {
+            affiliation: choice,
+            organization_id: internalOrganizationId === '' ? null : internalOrganizationId,
+          }
 
       await setAffiliation.mutateAsync(payload)
       // Refresh the auth user so the profile, header, and wizard gating
@@ -218,7 +226,8 @@ export function AffiliationPage() {
                 {AFFILIATIONS.map((option) => {
                   const Icon = option.icon
                   const selected = choice === option.value
-                  const disabled = lockedToOrganization && option.value !== 'EXTERNAL_ORGANIZATION'
+                  const disabled =
+                    lockedToOrganization && option.value !== (data?.affiliation ?? '')
                   return (
                     <button
                       key={option.value}
@@ -258,24 +267,37 @@ export function AffiliationPage() {
 
               {lockedToOrganization && (
                 <p className="mt-3 text-xs text-muted">
-                  Your account is linked to {existingOrganization?.organization_name}. Contact the
-                  SAS Office if you need to change organizations.
+                  Your account is linked to{' '}
+                  {existingOrganization?.display_name ?? existingOrganization?.organization_name}.
+                  {linkedIsInternal
+                    ? ' You may still change which campus organization you belong to.'
+                    : ' Contact the SAS Office if you need to change organizations.'}
                 </p>
               )}
 
               {!isExternal && (
                 <div className="mt-5">
                   <Field
-                    label="Office / Department"
-                    htmlFor="affiliation-organization"
-                    hint="Optional — the NORSU college, office, or department you belong to."
+                    label="Organization"
+                    htmlFor="affiliation-organization-id"
+                    hint="Choose the NORSU college, office, or department you belong to."
                   >
-                    <Input
-                      id="affiliation-organization"
-                      value={organizationText}
-                      onChange={(event) => setOrganizationText(event.target.value)}
-                      placeholder="e.g. College of Engineering"
-                    />
+                    <Select
+                      id="affiliation-organization-id"
+                      value={internalOrganizationId}
+                      onChange={(event) =>
+                        setInternalOrganizationId(
+                          event.target.value ? Number(event.target.value) : '',
+                        )
+                      }
+                    >
+                      <option value="">Select your organization…</option>
+                      {(internalOrganizations ?? []).map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {organization.display_name}
+                        </option>
+                      ))}
+                    </Select>
                   </Field>
                 </div>
               )}

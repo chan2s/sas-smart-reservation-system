@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, Plus, Search } from 'lucide-react'
 import { format } from 'date-fns'
-import { useFacilities, useReservationCounts, useReservations } from '@/hooks/queries'
+import {
+  useFacilities,
+  useInternalOrganizations,
+  useReservationCounts,
+  useReservations,
+} from '@/hooks/queries'
+import { useAuth } from '@/hooks/useAuth'
 import { PageHeader, Skeleton, EmptyState } from '@/components/ui/Misc'
 import { Card } from '@/components/ui/Card'
 import { Tabs, type TabItem } from '@/components/ui/Tabs'
@@ -29,8 +35,11 @@ export function ReservationsPage() {
   const [search, setSearch] = useState('')
   const [facility, setFacility] = useState('')
   const [date, setDate] = useState('')
+  const [organization, setOrganization] = useState('')
+  const { isStaff } = useAuth()
   const { data: counts } = useReservationCounts()
   const { data: facilities } = useFacilities()
+  const { data: internalOrganizations } = useInternalOrganizations()
 
   const {
     data,
@@ -44,6 +53,7 @@ export function ReservationsPage() {
     search: search || undefined,
     facility: facility ? Number(facility) : undefined,
     date: date || undefined,
+    organization: organization || undefined,
     ordering: '-date,-start_time',
   })
 
@@ -172,13 +182,30 @@ export function ReservationsPage() {
               aria-label="Filter by date"
               className="w-full md:w-auto"
             />
-            {(search || facility || date || requesterType !== 'ALL') && (
+            {isStaff && (
+              <Select
+                value={organization}
+                onChange={(event) => setOrganization(event.target.value)}
+                aria-label="Filter by organization"
+                className="w-full md:w-auto"
+              >
+                <option value="">All organizations</option>
+                {(internalOrganizations ?? []).map((item) => (
+                  <option key={item.id} value={item.acronym}>
+                    {item.display_name}
+                  </option>
+                ))}
+                <option value="EXTERNAL">External organizations</option>
+              </Select>
+            )}
+            {(search || facility || date || organization || requesterType !== 'ALL') && (
               <Button
                 variant="ghost"
                 onClick={() => {
                   setSearch('')
                   setFacility('')
                   setDate('')
+                  setOrganization('')
                   setRequesterType('ALL')
                 }}
               >
@@ -201,12 +228,19 @@ export function ReservationsPage() {
           <EmptyState
             title="No reservations found"
             description={
-              search || facility || date || status !== 'ALL' || requesterType !== 'ALL'
+              search || facility || date || status !== 'ALL' || requesterType !== 'ALL' || organization
                 ? 'Try adjusting your filters, or create a new reservation.'
                 : 'Reservation requests will appear here once submitted.'
             }
             action={
-              !(search || facility || date || status !== 'ALL' || requesterType !== 'ALL') ? (
+              !(
+                search ||
+                facility ||
+                date ||
+                status !== 'ALL' ||
+                requesterType !== 'ALL' ||
+                organization
+              ) ? (
                 <Button size="sm" onClick={() => navigate('/reservations/new')}>
                   Create reservation
                 </Button>

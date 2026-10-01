@@ -144,7 +144,7 @@ export function DashboardPage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader
-            title="Today's reservations"
+            title={isStaff ? "Today's reservations" : "Your Reservations"}
             description={
               summary?.today_date
                 ? format(new Date(`${summary.today_date}T00:00:00`), 'EEEE, MMMM d, yyyy')
@@ -166,8 +166,10 @@ export function DashboardPage() {
             </div>
           ) : today.length === 0 ? (
             <EmptyState
-              title="No reservations today"
-              description="The facility calendar is clear — create a reservation to get started."
+              title={isStaff ? "No reservations today" : "You don't have any reservations yet."}
+              description={isStaff
+                ? "The facility calendar is clear — create a reservation to get started."
+                : "When you book a reservation, it will appear here with its current status."}
               action={
                 <Button size="sm" onClick={() => navigate('/reservations/new')}>
                   Create reservation
