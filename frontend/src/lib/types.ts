@@ -182,6 +182,9 @@ export interface FacilityAvailability {
   available?: boolean
 }
 
+/** How a facility is physically seated (null means not verified yet). */
+export type SeatingType = 'tables_and_chairs' | 'fixed_rows' | 'open_floor'
+
 export interface Facility {
   id: number
   name: string
@@ -192,6 +195,13 @@ export interface Facility {
   location: string
   image: string | null
   rules: string[]
+  /** Drives the wizard's resource suggestions; null when unverified. */
+  seating_type: SeatingType | null
+  seating_type_label: string
+  /** Seats the facility already provides at its own tables/fixed rows. */
+  built_in_seats: number | null
+  /** Tokens such as `tables`, `chairs`, `projector`, `sound_system`, `stage`. */
+  built_ins: string[]
   status: FacilityStatus
   status_label: string
   is_active: boolean

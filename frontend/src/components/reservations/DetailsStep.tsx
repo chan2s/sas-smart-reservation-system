@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertTriangle, Pencil, Plus, Sparkles } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Pencil, Plus, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -45,6 +45,7 @@ export function DetailsStep({
   facilityName,
   suggestions,
   suggestionsLoading,
+  included,
   items,
   onQuantity,
   onToggleSuggestion,
@@ -66,6 +67,8 @@ export function DetailsStep({
   facilityName: string
   suggestions: SuggestedResource[]
   suggestionsLoading: boolean
+  /** Items the facility already provides ("Cafeteria already provides Tables, Chairs."). */
+  included: string[]
   items: Record<number, number>
   onQuantity: (equipmentId: number, quantity: number, available: number) => void
   onToggleSuggestion: (equipmentId: number, checked: boolean, suggestedQuantity: number) => void
@@ -148,7 +151,8 @@ export function DetailsStep({
   // Additional (non-suggested) resources the requester picked — kept visible
   // even while the full picker is collapsed.
   const selectedExtras = equipment.filter((item) => (items[item.id] ?? 0) > 0)
-  const showSuggestions = suggestionsLoading || suggestions.length > 0
+  const unverifiedSeating = suggestions.some((suggestion) => suggestion.unverified)
+  const showSuggestions = suggestionsLoading || suggestions.length > 0 || included.length > 0
   const contactComplete = Boolean(contact.name.trim()) && isValidPhMobile(contact.phone)
 
   return (
@@ -389,21 +393,54 @@ export function DetailsStep({
             <div>
               <h3 className="text-[17px] font-semibold text-ink">Suggested resources</h3>
               <p className="mt-1 text-sm text-body">
-                Based on your event type and participant count. Uncheck anything you don&apos;t
-                need — your changes are kept if you edit the details again.
+                Based on your event type, participant count, and what
+                {facilityName ? ` ${facilityName} ` : ' the facility '}already provides. Uncheck
+                anything you don&apos;t need — your changes are kept if you edit the details again.
               </p>
             </div>
             <Sparkles className="mt-1 size-4 shrink-0 text-brand" aria-hidden />
           </div>
 
-          {suggestions.length === 0 ? (
+          {/* What the facility itself supplies is never offered as an extra:
+              it is reported here, read-only. */}
+          {included.length > 0 && (
+            <p className="mt-4 flex items-start gap-2 rounded-xl border border-line bg-soft/70 px-3.5 py-2.5 text-[13px] text-body">
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-status-available" aria-hidden />
+              <span>
+                <span className="font-medium text-ink">Included:</span>{' '}
+                {facilityName || 'This facility'} already provides {included.join(', ')}.
+              </span>
+            </p>
+          )}
+
+          {unverifiedSeating && (
+            <p className="mt-3 text-[13px] text-muted">
+              Seating for {facilityName || 'this facility'} has not been verified — Chairs and
+              Tables are unchecked. Add the seating you actually need.
+            </p>
+          )}
+
+          {suggestionsLoading && suggestions.length === 0 ? (
             <div className="mt-4 h-16 animate-pulse rounded-xl bg-soft" aria-hidden />
+          ) : suggestions.length === 0 ? (
+            included.length > 0 && (
+              <p className="mt-4 text-sm text-muted">
+                Everything this event needs is already provided by the facility. Add anything else
+                from the equipment list below.
+              </p>
+            )
           ) : (
             <ul className="mt-4 divide-y divide-line">
               {suggestions.map((suggestion) => {
                 const quantity = items[suggestion.equipmentId] ?? 0
                 const checked = quantity > 0
                 const unavailable = suggestion.available <= 0
+                // The badge must never claim one number while the row holds
+                // another: an edited row says so, an untouched smart pick
+                // states its suggested quantity. A checked-by-default row that
+                // was unchecked counts as edited; an opt-in row left untouched
+                // (or accepted as suggested) does not.
+                const edited = checked ? quantity !== suggestion.quantity : suggestion.checkedByDefault
                 return (
                   <li key={suggestion.equipmentId} className="flex items-start gap-3 py-3">
                     <input
@@ -426,11 +463,15 @@ export function DetailsStep({
                     >
                       <span className="flex flex-wrap items-center gap-1.5">
                         <span className="text-sm font-medium text-ink">{suggestion.name}</span>
-                        {suggestion.source === 'RECOMMENDER' && (
+                        {suggestion.unverified && <Badge tone="amber">Unverified</Badge>}
+                        {edited ? (
+                          <Badge tone="sky">Edited</Badge>
+                        ) : suggestion.source === 'RECOMMENDER' ? (
                           <Badge tone="brand">
-                            <Sparkles className="size-3" aria-hidden /> Smart pick
+                            <Sparkles className="size-3" aria-hidden /> Smart pick ·{' '}
+                            {suggestion.quantity}
                           </Badge>
-                        )}
+                        ) : null}
                       </span>
                       <span className="mt-0.5 block text-xs text-muted">
                         {suggestion.reason}

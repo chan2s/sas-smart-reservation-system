@@ -10,6 +10,18 @@ class Facility(models.Model):
         OUTDOOR = "OUTDOOR", "Outdoor Area"
         OTHER = "OTHER", "Other"
 
+    class SeatingType(models.TextChoices):
+        """How the space is physically seated.
+
+        Drives the reservation wizard's resource suggestions: a dining hall
+        already has tables and chairs, so only the seating gap above its own
+        seats should ever be suggested as extra equipment.
+        """
+
+        TABLES_AND_CHAIRS = "tables_and_chairs", "Tables and chairs"
+        FIXED_ROWS = "fixed_rows", "Fixed rows"
+        OPEN_FLOOR = "open_floor", "Open floor"
+
     class Status(models.TextChoices):
         OPERATIONAL = "OPERATIONAL", "Operational"
         MAINTENANCE = "MAINTENANCE", "Under Maintenance"
@@ -23,6 +35,35 @@ class Facility(models.Model):
     location = models.CharField(max_length=160, blank=True)
     image = models.ImageField(upload_to="facilities/", blank=True, null=True)
     rules = models.JSONField(default=list, blank=True)
+    # ---- Physical reality of the space (optional reference data) --------
+    # All three fields are nullable/blank so every pre-existing facility keeps
+    # working untouched: a null seating_type means "not verified yet", and the
+    # wizard then asks the requester to choose seating themselves.
+    seating_type = models.CharField(
+        max_length=32,
+        choices=SeatingType.choices,
+        blank=True,
+        null=True,
+        default=None,
+        help_text="How the space is seated. Leave empty when unverified.",
+    )
+    built_in_seats = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        default=None,
+        help_text=(
+            "Seats the space already provides at tables/fixed rows. Leave "
+            "empty when it has no fixed seating or is unverified."
+        ),
+    )
+    built_ins = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            'Items the space already provides, e.g. '
+            '["tables", "chairs", "projector", "sound_system", "stage", "podium"].'
+        ),
+    )
     status = models.CharField(
         max_length=32, choices=Status.choices, default=Status.OPERATIONAL
     )

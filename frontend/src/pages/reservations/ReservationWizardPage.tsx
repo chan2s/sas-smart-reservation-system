@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Stepper } from '@/components/reservations/Stepper'
 import { DetailsStep } from '@/components/reservations/DetailsStep'
 import type { OperatorConfig } from '@/components/reservations/OtherEquipmentPicker'
+import type { FacilitySeatingMetadata } from '@/components/reservations/resourceSuggestions'
 import {
   StepFacility,
   StepSchedule,
@@ -282,7 +283,21 @@ export function ReservationWizardPage() {
   // ------------------------------------------------------------------
   // Suggested resources (rule config + the backend recommender)
   // ------------------------------------------------------------------
-  const { suggestions, loading: suggestionsLoading } = useSuggestedResources({
+  // What the chosen facility already provides, so suggestions subtract it.
+  const facilityMetadata = useMemo<FacilitySeatingMetadata>(
+    () => ({
+      seatingType: facility?.seating_type ?? null,
+      builtInSeats: facility?.built_in_seats ?? null,
+      builtIns: facility?.built_ins ?? [],
+    }),
+    [facility],
+  )
+
+  const {
+    suggestions,
+    included,
+    loading: suggestionsLoading,
+  } = useSuggestedResources({
     // Only fetch while the step that shows the suggestions is on screen — the
     // recommender takes the free-text purpose/notes, so it must not fire on
     // every keystroke while the requester is still on an earlier step.
@@ -290,6 +305,7 @@ export function ReservationWizardPage() {
     eventType: details.eventType,
     participants,
     equipment,
+    facility: facilityMetadata,
     facilityId,
     dateISO,
     startTime,
@@ -311,9 +327,11 @@ export function ReservationWizardPage() {
       const next = { ...current }
       for (const suggestion of suggestions) {
         if (userEditedItems.has(suggestion.equipmentId)) continue
-        if (suggestion.quantity > 0) {
-          if (next[suggestion.equipmentId] !== suggestion.quantity) {
-            next[suggestion.equipmentId] = suggestion.quantity
+        // Rows the requester must opt into (unverified seating) seed to zero.
+        const target = suggestion.checkedByDefault ? suggestion.quantity : 0
+        if (target > 0) {
+          if (next[suggestion.equipmentId] !== target) {
+            next[suggestion.equipmentId] = target
             changed = true
           }
         } else if (next[suggestion.equipmentId]) {
@@ -866,6 +884,7 @@ export function ReservationWizardPage() {
             facilityName={facility?.name ?? ''}
             suggestions={suggestions}
             suggestionsLoading={suggestionsLoading}
+            included={included}
             items={items}
             onQuantity={setQuantity}
             onToggleSuggestion={toggleSuggestion}

@@ -41,6 +41,12 @@ FACILITIES = [
         ),
         "capacity": 2000,
         "location": "Main Building, Ground Floor",
+        # Open court floor: the space itself provides no seating, so chairs are
+        # suggested per participant. "bleachers" is informational only — it does
+        # not suppress any suggestion (spectators sit there during sports).
+        "seating_type": Facility.SeatingType.OPEN_FLOOR,
+        "built_in_seats": None,
+        "built_ins": ["bleachers"],
         "rules": [
             "Rubber-soled shoes only on the court floor",
             "Food and drinks are not allowed on the court area",
@@ -58,6 +64,11 @@ FACILITIES = [
         ),
         "capacity": 500,
         "location": "Student Center, Ground Floor",
+        # A dining space: it already seats 300 at its own tables and chairs, so
+        # extra seating is only suggested above that.
+        "seating_type": Facility.SeatingType.TABLES_AND_CHAIRS,
+        "built_in_seats": 300,
+        "built_ins": ["tables", "chairs"],
         "rules": [
             "Outside catering requires prior coordination with SAS",
             "Tables and chairs must be rearranged back to default layout",
@@ -74,6 +85,12 @@ FACILITIES = [
         ),
         "capacity": 120,
         "location": "Academic Building, 2nd Floor",
+        # Its own movable chairs seat the full capacity; the 4K projector and
+        # surround sound are built in (never suggested, shown as "included").
+        # Microphones are NOT built in, so they stay suggestible.
+        "seating_type": Facility.SeatingType.TABLES_AND_CHAIRS,
+        "built_in_seats": 120,
+        "built_ins": ["projector", "sound_system"],
         "rules": [
             "Only SAS-trained operators may handle the projector system",
             "Keep the room dimmed when using the projector",
@@ -205,10 +222,15 @@ class Command(BaseCommand):
                     "capacity": data["capacity"],
                     "location": data["location"],
                     "rules": data["rules"],
+                    "seating_type": data.get("seating_type"),
+                    "built_in_seats": data.get("built_in_seats"),
+                    "built_ins": data.get("built_ins", []),
                 },
             )
             if created:
                 self.stdout.write(f"  + Facility: {facility.name}")
+            elif self._backfill_seating_metadata(facility, data):
+                self.stdout.write(f"  ~ Facility seating metadata: {facility.name}")
             for day in range(7):
                 OperatingHour.objects.get_or_create(
                     facility=facility,
@@ -218,6 +240,28 @@ class Command(BaseCommand):
                         "close_time": time(22, 0) if day < 5 else time(18, 0),
                     },
                 )
+
+    def _backfill_seating_metadata(self, facility, data):
+        """Fill in seating metadata on an existing facility row.
+
+        Only ever fills a value that is still unset, so re-running the seed
+        cannot overwrite an administrator's own seating details. Returns True
+        when something changed.
+        """
+        fields = []
+        if facility.seating_type is None and data.get("seating_type"):
+            facility.seating_type = data["seating_type"]
+            fields.append("seating_type")
+        if facility.built_in_seats is None and data.get("built_in_seats") is not None:
+            facility.built_in_seats = data["built_in_seats"]
+            fields.append("built_in_seats")
+        if not facility.built_ins and data.get("built_ins"):
+            facility.built_ins = data["built_ins"]
+            fields.append("built_ins")
+        if not fields:
+            return False
+        facility.save(update_fields=[*fields, "updated_at"])
+        return True
 
     def seed_equipment(self):
         for category_name, icon, items in EQUIPMENT:

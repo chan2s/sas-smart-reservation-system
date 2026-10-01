@@ -59,12 +59,17 @@ class FacilityAdmin(admin.ModelAdmin):
         "name",
         "facility_type",
         "capacity",
+        "seating_type",
+        "built_in_seats",
         "status",
         "is_active",
         "manage_equipment_link",
     )
-    list_filter = ("facility_type", "status")
+    list_filter = ("facility_type", "seating_type", "status")
     search_fields = ("name", "location")
+    # ``seating_type`` / ``built_in_seats`` / ``built_ins`` are plain model
+    # fields, so they are editable on the change form. ``built_ins`` expects a
+    # JSON list of tokens, e.g. ["tables", "chairs", "projector"].
     inlines = [FacilityImageInline, FacilityResourceInline, OperatingHourInline]
 
     # ------------------------------------------------------------------
