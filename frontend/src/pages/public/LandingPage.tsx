@@ -21,7 +21,6 @@ import { useEquipment, useEquipmentStats, useFacilities } from '@/hooks/queries'
 import { getEquipmentImageUrl, cn } from '@/lib/utils'
 import { BrandMark } from '@/components/auth/AuthPanel'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
-import heroVideo from '@/assets/0625.mp4'
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -611,7 +610,8 @@ export function LandingPage() {
           className="absolute inset-0 h-full w-full object-cover"
           aria-hidden
         >
-          <source src={heroVideo} type="video/mp4" />
+          {/* <source src={heroVideo} type="video/mp4" /> */}
+          <source src="https://res.cloudinary.com/ggcgrmaw/video/upload/v1790867012/0625-compressed.mp4" />
         </video>
 
         <div
