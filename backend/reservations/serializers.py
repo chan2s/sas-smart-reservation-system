@@ -176,6 +176,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "organization_type_label",
             "contact_person",
             "contact_email",
+            "contact_phone",
             "created_by_name",
             "expected_participants",
             "special_requirements",
@@ -235,6 +236,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         )
         if not (is_staff or is_own):
             data["contact_email"] = ""
+            data["contact_phone"] = ""
             # Fee breakdown is private to the requester and SAS staff.
             data["fees"] = []
             data["estimated_total"] = "0.00"
@@ -470,6 +472,16 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         required=False, allow_blank=True, default=""
     )
     notes = serializers.CharField(required=False, allow_blank=True, default="")
+    # Optional contact mobile number. Deliberately lenient (any value up to 20
+    # characters): the requester UI enforces Philippine mobile format, and
+    # legacy/SAS-staff-created reservations may legitimately omit it.
+    contact_phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20,
+        default=None,
+    )
 
     class Meta:
         model = Reservation
@@ -487,6 +499,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "expected_participants",
             "contact_person",
             "contact_email",
+            "contact_phone",
             "special_requirements",
             "notes",
             "items",

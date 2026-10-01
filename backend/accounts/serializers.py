@@ -124,12 +124,9 @@ class OrganizationRegistrationSerializer(serializers.ModelSerializer):
 
 # Affiliations that represent an internal (campus) user. These may link to a
 # managed INTERNAL organization; an EXTERNAL_ORGANIZATION affiliation never
-# may, and vice versa.
-INTERNAL_AFFILIATIONS = (
-    User.Affiliation.NORSU_STUDENT,
-    User.Affiliation.NORSU_FACULTY_STAFF,
-    User.Affiliation.NORSU_OFFICE,
-)
+# may, and vice versa. Internal organizations are represented by an authorized
+# faculty/staff member, so NORSU_OFFICE is no longer a selectable affiliation.
+INTERNAL_AFFILIATIONS = (User.Affiliation.NORSU_FACULTY_STAFF,)
 
 
 def resolve_internal_organization(value):
@@ -167,7 +164,9 @@ class AffiliationUpdateSerializer(serializers.Serializer):
     organization by id; the backend validates its type and active state.
     """
 
-    affiliation = serializers.ChoiceField(choices=User.Affiliation.choices)
+    affiliation = serializers.ChoiceField(
+        choices=User.selectable_affiliation_choices()
+    )
     organization = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -182,7 +181,7 @@ class AffiliationUpdateSerializer(serializers.Serializer):
     # External organization registration fields.
     organization_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
     organization_type = serializers.ChoiceField(
-        choices=Organization.OrganizationType.choices, required=False
+        choices=Organization.external_type_choices(), required=False
     )
     contact_person = serializers.CharField(required=False, allow_blank=True, max_length=120)
     contact_email = serializers.EmailField(required=False, allow_blank=True)
@@ -303,7 +302,9 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     password = serializers.CharField(write_only=True, min_length=8)
     affiliation = serializers.ChoiceField(
-        choices=User.Affiliation.choices, required=False, allow_blank=True
+        choices=User.selectable_affiliation_choices(),
+        required=False,
+        allow_blank=True,
     )
     # Managed internal organization (id) selected from the seeded list. The
     # backend re-reads its type; the client never supplies a type here.
@@ -311,7 +312,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     # External organization registration fields.
     organization_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
     organization_type = serializers.ChoiceField(
-        choices=Organization.OrganizationType.choices, required=False, allow_blank=True
+        choices=Organization.external_type_choices(),
+        required=False,
+        allow_blank=True,
     )
     contact_person = serializers.CharField(required=False, allow_blank=True, max_length=120)
     contact_email = serializers.EmailField(required=False, allow_blank=True)

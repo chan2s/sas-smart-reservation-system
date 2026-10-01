@@ -20,10 +20,13 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 Input.displayName = 'Input'
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
-  ({ className, ...props }, ref) => (
+  ({ className, rows, ...props }, ref) => (
     <textarea
       ref={ref}
-      className={cn(controlClasses, 'min-h-[96px] py-2.5 leading-relaxed', className)}
+      rows={rows}
+      // An explicit row count wins over the roomy default height, so a compact
+      // 2-row field is exactly as tall as it claims to be.
+      className={cn(controlClasses, 'py-2.5 leading-relaxed', rows ? null : 'min-h-[96px]', className)}
       {...props}
     />
   ),
@@ -70,7 +73,9 @@ export function Field({
       </label>
       {children}
       {error ? (
-        <p className="text-xs text-status-rejected">{error}</p>
+        <p id={htmlFor ? `${htmlFor}-error` : undefined} className="text-xs text-status-rejected">
+          {error}
+        </p>
       ) : hint ? (
         <p className="text-xs text-muted">{hint}</p>
       ) : null}

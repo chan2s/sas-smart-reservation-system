@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  Building2,
-  Check,
-  GraduationCap,
-  Landmark,
-  Briefcase,
-  ArrowRight,
-} from 'lucide-react'
+import { Building2, Check, Briefcase, ArrowRight } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { useInternalOrganizations, useMyAffiliation, useSetAffiliation } from '@/hooks/queries'
@@ -23,31 +16,24 @@ import {
   VERIFICATION_TONE,
 } from '@/components/organizations/OrganizationStatusNotice'
 import { cn } from '@/lib/utils'
-import type { Affiliation, ExternalOrganizationType } from '@/lib/types'
+import {
+  SELECTABLE_AFFILIATIONS,
+  type ExternalOrganizationType,
+  type SelectableAffiliation,
+} from '@/lib/types'
 
 const AFFILIATIONS: {
-  value: Affiliation
+  value: SelectableAffiliation
   label: string
   description: string
-  icon: typeof GraduationCap
+  icon: typeof Briefcase
 }[] = [
-  {
-    value: 'NORSU_STUDENT',
-    label: 'NORSU Student',
-    description: 'Enrolled student reserving facilities for academic events.',
-    icon: GraduationCap,
-  },
   {
     value: 'NORSU_FACULTY_STAFF',
     label: 'NORSU Faculty/Staff',
-    description: 'Teaching or non-teaching personnel of the university.',
+    description:
+      'Teaching or non-teaching personnel authorized to make reservations on behalf of their college or organization.',
     icon: Briefcase,
-  },
-  {
-    value: 'NORSU_OFFICE',
-    label: 'NORSU Office/Department',
-    description: 'An office, college, or department booking on its behalf.',
-    icon: Landmark,
   },
   {
     value: 'EXTERNAL_ORGANIZATION',
@@ -105,7 +91,7 @@ export function AffiliationPage() {
 
   const { data: internalOrganizations } = useInternalOrganizations()
 
-  const [choice, setChoice] = useState<Affiliation>('NORSU_STUDENT')
+  const [choice, setChoice] = useState<SelectableAffiliation>('NORSU_FACULTY_STAFF')
   const [internalOrganizationId, setInternalOrganizationId] = useState<number | ''>('')
   const [organization, setOrganization] = useState<OrganizationForm>(EMPTY_ORGANIZATION)
   const [submitting, setSubmitting] = useState(false)
@@ -121,7 +107,14 @@ export function AffiliationPage() {
 
   useEffect(() => {
     if (!data) return
-    if (data.affiliation) setChoice(data.affiliation)
+    // Only mirror a selectable affiliation. A legacy NORSU Student record is
+    // left as-is in the database, but is no longer offered here.
+    if (
+      data.affiliation &&
+      SELECTABLE_AFFILIATIONS.includes(data.affiliation as SelectableAffiliation)
+    ) {
+      setChoice(data.affiliation as SelectableAffiliation)
+    }
     if (data.organization?.is_internal) {
       setInternalOrganizationId(data.organization.id)
     } else if (data.organization) {
@@ -278,9 +271,9 @@ export function AffiliationPage() {
               {!isExternal && (
                 <div className="mt-5">
                   <Field
-                    label="Organization"
+                    label="Organization / College"
                     htmlFor="affiliation-organization-id"
-                    hint="Choose the NORSU college, office, or department you belong to."
+                    hint="Choose the organization you are authorized to represent."
                   >
                     <Select
                       id="affiliation-organization-id"

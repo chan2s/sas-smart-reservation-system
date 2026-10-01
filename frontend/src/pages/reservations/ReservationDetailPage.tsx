@@ -433,6 +433,13 @@ export function ReservationDetailPage() {
                   )}
                 </dl>
               )}
+            {/* Contact number of the person who filed the reservation.
+                Reservations created before the field existed have none. */}
+            {reservation.contact_phone && (
+              <dl className="mt-4 space-y-2.5 text-sm">
+                <DetailItem label="Contact phone" value={reservation.contact_phone} />
+              </dl>
+            )}
             <dl className="mt-4 space-y-2.5 text-sm">
               <DetailItem label="Submitted" value={formatDateTime(reservation.created_at)} />
               {reservation.created_by_name && (

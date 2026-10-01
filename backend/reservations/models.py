@@ -406,6 +406,10 @@ class Reservation(models.Model):
     purpose = models.CharField(max_length=200, blank=True)
     expected_participants = models.PositiveIntegerField(default=0)
     contact_person = models.CharField(max_length=120, blank=True)
+    # Optional mobile number of the contact person (Philippine mobile format,
+    # validated by the UI). Nullable because every reservation created before
+    # this field existed has no number — the UI must tolerate a null value.
+    contact_phone = models.CharField(max_length=20, null=True, blank=True)
     special_requirements = models.TextField(blank=True)
 
     facility = models.ForeignKey(

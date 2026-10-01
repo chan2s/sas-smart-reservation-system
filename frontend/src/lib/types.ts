@@ -20,12 +20,31 @@ export interface ChatbotResponse {
   }
 }
 
-/** How a person is affiliated with NORSU. Blank = not yet chosen. */
+/** How a person is affiliated with NORSU. Blank = not yet chosen.
+ *
+ * `NORSU_STUDENT` and `NORSU_OFFICE` are retained for existing records only —
+ * they are no longer offered on registration/onboarding and cannot be
+ * submitted. Internal organizations are represented by an authorized
+ * faculty/staff member, so new selections are limited to
+ * `SelectableAffiliation`.
+ */
 export type Affiliation =
   | 'NORSU_STUDENT'
   | 'NORSU_FACULTY_STAFF'
   | 'NORSU_OFFICE'
   | 'EXTERNAL_ORGANIZATION'
+
+/** Affiliations a user may newly choose. */
+export type SelectableAffiliation = 'NORSU_FACULTY_STAFF' | 'EXTERNAL_ORGANIZATION'
+
+/** The affiliations offered on registration/onboarding, in display order. */
+export const SELECTABLE_AFFILIATIONS: SelectableAffiliation[] = [
+  'NORSU_FACULTY_STAFF',
+  'EXTERNAL_ORGANIZATION',
+]
+
+/** Selectable affiliations that belong to a managed campus organization. */
+export const INTERNAL_AFFILIATIONS: SelectableAffiliation[] = ['NORSU_FACULTY_STAFF']
 
 /** Organization types for external organizations (distinct from
  *  `OrganizationType`, which is the reservation requester snapshot). */
@@ -503,6 +522,8 @@ export interface ReservationSummary {
   expected_participants: number
   contact_person: string
   contact_email: string
+  /** Contact mobile number, or null for reservations created before the field existed. */
+  contact_phone: string | null
   created_by_name: string
   special_requirements: string
   facility: string

@@ -500,7 +500,7 @@ class InternalOrganizationReservationTests(TestCase):
             last_name="Santos",
             email="maria@norsu.edu.ph",
         )
-        self.user.affiliation = User.Affiliation.NORSU_STUDENT
+        self.user.affiliation = User.Affiliation.NORSU_FACULTY_STAFF
         self.user.organization_ref = self.organization
         self.user.save(update_fields=["affiliation", "organization_ref"])
 

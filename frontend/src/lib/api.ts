@@ -429,6 +429,8 @@ export interface CreateReservationPayload {
   expected_participants: number
   contact_person: string
   contact_email?: string
+  /** Optional contact mobile number (PH mobile format). Null for old rows. */
+  contact_phone?: string | null
   special_requirements: string
   notes: string
   items: { equipment_id: number; quantity: number; operator?: boolean }[]

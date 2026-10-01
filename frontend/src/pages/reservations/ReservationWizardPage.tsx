@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import {
-  ArrowLeft,
-  ArrowRight,
-  Building2,
-  CheckCircle2,
-  Search,
-  Users,
-} from 'lucide-react'
+import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Search, Users } from 'lucide-react'
 import { format } from 'date-fns'
 import {
   useAvailabilityCheck,
@@ -15,8 +8,9 @@ import {
   useCreateReservation,
   useFacilities,
   useFacilityResources,
-  useRecommendResources,
+  useReservations,
 } from '@/hooks/queries'
+import { useSuggestedResources } from '@/hooks/useSuggestedResources'
 import { useToast } from '@/components/ui/Toast'
 import { ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
@@ -24,18 +18,29 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Input, Select } from '@/components/ui/Form'
 import { Badge } from '@/components/ui/Badge'
 import { Stepper } from '@/components/reservations/Stepper'
+import { DetailsStep } from '@/components/reservations/DetailsStep'
+import type { OperatorConfig } from '@/components/reservations/OtherEquipmentPicker'
 import {
   StepFacility,
   StepSchedule,
-  StepDetails,
-  StepResources,
   StepReview,
   ConfirmationRow,
   AVAILABILITY_STATUS_MESSAGE,
   type AvailabilityStatus,
-  type EventDetails,
-  type OperatorConfig,
 } from '@/components/reservations/wizard-steps'
+import {
+  EMPTY_DETAILS,
+  clearDraft,
+  loadDraft,
+  missingFieldLabels,
+  reservationFieldErrors,
+  saveDraft,
+  toCreateReservationPayload,
+  type ContactDraft,
+  type EventDetailsDraft,
+  type SubmitItems,
+  type WizardDraft,
+} from '@/lib/reservationDraft'
 import { useAuth } from '@/hooks/useAuth'
 import { OrganizationStatusNotice } from '@/components/organizations/OrganizationStatusNotice'
 import { cn, formatTime } from '@/lib/utils'
@@ -44,37 +49,27 @@ import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
   CampusUserOption,
-  Recommendation,
   ReservationDetail,
   ReservableResource,
 } from '@/lib/types'
 
+/**
+ * The four-step reservation flow (staff see an extra "Requester" step first).
+ *
+ * Details and Resources are ONE step: the event form sits above the suggested
+ * resources, so nothing captured in a previous step is ever asked for again.
+ * Facility / date / time reappear only as a read-only summary on Review.
+ */
 const CAMPUS_STEPS = [
   { key: 'facility', label: 'Facility' },
   { key: 'schedule', label: 'Schedule' },
-  { key: 'details', label: 'Event Details' },
-  { key: 'resources', label: 'Resources' },
+  { key: 'details', label: 'Details & Resources' },
   { key: 'review', label: 'Review' },
 ]
 
-const ADMIN_STEPS = [
-  { key: 'requester', label: 'Requester' },
-  ...CAMPUS_STEPS,
-]
+const ADMIN_STEPS = [{ key: 'requester', label: 'Requester' }, ...CAMPUS_STEPS]
 
 type StepKey = (typeof ADMIN_STEPS)[number]['key']
-
-const EMPTY_DETAILS: EventDetails = {
-  event_name: '',
-  event_type: 'SEMINAR',
-  organization: '',
-  purpose: '',
-  description: '',
-  expected_participants: '',
-  contact_person: '',
-  special_requirements: '',
-  notes: '',
-}
 
 const EMPTY_EXTERNAL = {
   organization: '',
@@ -87,30 +82,62 @@ export function ReservationWizardPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
 
-  const [step, setStep] = useState(0)
-  const [facilityId, setFacilityId] = useState<number | null>(() => {
+  // A refresh must not wipe the wizard: the draft is restored from
+  // sessionStorage on mount and written back on every change below.
+  // A `?facility=` link from a facility page wins over the draft — but only
+  // its facility-scoped selections are then dropped (they belong elsewhere).
+  const initial = useMemo(() => {
+    const draft = loadDraft()
     const param = searchParams.get('facility')
-    return param ? Number(param) : null
-  })
-  const [date, setDate] = useState<Date | null>(null)
-  const [startTime, setStartTime] = useState('')
-  const [endTime, setEndTime] = useState('')
-  const [details, setDetails] = useState<EventDetails>(EMPTY_DETAILS)
-  const [items, setItems] = useState<Record<number, number>>({})
+    const paramFacilityId = param ? Number(param) : null
+    if (!draft) return { draft: null, facilityId: paramFacilityId }
+    if (paramFacilityId == null || draft.facilityId === paramFacilityId) {
+      return { draft, facilityId: draft.facilityId ?? paramFacilityId }
+    }
+    return {
+      draft: {
+        ...draft,
+        facilityId: paramFacilityId,
+        items: {},
+        operatorSelections: {},
+        userEditedItems: [],
+      },
+      facilityId: paramFacilityId,
+    }
+    // Read once on entry: the ?facility= param and the stored draft are the
+    // wizard's starting point, not something to re-evaluate on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const restored = initial.draft
+
+  const [step, setStep] = useState(0)
+  const [facilityId, setFacilityId] = useState<number | null>(() => initial.facilityId)
+  const [date, setDate] = useState<Date | null>(() =>
+    restored?.dateISO ? new Date(`${restored.dateISO}T00:00:00`) : null,
+  )
+  const [startTime, setStartTime] = useState(restored?.startTime ?? '')
+  const [endTime, setEndTime] = useState(restored?.endTime ?? '')
+  const [details, setDetails] = useState<EventDetailsDraft>(restored?.details ?? EMPTY_DETAILS)
+  const [contact, setContact] = useState<ContactDraft>(
+    restored?.contact ?? { name: '', phone: '' },
+  )
+  const [items, setItems] = useState<Record<number, number>>(restored?.items ?? {})
   // Operator/service opt-in per equipment id (e.g. the Gymnasium sound system
   // operator). Only resources the facility marks operator-available appear.
-  const [operatorSelections, setOperatorSelections] = useState<Record<number, boolean>>({})
-  const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null)
-  const [recommendationsFetchedFor, setRecommendationsFetchedFor] = useState<string | null>(null)
-  const [recommendationDismissed, setRecommendationDismissed] = useState(false)
-  const [recommendationsApplied, setRecommendationsApplied] = useState(false)
+  const [operatorSelections, setOperatorSelections] = useState<Record<number, boolean>>(
+    restored?.operatorSelections ?? {},
+  )
   // Equipment ids the requester has manually adjusted. Their quantity is kept
-  // across recalculations — new recommendations never overwrite user edits.
-  const [userEditedItems, setUserEditedItems] = useState<Set<number>>(new Set())
+  // across recalculation — suggestions never overwrite user edits.
+  const [userEditedItems, setUserEditedItems] = useState<Set<number>>(
+    () => new Set(restored?.userEditedItems ?? []),
+  )
   const [stepError, setStepError] = useState<string | null>(null)
+  // Bumped on a failed Continue so the Details step can focus the first error.
+  const [focusAttempt, setFocusAttempt] = useState(0)
   const [submitted, setSubmitted] = useState<ReservationDetail | null>(null)
 
   // Requester identification — administrators choose who the reservation is
@@ -130,7 +157,7 @@ export function ReservationWizardPage() {
     Boolean(isAdmin && requesterType === 'CAMPUS' && stepKey === 'requester'),
   )
   const dateISO = date ? format(date, 'yyyy-MM-dd') : ''
-  const participantsRaw = Number(details.expected_participants)
+  const participantsRaw = Number(details.expectedParticipants)
   const participants = Number.isFinite(participantsRaw) && participantsRaw > 0 ? participantsRaw : 0
   const equipmentParams = useMemo(() => {
     const params: Record<string, string> = {}
@@ -179,7 +206,6 @@ export function ReservationWizardPage() {
   }, [resources])
 
   const availabilityCheck = useAvailabilityCheck()
-  const recommendResources = useRecommendResources()
   const createReservation = useCreateReservation()
 
   const today = manilaCalendarDate()
@@ -192,67 +218,115 @@ export function ReservationWizardPage() {
   const scheduleComplete = Boolean(facilityId && date && startTime && endTime)
   // A member of an organization that is not Approved cannot continue or
   // submit at all — the backend enforces this regardless, but say so up front.
-  // The Continue/Submit gates are derived below from the availability state
-  // machine so the UI and backend enforce exactly the same rule.
   const canCreateReservations = user?.can_create_reservations ?? true
-  // `canSubmit` / `canContinue` are derived below, once the availability state
-  // machine (which depends on the memoized items list) is established.
 
-  // The Organization / Office is never typed by the requester when it can be
-  // derived from an account. External members use the organization bound to
-  // their profile; NORSU users use the office/department on their account; and
-  // staff reserving on behalf of a campus user use that user's office. The
-  // backend independently resolves the same value, so this is presentation
-  // only — the field is locked to prevent "Bayawan NHS" → "Another Org".
+  const facility = facilities?.find((item) => item.id === facilityId)
+
+  // ------------------------------------------------------------------
+  // Contact person — prefilled from the profile / most recent reservation
+  // ------------------------------------------------------------------
+  // The organization is never typed: it always comes from the account (or,
+  // for staff, from the selected campus requester).
   const accountOrganization = useMemo(() => {
     // Managed internal organizations carry a display_name of the form
-    // "CAS — College of Arts and Sciences"; prefer it so the reservation
-    // snapshots a human-readable value rather than a bare acronym.
+    // "CAS — College of Arts and Sciences"; prefer it so the "Reserving as"
+    // line and the reservation snapshot a human-readable value.
     const linked =
       user?.organization_ref?.display_name?.trim() ||
       user?.organization_ref?.organization_name?.trim()
     return linked || user?.organization?.trim() || ''
   }, [user])
-  const lockedOrganization = isAdmin
+  const reservingAs = isAdmin
     ? requesterType === 'CAMPUS'
       ? selectedUser?.organization?.trim() || ''
-      : ''
+      : external.organization.trim()
     : accountOrganization
-  const organizationLocked = Boolean(lockedOrganization)
-  // The field drives the submitted campus organization except on the staff
-  // external path, where the requester block owns the organization instead.
-  const organizationFieldRelevant = !(isAdmin && requesterType === 'EXTERNAL')
-  const organizationRequired = organizationFieldRelevant && !organizationLocked
-  const organizationHint = organizationLocked
-    ? isAdmin
-      ? 'Linked to the selected requester’s account and cannot be changed.'
-      : 'Linked to your account and cannot be changed.'
-    : organizationFieldRelevant
-      ? 'No organization is linked to your account yet — enter your office/department or update your profile.'
-      : undefined
 
-  // Seed (and keep in sync) the locked organization into the event details
-  // once the account/requester is known.
+  // The requester's own most recent reservation carries the last phone number
+  // they used — the only place a phone number is stored (there is no phone
+  // field on the account, by design).
+  const myReservations = useReservations({ requester: user?.id, page: 1 }, Boolean(user?.id))
+  const contactPrefilled = useRef(false)
   useEffect(() => {
-    if (lockedOrganization) {
-      setDetails((current) =>
-        current.organization === lockedOrganization
-          ? current
-          : { ...current, organization: lockedOrganization },
-      )
-      return
-    }
-    // A staff member switched to a campus user with no linked office — clear
-    // the previous selection's organization instead of carrying it over.
-    if (isAdmin && requesterType === 'CAMPUS') {
-      setDetails((current) =>
-        current.organization ? { ...current, organization: '' } : current,
-      )
-    }
-  }, [lockedOrganization, isAdmin, requesterType])
+    if (!user) return
+    setContact((current) =>
+      current.name ? current : { ...current, name: user.display_name || user.username },
+    )
+  }, [user])
+  useEffect(() => {
+    if (!user || contactPrefilled.current) return
+    if (!myReservations.isSuccess && !myReservations.isError) return
+    contactPrefilled.current = true
+    const lastPhone = (myReservations.data?.results ?? []).find(
+      (reservation) => reservation.requester_id === user.id && reservation.contact_phone,
+    )?.contact_phone
+    if (!lastPhone) return
+    setContact((current) => (current.phone ? current : { ...current, phone: lastPhone }))
+  }, [user, myReservations.isSuccess, myReservations.isError, myReservations.data])
 
-  const facility = facilities?.find((item) => item.id === facilityId)
-  const itemsList = useMemo(
+  // ------------------------------------------------------------------
+  // Details validation (single source of truth for the Continue gate)
+  // ------------------------------------------------------------------
+  const fieldErrors = useMemo(
+    () =>
+      reservationFieldErrors({
+        details,
+        contact,
+        capacity: facility?.capacity ?? 0,
+        facilityName: facility?.name ?? '',
+      }),
+    [details, contact, facility],
+  )
+  const missingDetails = useMemo(() => missingFieldLabels(fieldErrors), [fieldErrors])
+
+  // ------------------------------------------------------------------
+  // Suggested resources (rule config + the backend recommender)
+  // ------------------------------------------------------------------
+  const { suggestions, loading: suggestionsLoading } = useSuggestedResources({
+    // Only fetch while the step that shows the suggestions is on screen — the
+    // recommender takes the free-text purpose/notes, so it must not fire on
+    // every keystroke while the requester is still on an earlier step.
+    active: stepKey === 'details',
+    eventType: details.eventType,
+    participants,
+    equipment,
+    facilityId,
+    dateISO,
+    startTime,
+    endTime,
+    purpose: details.purpose,
+    staffNotes: details.staffNotes,
+    requesterType,
+  })
+
+  // Suggestions are checked by default: seed the quantities, but never touch a
+  // resource the requester has edited by hand (including one they unchecked).
+  const suggestionFingerprint = suggestions
+    .map((suggestion) => `${suggestion.equipmentId}:${suggestion.quantity}`)
+    .join(',')
+  useEffect(() => {
+    if (!suggestionFingerprint) return
+    setItems((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const suggestion of suggestions) {
+        if (userEditedItems.has(suggestion.equipmentId)) continue
+        if (suggestion.quantity > 0) {
+          if (next[suggestion.equipmentId] !== suggestion.quantity) {
+            next[suggestion.equipmentId] = suggestion.quantity
+            changed = true
+          }
+        } else if (next[suggestion.equipmentId]) {
+          delete next[suggestion.equipmentId]
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionFingerprint, userEditedItems])
+
+  const itemsList = useMemo<SubmitItems[]>(
     () =>
       Object.entries(items).map(([equipmentId, quantity]) => {
         const id = Number(equipmentId)
@@ -269,14 +343,17 @@ export function ReservationWizardPage() {
 
   // Changing the facility replaces its resource list: clear any selection made
   // for the previous facility so Gymnasium resources never linger for the AVR.
+  // The very first run is skipped: on mount the items were restored from the
+  // draft and belong to the restored facility.
+  const facilityResetDone = useRef(false)
   useEffect(() => {
+    if (!facilityResetDone.current) {
+      facilityResetDone.current = true
+      return
+    }
     setItems({})
     setOperatorSelections({})
     setUserEditedItems(new Set())
-    setRecommendations(null)
-    setRecommendationsFetchedFor(null)
-    setRecommendationDismissed(false)
-    setRecommendationsApplied(false)
   }, [facilityId])
 
   // ------------------------------------------------------------------
@@ -316,9 +393,7 @@ export function ReservationWizardPage() {
   )
 
   const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>('IDLE')
-  const [availabilityReport, setAvailabilityReport] = useState<AvailabilityCheckResult | null>(
-    null,
-  )
+  const [availabilityReport, setAvailabilityReport] = useState<AvailabilityCheckResult | null>(null)
   // Latest request key. A response that resolves after the inputs have changed
   // belongs to a superseded configuration and must be discarded.
   const availabilityKeyRef = useRef<string | null>(null)
@@ -359,72 +434,48 @@ export function ReservationWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availabilityKey])
 
-  // Smart recommendations, recalculated live whenever the event details that
-  // drive the rules change (event type, participants, facility, purpose,
-  // special requirements, schedule). A fingerprint of those inputs guards the
-  // effect so each change triggers exactly one fetch.
-  const recommendationInputs = `${stepKey}|${details.event_type}|${participants}|${facilityId ?? ''}|${details.purpose.trim()}|${details.special_requirements.trim()}|${dateISO}|${startTime}|${endTime}|${requesterType}`
+  // ------------------------------------------------------------------
+  // Draft persistence — restored on mount, saved on every change
+  // ------------------------------------------------------------------
   useEffect(() => {
-    const hasInputs =
-      scheduleComplete && !dateInvalid && participants >= 1 && details.event_type
-    const isFresh = recommendationsFetchedFor === recommendationInputs
-    if (stepKey !== 'resources' || recommendationDismissed || !hasInputs || isFresh) return
+    saveDraft({
+      facilityId,
+      dateISO,
+      startTime,
+      endTime,
+      details,
+      contact,
+      items,
+      operatorSelections,
+      userEditedItems: [...userEditedItems],
+      stepKey,
+    })
+  }, [
+    facilityId,
+    dateISO,
+    startTime,
+    endTime,
+    details,
+    contact,
+    items,
+    operatorSelections,
+    userEditedItems,
+    stepKey,
+  ])
 
-    let cancelled = false
-    recommendResources.mutate(
-      {
-        event_type: details.event_type,
-        expected_participants: participants,
-        facility_id: facilityId ?? undefined,
-        purpose: details.purpose,
-        special_requirements: details.special_requirements,
-        date: dateISO,
-        start_time: startTime,
-        end_time: endTime,
-        requester_type: requesterType,
-      },
-      {
-        onSuccess: (data) => {
-          if (cancelled) return
-          setRecommendations(data.recommendations)
-          setRecommendationsFetchedFor(recommendationInputs)
-          setRecommendationsApplied(false)
-          // Auto-populate requested quantities (requirement 11): prefill each
-          // recommendation with the availability-capped quantity, but never
-          // overwrite a quantity the requester has manually edited.
-          setItems((current) => {
-            const next = { ...current }
-            for (const recommendation of data.recommendations) {
-              if (userEditedItems.has(recommendation.equipment_id)) continue
-              if (recommendation.recommended > 0) {
-                next[recommendation.equipment_id] = recommendation.recommended
-              } else {
-                // Zero/missing recommendation and never user-edited: clear it.
-                delete next[recommendation.equipment_id]
-              }
-            }
-            return next
-          })
-        },
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recommendationInputs, recommendationDismissed])
+  // Restore the step once the account is known (the step list differs for
+  // staff, so this must wait for auth to settle).
+  const stepRestored = useRef(false)
+  useEffect(() => {
+    if (stepRestored.current || authLoading) return
+    stepRestored.current = true
+    const index = steps.findIndex((item) => item.key === restored?.stepKey)
+    if (index > 0) setStep(index)
+  }, [authLoading, steps, restored])
 
-  function applyRecommendations() {
-    if (!recommendations) return
-    const next: Record<number, number> = { ...items }
-    for (const recommendation of recommendations) {
-      // `recommended` is already capped server-side by availability.
-      if (recommendation.recommended > 0) next[recommendation.equipment_id] = recommendation.recommended
-    }
-    setItems(next)
-    setRecommendationsApplied(true)
-  }
-
+  // ------------------------------------------------------------------
+  // Actions
+  // ------------------------------------------------------------------
   function toggleOperator(equipmentId: number, selected: boolean) {
     setOperatorSelections((current) => ({ ...current, [equipmentId]: selected }))
   }
@@ -439,36 +490,38 @@ export function ReservationWizardPage() {
     })
   }
 
+  /** Checkbox on a suggested row: unchecking clears the quantity and is remembered. */
+  function toggleSuggestion(equipmentId: number, checked: boolean, suggestedQuantity: number) {
+    setUserEditedItems((current) => new Set(current).add(equipmentId))
+    setItems((current) => {
+      const next = { ...current }
+      if (checked) next[equipmentId] = Math.max(1, suggestedQuantity)
+      else delete next[equipmentId]
+      return next
+    })
+  }
+
   function useAlternative(alternative: AlternativeSlot) {
     setDate(new Date(`${alternative.date}T00:00:00`))
     setStartTime(alternative.start_time)
     setEndTime(alternative.end_time)
   }
 
-  const missingDetails = useMemo(() => {
-    const missing: string[] = []
-    // NOTE: `special_requirements` and `notes` are deliberately NOT listed
-    // here — both are optional and may be submitted empty.
-    if (!details.event_name.trim()) missing.push('Event name')
-    if (!details.event_type) missing.push('Event type')
-    if (!details.purpose.trim()) missing.push('Event purpose')
-    if (participants < 1) missing.push('Expected participants')
-    // An account with no linked organization must supply one explicitly rather
-    // than silently submitting an empty value.
-    if (organizationRequired && !details.organization.trim()) {
-      missing.push('Organization / Office')
-    }
-    return missing
-  }, [details, participants, organizationRequired])
-
   const availabilityOk = availabilityStatus === 'AVAILABLE'
   const scheduleStepIndex = steps.findIndex((item) => item.key === 'schedule')
+
+  // Once the step is valid again, an old "complete these fields" banner is
+  // stale — clear it so the footer never nags about work already done.
+  useEffect(() => {
+    if (stepError && stepKey === 'details' && missingDetails.length === 0 && availabilityOk) {
+      setStepError(null)
+    }
+  }, [stepError, stepKey, missingDetails, availabilityOk])
 
   // Final submission additionally re-validates on the backend (HTTP 409 on
   // conflict), but the button stays disabled until a check for the CURRENT
   // configuration has actually succeeded.
-  const canSubmit =
-    scheduleComplete && !dateInvalid && canCreateReservations && availabilityOk
+  const canSubmit = scheduleComplete && !dateInvalid && canCreateReservations && availabilityOk
 
   // Per-step Continue gate. Required fields must be valid AND, on the steps
   // where availability matters, the check must have succeeded for the current
@@ -493,9 +546,23 @@ export function ReservationWizardPage() {
           : stepKey === 'details'
             ? missingDetails.length === 0
             : true
-  const availabilityRequired = stepKey === 'schedule' || stepKey === 'resources'
+  const availabilityRequired = stepKey === 'schedule' || stepKey === 'details'
   const canContinue =
     canCreateReservations && stepFieldsValid && (!availabilityRequired || availabilityOk)
+
+  // Always keep a human-readable reason for a disabled Continue available.
+  const continueBlockedReason = !canCreateReservations
+    ? user?.reservation_block_reason ||
+      'Your organization must be approved before you can reserve a facility.'
+    : availabilityRequired && !availabilityOk
+      ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
+      : stepKey === 'details' && missingDetails.length > 0
+        ? `Complete these fields: ${missingDetails.join(', ')}.`
+        : stepKey === 'facility' && facilityId == null
+          ? 'Select a facility to continue.'
+          : stepKey === 'schedule' && !scheduleComplete
+            ? 'Choose a date, start time, and end time to continue.'
+            : undefined
 
   /**
    * Advance one step. Members of an unapproved external organization are
@@ -547,9 +614,11 @@ export function ReservationWizardPage() {
     }
     if (stepKey === 'details' && missingDetails.length > 0) {
       setStepError(`Complete the highlighted fields to continue: ${missingDetails.join(', ')}.`)
+      // Focus + scroll to the first invalid field (handled in DetailsStep).
+      setFocusAttempt((attempt) => attempt + 1)
       return
     }
-    if (stepKey === 'resources' && !availabilityOk) {
+    if (stepKey === 'details' && !availabilityOk) {
       setStepError(AVAILABILITY_STATUS_MESSAGE[availabilityStatus])
       return
     }
@@ -563,62 +632,67 @@ export function ReservationWizardPage() {
     else setStep(step - 1)
   }
 
+  /** Jump to the step that owns a read-only value shown on Review. */
+  function goToStep(key: StepKey) {
+    const index = steps.findIndex((item) => item.key === key)
+    if (index >= 0 && index < step) {
+      setStepError(null)
+      setStep(index)
+    }
+  }
+
   async function submit() {
     // Defence in depth: the backend re-validates availability on create and
     // returns 409, but never send a request for a configuration that has not
     // passed the current availability check.
-    if (!canSubmit || facilityId == null) return
-    const requesterPayload = isAdmin
-      ? requesterType === 'EXTERNAL'
-        ? {
-            requester_type: 'EXTERNAL' as const,
-            organization: external.organization,
-            organization_type: external.organization_type,
-            contact_person: external.contact_person,
-            contact_email: external.contact_email,
-          }
-        : { requester_type: 'CAMPUS' as const, requester_id: selectedUser!.id }
-      : {}
-    createReservation.mutate(
+    if (!canSubmit || facilityId == null || missingDetails.length > 0) return
+    const isExternalRequester = isAdmin && requesterType === 'EXTERNAL'
+    const payload = toCreateReservationPayload(
       {
-        facility_id: facilityId,
-        date: dateISO,
-        start_time: startTime,
-        end_time: endTime,
-        event_name: details.event_name,
-        event_type: details.event_type,
-        organization: requesterType === 'EXTERNAL' ? external.organization : details.organization,
-        purpose: details.purpose,
-        description: details.description,
-        expected_participants: participants,
-        contact_person:
-          requesterType === 'EXTERNAL' ? external.contact_person : details.contact_person,
-        ...requesterPayload,
-        special_requirements: details.special_requirements,
-        notes: details.notes,
+        facilityId,
+        dateISO,
+        startTime,
+        endTime,
+        details,
+        contact,
+        items,
+        operatorSelections,
+        userEditedItems: [...userEditedItems],
+        stepKey,
+      } satisfies WizardDraft,
+      {
         items: itemsList,
-      },
-      {
-        onSuccess: (reservation) => {
-          setSubmitted(reservation)
-          document.querySelector('main')?.scrollTo({ top: 0 })
-        },
-        onError: (error) => {
-          // The backend refused the create because the facility/resources are
-          // no longer available (someone else booked first). Surface that
-          // report and send the requester back to the schedule step.
-          if (error instanceof ApiError && error.status === 409 && error.data) {
-            const data = error.data as { availability?: AvailabilityCheckResult }
-            if (data.availability) {
-              setAvailabilityReport(data.availability)
-              setAvailabilityStatus(data.availability.overall.ok ? 'AVAILABLE' : 'UNAVAILABLE')
-              if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
-            }
-          }
-          toast('Unable to submit reservation. Please review the schedule.', 'error')
-        },
+        // The backend resolves the same value from the authenticated user;
+        // sending it only keeps the payload self-describing.
+        organization: isExternalRequester ? external.organization : reservingAs,
+        ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
+          ? { requesterId: selectedUser.id }
+          : {}),
+        ...(isExternalRequester ? { external } : {}),
       },
     )
+
+    createReservation.mutate(payload, {
+      onSuccess: (reservation) => {
+        clearDraft()
+        setSubmitted(reservation)
+        document.querySelector('main')?.scrollTo({ top: 0 })
+      },
+      onError: (error) => {
+        // The backend refused the create because the facility/resources are
+        // no longer available (someone else booked first). Surface that
+        // report and send the requester back to the schedule step.
+        if (error instanceof ApiError && error.status === 409 && error.data) {
+          const data = error.data as { availability?: AvailabilityCheckResult }
+          if (data.availability) {
+            setAvailabilityReport(data.availability)
+            setAvailabilityStatus(data.availability.overall.ok ? 'AVAILABLE' : 'UNAVAILABLE')
+            if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
+          }
+        }
+        toast('Unable to submit reservation. Please review the schedule.', 'error')
+      },
+    })
   }
 
   // ------------------------------------------------------------------
@@ -678,6 +752,11 @@ export function ReservationWizardPage() {
     )
   }
 
+  // Equipment that is NOT already listed as a suggestion — rendered by the
+  // "Add other equipment" picker so nothing appears twice on the step.
+  const suggestedIds = new Set(suggestions.map((suggestion) => suggestion.equipmentId))
+  const otherEquipment = equipment.filter((item) => !suggestedIds.has(item.id))
+
   return (
     <div className="mx-auto max-w-5xl">
       <Link
@@ -720,8 +799,8 @@ export function ReservationWizardPage() {
           steps={steps}
           current={step}
           onStepClick={(index) => {
-            // Allow going back to any completed step; Resources (3) requires
-            // completed event details, so jumping forward is never allowed.
+            // Allow going back to any completed step; moving forward is only
+            // ever done through Continue so each step is validated in order.
             if (index < step) {
               setStepError(null)
               setStep(index)
@@ -777,38 +856,26 @@ export function ReservationWizardPage() {
         )}
 
         {stepKey === 'details' && (
-          <StepDetails
+          <DetailsStep
             details={details}
-            onChange={setDetails}
-            showErrors={stepError != null}
-            missing={missingDetails}
-            organizationLocked={organizationLocked}
-            organizationHint={organizationHint}
-          />
-        )}
-
-        {stepKey === 'resources' && (
-          <StepResources
-            equipment={equipment}
+            onDetailsChange={setDetails}
+            contact={contact}
+            onContactChange={setContact}
+            reservingAs={reservingAs}
+            capacity={facility?.capacity ?? 0}
+            facilityName={facility?.name ?? ''}
+            suggestions={suggestions}
+            suggestionsLoading={suggestionsLoading}
             items={items}
             onQuantity={setQuantity}
+            onToggleSuggestion={toggleSuggestion}
+            equipment={otherEquipment}
             operatorConfig={operatorConfig}
             operatorSelections={operatorSelections}
             onOperatorChange={toggleOperator}
             resourcesLoading={resourcesLoading}
-            recommendations={recommendations}
-            recommendationLoading={recommendResources.isPending}
-            recommendationApplied={recommendationsApplied}
-            onAcceptRecommendations={applyRecommendations}
-            onDismissRecommendations={() => setRecommendationDismissed(true)}
-            eventContext={{
-              eventName: details.event_name,
-              participants: participants.toLocaleString(),
-              facilityName: facility?.name ?? '',
-              schedule: startTime && endTime ? `${formatTime(startTime)} – ${formatTime(endTime)}` : '',
-            }}
-            pricing={availabilityReport?.pricing ?? null}
-            pricingLoading={availabilityStatus === 'CHECKING'}
+            focusAttempt={focusAttempt}
+            showAllErrors={stepError != null}
           />
         )}
 
@@ -820,6 +887,8 @@ export function ReservationWizardPage() {
             startTime={startTime}
             endTime={endTime}
             details={details}
+            contact={contact}
+            reservingAs={reservingAs}
             participants={participants}
             equipment={equipment}
             items={items}
@@ -829,6 +898,7 @@ export function ReservationWizardPage() {
             isAdmin={isAdmin}
             isCancellationRestricted={inCancellationWindow}
             pricing={availabilityReport?.pricing ?? null}
+            onEditStep={(key) => goToStep(key)}
             requesterSection={
               isAdmin ? (
                 <Card>
@@ -867,7 +937,7 @@ export function ReservationWizardPage() {
         )}
       </div>
 
-      {isAdmin && (step === 3 || step === 4) && (
+      {isAdmin && (stepKey === 'details' || stepKey === 'review') && (
         <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-brand/20 bg-brand-soft/50 px-4 py-3 text-sm text-brand">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
           <p>
@@ -895,27 +965,25 @@ export function ReservationWizardPage() {
             </p>
           )}
           <div className="flex items-center justify-between gap-3">
-            <Button
-              variant="outline"
-              onClick={goBack}
-              disabled={createReservation.isPending}
-            >
+            <Button variant="outline" onClick={goBack} disabled={createReservation.isPending}>
               <ArrowLeft className="size-4" /> Back
             </Button>
             {step < steps.length - 1 ? (
-              <Button
-                onClick={goNext}
-                disabled={!canContinue}
-                title={
-                  !canCreateReservations
-                    ? user?.reservation_block_reason
-                    : availabilityRequired && !availabilityOk
-                      ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
-                      : undefined
-                }
-              >
-                Continue <ArrowRight className="size-4" />
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  onClick={goNext}
+                  disabled={!canContinue}
+                  title={continueBlockedReason}
+                  aria-describedby="continue-reason"
+                >
+                  Continue <ArrowRight className="size-4" />
+                </Button>
+                {continueBlockedReason && (
+                  <p id="continue-reason" className="max-w-xs text-right text-xs text-muted">
+                    {continueBlockedReason}
+                  </p>
+                )}
+              </div>
             ) : (
               <Button
                 onClick={submit}
@@ -1182,4 +1250,3 @@ function StepRequester({
     </section>
   )
 }
-

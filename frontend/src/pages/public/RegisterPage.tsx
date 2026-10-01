@@ -8,20 +8,15 @@ import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
-import type { Affiliation, ExternalOrganizationType } from '@/lib/types'
+import {
+  INTERNAL_AFFILIATIONS,
+  type ExternalOrganizationType,
+  type SelectableAffiliation,
+} from '@/lib/types'
 
-const AFFILIATION_OPTIONS: { value: Affiliation; label: string }[] = [
-  { value: 'NORSU_STUDENT', label: 'NORSU Student' },
+const AFFILIATION_OPTIONS: { value: SelectableAffiliation; label: string }[] = [
   { value: 'NORSU_FACULTY_STAFF', label: 'NORSU Faculty/Staff' },
-  { value: 'NORSU_OFFICE', label: 'NORSU Office/Department' },
   { value: 'EXTERNAL_ORGANIZATION', label: 'External Organization' },
-]
-
-/** Affiliations that belong to a managed campus (INTERNAL) organization. */
-const INTERNAL_AFFILIATIONS: Affiliation[] = [
-  'NORSU_STUDENT',
-  'NORSU_FACULTY_STAFF',
-  'NORSU_OFFICE',
 ]
 
 const ORGANIZATION_TYPE_OPTIONS: { value: ExternalOrganizationType; label: string }[] = [
@@ -56,7 +51,7 @@ export function RegisterPage() {
     organization: '',
   })
   // Blank affiliation keeps the legacy behavior (a plain campus account).
-  const [affiliation, setAffiliation] = useState<Affiliation | ''>('')
+  const [affiliation, setAffiliation] = useState<SelectableAffiliation | ''>('')
   // Managed campus organization id, chosen from the seeded list. The backend
   // re-reads its type and active state — the client never sends a type.
   const [internalOrganizationId, setInternalOrganizationId] = useState<number | ''>('')
@@ -251,7 +246,9 @@ export function RegisterPage() {
                   id="affiliation"
                   name="affiliation"
                   value={affiliation}
-                  onChange={(event) => setAffiliation(event.target.value as Affiliation | '')}
+                  onChange={(event) =>
+                    setAffiliation(event.target.value as SelectableAffiliation | '')
+                  }
                 >
                   <option value="">Campus user / not sure yet</option>
                   {AFFILIATION_OPTIONS.map((option) => (
@@ -264,9 +261,9 @@ export function RegisterPage() {
 
               {isInternalAffiliation && (
                 <Field
-                  label="Organization"
+                  label="Organization / College"
                   htmlFor="internal_organization"
-                  hint="Choose the NORSU college, office, or department you belong to."
+                  hint="Choose the organization you are authorized to represent."
                 >
                   <Select
                     id="internal_organization"

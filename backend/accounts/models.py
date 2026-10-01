@@ -54,6 +54,28 @@ class Organization(models.Model):
         ("CSSG", "CSSG"),
     )
 
+    #: Organization types a client may self-select when registering an
+    #: external organization. ``INTERNAL`` is deliberately excluded: managed
+    #: campus organizations are seeded server-side and can never be created or
+    #: claimed through the external registration path.
+    EXTERNAL_ORGANIZATION_TYPES = (
+        OrganizationType.GOVERNMENT_AGENCY,
+        OrganizationType.NGO,
+        OrganizationType.PRIVATE_ORGANIZATION,
+        OrganizationType.COMMUNITY_ORGANIZATION,
+        OrganizationType.SCHOOL_UNIVERSITY,
+        OrganizationType.OTHER,
+    )
+
+    @classmethod
+    def external_type_choices(cls):
+        """(value, label) pairs accepted for external registration."""
+        return [
+            (value, label)
+            for value, label in cls.OrganizationType.choices
+            if value in cls.EXTERNAL_ORGANIZATION_TYPES
+        ]
+
     class VerificationStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
         APPROVED = "APPROVED", "Approved"
@@ -226,10 +248,32 @@ class User(AbstractUser):
         REQUESTER = "REQUESTER", "Requester"
 
     class Affiliation(models.TextChoices):
+        # ``NORSU_STUDENT`` and ``NORSU_OFFICE`` are retained for existing
+        # records only. Internal organizations are represented by an
+        # authorized faculty/staff member, so these are retired from the
+        # onboarding/registration pickers and rejected on new submissions —
+        # see ``selectable_affiliation_choices`` below.
         NORSU_STUDENT = "NORSU_STUDENT", "NORSU Student"
         NORSU_FACULTY_STAFF = "NORSU_FACULTY_STAFF", "NORSU Faculty/Staff"
         NORSU_OFFICE = "NORSU_OFFICE", "NORSU Office/Department"
         EXTERNAL_ORGANIZATION = "EXTERNAL_ORGANIZATION", "External Organization"
+
+    #: Affiliations a user may newly choose. A faculty/staff member represents
+    #: their internal organization; legacy ``NORSU_STUDENT`` / ``NORSU_OFFICE``
+    #: records keep their stored value and label but can no longer be chosen.
+    SELECTABLE_AFFILIATIONS = (
+        Affiliation.NORSU_FACULTY_STAFF,
+        Affiliation.EXTERNAL_ORGANIZATION,
+    )
+
+    @classmethod
+    def selectable_affiliation_choices(cls):
+        """(value, label) pairs accepted on registration/affiliation writes."""
+        return [
+            (value, label)
+            for value, label in cls.Affiliation.choices
+            if value in cls.SELECTABLE_AFFILIATIONS
+        ]
 
     role = models.CharField(
         max_length=16, choices=Role.choices, default=Role.REQUESTER

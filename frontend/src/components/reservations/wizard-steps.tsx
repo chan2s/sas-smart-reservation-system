@@ -1,34 +1,29 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { CalendarDays, CheckCircle2, Info, Loader2, Minus, Plus, AlertTriangle, XCircle } from 'lucide-react'
+import { AlertTriangle, CalendarDays, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react'
 import { format } from 'date-fns'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
-import { Field, Input, Select, Textarea } from '@/components/ui/Form'
+import { Field, Select } from '@/components/ui/Form'
 import { Badge } from '@/components/ui/Badge'
 import { AvailabilityCheck } from '@/components/reservations/AvailabilityCheck'
 import { PricingBreakdown } from '@/components/reservations/PricingBreakdown'
-import { RecommendationCard } from '@/components/reservations/RecommendationCard'
 import { MonthGrid } from '@/components/calendar/MonthGrid'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
-import { EmptyState } from '@/components/ui/Misc'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
-import { EquipmentImageViewer } from '@/components/equipment/EquipmentImageViewer'
-import { cn, equipmentImageUrls, equipmentPrimaryImageUrl, formatCurrency, formatTime } from '@/lib/utils'
+import { cn, equipmentPrimaryImageUrl, formatTime } from '@/lib/utils'
+import type { ContactDraft, EventDetailsDraft } from '@/lib/reservationDraft'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
   EventType,
   PricingQuote,
-  Recommendation,
   ReservableResource,
 } from '@/lib/types'
 
 /**
- * Shared reservation workflow steps.
- *
- * Used by both the authenticated wizard (ReservationWizardPage) and the
- * public guest wizard (ReservePage) so there is exactly ONE reservation
- * workflow — only requester identification and approval behavior differ.
+ * Shared reservation workflow steps for the new-reservation wizard
+ * (ReservationWizardPage): facility, schedule, the merged details & resources
+ * step (see DetailsStep) and the review summary.
  */
 
 export const EVENT_TYPE_OPTIONS: [EventType, string][] = [
@@ -103,18 +98,6 @@ export function AvailabilityStatusNotice({ status }: { status: AvailabilityStatu
       <p className="text-sm font-medium leading-relaxed">{message}</p>
     </div>
   )
-}
-
-export interface EventDetails {
-  event_name: string
-  event_type: EventType
-  organization: string
-  purpose: string
-  description: string
-  expected_participants: string
-  contact_person: string
-  special_requirements: string
-  notes: string
 }
 
 // ---------------------------------------------------------------------------
@@ -428,388 +411,7 @@ export function StepSchedule({
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — Event details
-// ---------------------------------------------------------------------------
-
-export function StepDetails({
-  details,
-  onChange,
-  showErrors,
-  missing,
-  organizationLocked,
-  organizationHint,
-}: {
-  details: EventDetails
-  onChange: (next: EventDetails) => void
-  showErrors: boolean
-  missing: string[]
-  /** When true the Organization / Office field is derived from the user's own
-   *  account (or the selected campus requester) and cannot be edited. */
-  organizationLocked?: boolean
-  organizationHint?: string
-}) {
-  const set = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) =>
-    onChange({ ...details, [key]: value })
-
-  const fieldError = (label: string) => (showErrors && missing.includes(label) ? `${label} is required.` : undefined)
-
-  return (
-    <section aria-label="Event details" className="mx-auto max-w-2xl">
-      <h2 className="text-lg font-semibold text-ink">Event details</h2>
-      <p className="mt-1 text-sm text-body">
-        Tell SAS about your event — this lets us recommend the right resources.
-      </p>
-
-      <Card className="mt-5">
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="Event name" htmlFor="event-name" className="sm:col-span-2" error={fieldError('Event name')}>
-            <Input
-              id="event-name"
-              value={details.event_name}
-              onChange={(event) => set('event_name', event.target.value)}
-              placeholder="e.g. Student Leadership Seminar"
-            />
-          </Field>
-          <Field label="Event type" htmlFor="event-type" error={fieldError('Event type')}>
-            <Select
-              id="event-type"
-              value={details.event_type}
-              onChange={(event) => set('event_type', event.target.value as EventType)}
-            >
-              {EVENT_TYPE_OPTIONS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Expected participants" htmlFor="participants" error={fieldError('Expected participants')}>
-            <Input
-              id="participants"
-              type="number"
-              min={1}
-              value={details.expected_participants}
-              onChange={(event) => set('expected_participants', event.target.value)}
-              placeholder="e.g. 150"
-            />
-          </Field>
-          <Field label="Event purpose" htmlFor="purpose" className="sm:col-span-2" error={fieldError('Event purpose')}>
-            <Input
-              id="purpose"
-              value={details.purpose}
-              onChange={(event) => set('purpose', event.target.value)}
-              placeholder="e.g. Recognition ceremony for graduating students"
-            />
-          </Field>
-          <Field
-            label="Organization / Office"
-            htmlFor="organization"
-            className="sm:col-span-2"
-            hint={organizationHint}
-            error={fieldError('Organization / Office')}
-          >
-            <Input
-              id="organization"
-              value={details.organization}
-              onChange={(event) => set('organization', event.target.value)}
-              placeholder="e.g. Student Affairs Office"
-              disabled={organizationLocked}
-              aria-readonly={organizationLocked || undefined}
-              title={
-                organizationLocked
-                  ? 'This is the organization linked to your account and cannot be changed.'
-                  : undefined
-              }
-            />
-          </Field>
-          <Field label="Contact person" htmlFor="contact-person" className="sm:col-span-2">
-            <Input
-              id="contact-person"
-              value={details.contact_person}
-              onChange={(event) => set('contact_person', event.target.value)}
-              placeholder="e.g. Juan Dela Cruz, ext. 1234"
-            />
-          </Field>
-          <Field label="Description" htmlFor="description" className="sm:col-span-2">
-            <Textarea
-              id="description"
-              value={details.description}
-              onChange={(event) => set('description', event.target.value)}
-              placeholder="Briefly describe the event."
-            />
-          </Field>
-          {/* Both fields below are intentionally OPTIONAL: no required
-              indicator, no entry in `missingDetails`, and an empty value is
-              accepted by the backend. */}
-          <Field
-            label="Special requirements (Optional)"
-            htmlFor="special-requirements"
-            className="sm:col-span-2"
-          >
-            <Textarea
-              id="special-requirements"
-              value={details.special_requirements}
-              onChange={(event) => set('special_requirements', event.target.value)}
-              placeholder="Optional — e.g. setup requirements, room arrangement, etc."
-            />
-          </Field>
-          <Field label="Notes for SAS staff (Optional)" htmlFor="notes" className="sm:col-span-2">
-            <Textarea
-              id="notes"
-              value={details.notes}
-              onChange={(event) => set('notes', event.target.value)}
-              placeholder="Optional — additional information for SAS staff"
-            />
-          </Field>
-        </div>
-      </Card>
-    </section>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Step 4 — Resources
-// ---------------------------------------------------------------------------
-
-export interface OperatorConfig {
-  available: boolean
-  required: boolean
-  fee: string
-}
-
-export function StepResources({
-  equipment,
-  items,
-  onQuantity,
-  operatorConfig,
-  operatorSelections,
-  onOperatorChange,
-  resourcesLoading,
-  recommendations,
-  recommendationLoading,
-  recommendationApplied,
-  onAcceptRecommendations,
-  onDismissRecommendations,
-  eventContext,
-  pricing,
-  pricingLoading,
-}: {
-  equipment: ReservableResource[]
-  items: Record<number, number>
-  onQuantity: (equipmentId: number, quantity: number, available: number) => void
-  /** Operator/service configuration per equipment id, from the facility. */
-  operatorConfig?: Record<number, OperatorConfig>
-  operatorSelections?: Record<number, boolean>
-  onOperatorChange?: (equipmentId: number, selected: boolean) => void
-  resourcesLoading?: boolean
-  recommendations: Recommendation[] | null
-  recommendationLoading: boolean
-  recommendationApplied: boolean
-  onAcceptRecommendations: () => void
-  onDismissRecommendations: () => void
-  eventContext: { eventName: string; participants: string; facilityName: string; schedule: string }
-  /** Live estimate for the currently requested items/schedule. */
-  pricing?: PricingQuote | null
-  pricingLoading?: boolean
-}) {
-  const recommendedIds = useMemo(
-    () => new Set((recommendations ?? []).map((recommendation) => recommendation.equipment_id)),
-    [recommendations],
-  )
-  // Clicking an equipment item opens its image so requesters can identify
-  // the physical resource before reserving it.
-  const [viewingItem, setViewingItem] = useState<ReservableResource | null>(null)
-  const otherEquipment = useMemo(() => equipment.filter((item) => !recommendedIds.has(item.id)), [equipment, recommendedIds])
-
-  const byCategory = useMemo(() => {
-    const groups = new Map<string, ReservableResource[]>()
-    for (const item of otherEquipment) {
-      const key = item.category.name
-      if (!groups.has(key)) groups.set(key, [])
-      groups.get(key)!.push(item)
-    }
-    return [...groups.entries()]
-  }, [otherEquipment])
-
-  return (
-    <section aria-label="Choose resources">
-      <h2 className="text-lg font-semibold text-ink">Resources</h2>
-      <p className="mt-1 text-sm text-body">
-        Quantities below are pre-filled from rules based on your event details. Adjust freely — your changes are kept even if details change.
-      </p>
-
-      {recommendations && recommendations.length > 0 && (
-        <div className="mt-5">
-          <RecommendationCard
-            recommendations={recommendations}
-            equipment={equipment}
-            items={items}
-            onQuantity={onQuantity}
-            eventContext={eventContext}
-            loading={recommendationLoading && !recommendations}
-            applied={recommendationApplied}
-            onAccept={onAcceptRecommendations}
-            onDismiss={onDismissRecommendations}
-          />
-        </div>
-      )}
-      {recommendationLoading && !recommendations && (
-        <div className="mt-5 max-w-2xl">
-          <RecommendationCard recommendations={[]} equipment={[]} items={{}} onQuantity={() => {}} loading />
-        </div>
-      )}
-
-      {/*
-       * Estimated cost. Rendered from the backend quote for the requested
-       * items, so it recalculates live as quantities, facility, or duration
-       * change — no page refresh. Internal requesters always see ₱0.00 with a
-       * "no external fees" note rather than external prices.
-       */}
-      {(pricing || pricingLoading) && (
-        <div className="mt-5 max-w-2xl">
-          <PricingBreakdown pricing={pricing} loading={pricingLoading} />
-        </div>
-      )}
-
-      {resourcesLoading ? (
-        <div className="mt-6 h-32 max-w-2xl animate-pulse rounded-xl bg-soft" aria-hidden />
-      ) : byCategory.length === 0 ? (
-        <EmptyState
-          title={recommendations && recommendations.length > 0 ? 'No other resources available' : 'No resources available'}
-          description={
-            recommendations && recommendations.length > 0
-              ? 'Everything you need is in the recommendations above. You can continue without additional resources.'
-              : 'This facility has no resources assigned yet. You can continue without additional resources.'
-          }
-        />
-      ) : (
-        <div className="mt-8 space-y-6">
-          <h3 className="text-[13px] font-semibold uppercase tracking-[0.1em] text-muted">
-            Other available resources
-          </h3>
-          {byCategory.map(([category, itemsInCategory]) => (
-            <div key={category}>
-              <h4 className="text-[13px] font-semibold uppercase tracking-[0.1em] text-muted">
-                {category}
-              </h4>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {itemsInCategory.map((item) => {
-                  const requested = items[item.id] ?? 0
-                  const available = item.availability.available
-                  return (
-                    <div
-                      key={item.id}
-                      className={cn(
-                        'rounded-xl border border-line bg-surface p-4 transition-colors',
-                        requested > 0 && 'border-brand/40 bg-brand-soft/40',
-                      )}
-                    >
-                      <div className="flex items-center gap-4">
-                      <button
-                        type="button"
-                        onClick={() => setViewingItem(item)}
-                        className="group relative shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                        aria-label={`View image of ${item.name}`}
-                        title="Click to view image"
-                      >
-                        <EquipmentImage
-                          src={equipmentPrimaryImageUrl(item)}
-                          size="md"
-                          className="rounded-lg"
-                          alt={item.name}
-                        />
-                        <span
-                          aria-hidden
-                          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-ink/0 text-[11px] font-medium text-white opacity-0 transition-all group-hover:bg-ink/45 group-hover:opacity-100"
-                        >
-                          View
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setViewingItem(item)}
-                        className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        aria-label={`View details of ${item.name}`}
-                      >
-                        <p className="truncate text-sm font-medium text-ink group-hover:text-brand">{item.name}</p>
-                        <p className="mt-0.5 text-xs text-body">
-                          {available} of {item.total_quantity} units available
-                          {item.availability.status !== 'AVAILABLE' && item.availability.status !== 'PARTIAL' && (
-                            <span className="text-status-rejected"> · unavailable now</span>
-                          )}
-                        </p>
-                        <span className="mt-0.5 inline-block text-[11px] font-medium text-brand">
-                          View image →
-                        </span>
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onQuantity(item.id, requested - 1, available)}
-                          disabled={requested === 0}
-                          className="flex size-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
-                          aria-label={`Decrease ${item.name} quantity`}
-                        >
-                          <Minus className="size-3.5" />
-                        </button>
-                        <span className="w-8 text-center text-sm font-semibold tabular-nums text-ink" aria-live="polite">
-                          {requested}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => onQuantity(item.id, requested + 1, available)}
-                          disabled={requested >= available || available === 0}
-                          className="flex size-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
-                          aria-label={`Increase ${item.name} quantity`}
-                        >
-                          <Plus className="size-3.5" />
-                        </button>
-                      </div>
-                      </div>
-                      {operatorConfig?.[item.id]?.available && (
-                        <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line/70 pt-3 text-xs text-body">
-                          <input
-                            type="checkbox"
-                            className="size-3.5 accent-[var(--color-brand)]"
-                            checked={
-                              operatorSelections?.[item.id] ??
-                              Boolean(operatorConfig?.[item.id]?.required)
-                            }
-                            disabled={Boolean(operatorConfig?.[item.id]?.required)}
-                            onChange={(event) =>
-                              onOperatorChange?.(item.id, event.target.checked)
-                            }
-                          />
-                          <span>
-                            Operator service
-                            {operatorConfig?.[item.id]?.fee &&
-                            Number(operatorConfig?.[item.id]?.fee) > 0
-                              ? ` (+${formatCurrency(operatorConfig[item.id].fee)})`
-                              : ''}
-                            {operatorConfig?.[item.id]?.required ? ' · required' : ''}
-                          </span>
-                        </label>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <EquipmentImageViewer
-        equipment={viewingItem}
-        images={equipmentImageUrls(viewingItem)}
-        onClose={() => setViewingItem(null)}
-      />
-    </section>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Step 5 — Review
+// Step 4 — Review
 // ---------------------------------------------------------------------------
 
 export function StepReview({
@@ -819,6 +421,8 @@ export function StepReview({
   startTime,
   endTime,
   details,
+  contact,
+  reservingAs,
   participants,
   equipment,
   items,
@@ -829,13 +433,18 @@ export function StepReview({
   requesterSection,
   isCancellationRestricted,
   pricing,
+  onEditStep,
 }: {
   facilityName: string
   facilityType: string
   dateISO: string
   startTime: string
   endTime: string
-  details: EventDetails
+  details: EventDetailsDraft
+  /** Contact person shown as a compact read-only row. */
+  contact: ContactDraft
+  /** Organization the reservation is for — derived from the account. */
+  reservingAs: string
   participants: number
   equipment: ReservableResource[]
   items: Record<number, number>
@@ -851,6 +460,8 @@ export function StepReview({
    *  (today/tomorrow) — such reservations cannot be cancelled once
    *  submitted. */
   isCancellationRestricted?: boolean
+  /** Jump back to an earlier step to edit what is shown here (Goal 4). */
+  onEditStep?: (step: 'facility' | 'schedule') => void
 }) {
   const reviewItems = Object.entries(items)
     .map(([equipmentId, quantity]) => ({
@@ -878,21 +489,33 @@ export function StepReview({
 
       <Card>
         <dl className="divide-y divide-line">
-          <ReviewRow label="Facility" value={facilityName || '—'} sub={facilityType} />
+          {/* Facility and schedule are captured in earlier steps: they are
+              shown read-only here, with a link back to the step that owns them. */}
+          <ReviewRow
+            label="Facility"
+            value={facilityName || '—'}
+            sub={facilityType}
+            onEdit={onEditStep ? () => onEditStep('facility') : undefined}
+          />
           <ReviewRow
             label="Schedule"
             value={dateISO ? format(new Date(`${dateISO}T00:00:00`), 'EEEE, MMMM d, yyyy') : '—'}
             sub={startTime && endTime ? `${formatTime(startTime)} – ${formatTime(endTime)}` : undefined}
+            onEdit={onEditStep ? () => onEditStep('schedule') : undefined}
           />
-          <ReviewRow label="Event" value={details.event_name || '—'} />
-          <ReviewRow label="Event type" value={eventTypeLabel(details.event_type)} />
+          <ReviewRow label="Event" value={details.eventName || '—'} />
+          <ReviewRow
+            label="Event type"
+            value={details.eventType ? eventTypeLabel(details.eventType) : '—'}
+          />
           <ReviewRow label="Purpose" value={details.purpose || '—'} />
           <ReviewRow label="Expected participants" value={participants ? participants.toLocaleString() : '—'} />
-          <ReviewRow label="Organization" value={details.organization || '—'} />
-          <ReviewRow label="Contact person" value={details.contact_person || '—'} />
-          {details.special_requirements && (
-            <ReviewRow label="Special requirements" value={details.special_requirements} />
-          )}
+          <ReviewRow label="Organization" value={reservingAs || '—'} />
+          <ReviewRow
+            label="Contact"
+            value={contact.name || '—'}
+            sub={contact.phone || undefined}
+          />
           <ReviewRow
             label="Resources"
             value={
@@ -924,7 +547,9 @@ export function StepReview({
               })}
             </div>
           )}
-          {details.notes && <ReviewRow label="Notes" value={details.notes} />}
+          {details.staffNotes && (
+            <ReviewRow label="Notes for SAS staff" value={details.staffNotes} />
+          )}
         </dl>
       </Card>
 
@@ -952,10 +577,32 @@ export function StepReview({
   )
 }
 
-export function ReviewRow({ label, value, sub }: { label: string; value: string; sub?: string }) {
+export function ReviewRow({
+  label,
+  value,
+  sub,
+  onEdit,
+}: {
+  label: string
+  value: string
+  sub?: string
+  /** When provided, renders an "Edit" link that jumps back to the owning step. */
+  onEdit?: (() => void) | false
+}) {
   return (
     <div className="flex items-start justify-between gap-6 py-3.5">
-      <dt className="shrink-0 text-sm text-body">{label}</dt>
+      <dt className="shrink-0 text-sm text-body">
+        {label}
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="ml-2 rounded px-1 text-[13px] font-medium text-brand transition-colors hover:bg-brand-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          >
+            Edit
+          </button>
+        ) : null}
+      </dt>
       <dd className="min-w-0 text-right">
         <p className="text-sm font-medium text-ink">{value}</p>
         {sub && <p className="mt-0.5 text-xs text-muted">{sub}</p>}

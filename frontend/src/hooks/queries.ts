@@ -312,11 +312,12 @@ export function useResolveMaintenance(equipmentId: number) {
 // Reservations
 // ---------------------------------------------------------------------------
 
-export function useReservations(filters: ReservationFilters = {}) {
+export function useReservations(filters: ReservationFilters = {}, enabled = true) {
   return useQuery({
     queryKey: ['reservations', filters],
     queryFn: () => endpoints.reservations(filters),
     placeholderData: keepPreviousData,
+    enabled,
   })
 }
 

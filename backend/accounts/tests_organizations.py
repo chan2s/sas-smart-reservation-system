@@ -109,7 +109,7 @@ class AffiliationApiTests(TestCase):
         self.assertEqual(self.client.get(AFFILIATION_URL).status_code, 401)
         self.assertEqual(
             self.client.post(
-                AFFILIATION_URL, {"affiliation": "NORSU_STUDENT"}, format="json"
+                AFFILIATION_URL, {"affiliation": "NORSU_FACULTY_STAFF"}, format="json"
             ).status_code,
             401,
         )
@@ -120,19 +120,19 @@ class AffiliationApiTests(TestCase):
         self.client.force_authenticate(self.user)
         response = self.client.post(
             AFFILIATION_URL,
-            {"affiliation": "NORSU_STUDENT", "organization": "College of Engineering"},
+            {"affiliation": "NORSU_FACULTY_STAFF", "organization": "College of Engineering"},
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.content)
         body = response.json()
-        self.assertEqual(body["affiliation"], "NORSU_STUDENT")
-        self.assertEqual(body["affiliation_label"], "NORSU Student")
+        self.assertEqual(body["affiliation"], "NORSU_FACULTY_STAFF")
+        self.assertEqual(body["affiliation_label"], "NORSU Faculty/Staff")
         self.assertTrue(body["has_affiliation"])
         self.assertIsNone(body["organization"])
         self.assertTrue(body["can_create_reservations"])
 
         self.user.refresh_from_db()
-        self.assertEqual(self.user.affiliation, "NORSU_STUDENT")
+        self.assertEqual(self.user.affiliation, "NORSU_FACULTY_STAFF")
         self.assertEqual(self.user.organization, "College of Engineering")
         self.assertIsNone(self.user.organization_ref)
         self.assertTrue(
@@ -202,7 +202,7 @@ class AffiliationApiTests(TestCase):
         self.client.force_authenticate(self.user)
         self.client.post(AFFILIATION_URL, _organization_payload(), format="json")
         response = self.client.post(
-            AFFILIATION_URL, {"affiliation": "NORSU_STUDENT"}, format="json"
+            AFFILIATION_URL, {"affiliation": "NORSU_FACULTY_STAFF"}, format="json"
         )
         self.assertEqual(response.status_code, 400)
         self.user.refresh_from_db()
@@ -515,7 +515,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
                 "first_name": "Maria",
                 "last_name": "Santos",
                 "email": "maria@norsu.edu.ph",
-                "affiliation": "NORSU_STUDENT",
+                "affiliation": "NORSU_FACULTY_STAFF",
                 "organization": "College of Engineering",
             },
             format="json",
@@ -523,7 +523,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(_external_organizations().count(), 0)
         user = User.objects.get(username="campusnew")
-        self.assertEqual(user.affiliation, User.Affiliation.NORSU_STUDENT)
+        self.assertEqual(user.affiliation, User.Affiliation.NORSU_FACULTY_STAFF)
         self.assertEqual(user.organization, "College of Engineering")
         self.assertIsNone(user.organization_ref)
         self.assertTrue(user.can_create_reservations)
@@ -621,7 +621,7 @@ class InternalOrganizationTests(TestCase):
                 "first_name": "Maria",
                 "last_name": "Santos",
                 "email": "maria@norsu.edu.ph",
-                "affiliation": "NORSU_STUDENT",
+                "affiliation": "NORSU_FACULTY_STAFF",
                 "organization_id": self.internal.id,
             },
             format="json",
@@ -644,7 +644,7 @@ class InternalOrganizationTests(TestCase):
                 "first_name": "Maria",
                 "last_name": "Santos",
                 "email": "maria@norsu.edu.ph",
-                "affiliation": "NORSU_STUDENT",
+                "affiliation": "NORSU_FACULTY_STAFF",
                 "organization_id": self.internal.id,
             },
             format="json",
@@ -659,7 +659,7 @@ class InternalOrganizationTests(TestCase):
         self.client.force_authenticate(user)
         response = self.client.post(
             AFFILIATION_URL,
-            {"affiliation": "NORSU_OFFICE", "organization_id": self.internal.id},
+            {"affiliation": "NORSU_FACULTY_STAFF", "organization_id": self.internal.id},
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.content)
@@ -679,7 +679,7 @@ class InternalOrganizationTests(TestCase):
         self.client.force_authenticate(user)
         response = self.client.post(
             AFFILIATION_URL,
-            {"affiliation": "NORSU_STUDENT", "organization_id": external.id},
+            {"affiliation": "NORSU_FACULTY_STAFF", "organization_id": external.id},
             format="json",
         )
         self.assertEqual(response.status_code, 400, response.content)
@@ -698,7 +698,7 @@ class InternalOrganizationTests(TestCase):
                 "first_name": "Eve",
                 "last_name": "Spoof",
                 "email": "eve@norsu.edu.ph",
-                "affiliation": "NORSU_STUDENT",
+                "affiliation": "NORSU_FACULTY_STAFF",
                 "organization_id": self.internal.id,
                 "organization_name": "Fake NGO",
                 "organization_type": "NGO",
@@ -762,3 +762,89 @@ class InternalOrganizationTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.internal.refresh_from_db()
         self.assertTrue(self.internal.is_active)
+
+
+class RetiredAffiliationTests(TestCase):
+    """NORSU Student and NORSU Office/Department are retired affiliations.
+
+    Internal organizations are represented by an authorized faculty/staff
+    member, so only NORSU Faculty/Staff and External Organization may newly
+    be chosen. Existing records keep their stored value and label, but neither
+    the registration nor the affiliation endpoint accepts the retired values —
+    including through a manually crafted request.
+    """
+
+    RETIRED = ("NORSU_STUDENT", "NORSU_OFFICE")
+
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_only_two_affiliations_are_selectable(self):
+        values = {value for value, _ in User.selectable_affiliation_choices()}
+        self.assertEqual(
+            values, {User.Affiliation.NORSU_FACULTY_STAFF, User.Affiliation.EXTERNAL_ORGANIZATION}
+        )
+
+    def test_affiliation_endpoint_rejects_retired_affiliations(self):
+        for index, affiliation in enumerate(self.RETIRED):
+            user = User.objects.create_user(
+                username=f"campus_{index}",
+                password="pass12345",
+                role=User.Role.REQUESTER,
+            )
+            self.client.force_authenticate(user)
+            response = self.client.post(
+                AFFILIATION_URL, {"affiliation": affiliation}, format="json"
+            )
+            self.assertEqual(response.status_code, 400, (affiliation, response.content))
+            user.refresh_from_db()
+            self.assertEqual(user.affiliation, "")
+
+    def test_registration_rejects_retired_affiliations(self):
+        for affiliation in self.RETIRED:
+            response = self.client.post(
+                REGISTER_URL,
+                {
+                    "username": "crafted",
+                    "password": "pass12345",
+                    "first_name": "Eve",
+                    "last_name": "Spoof",
+                    "email": "eve@norsu.edu.ph",
+                    "affiliation": affiliation,
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 400, (affiliation, response.content))
+            self.assertFalse(User.objects.filter(username="crafted").exists())
+
+    def test_legacy_retired_records_are_preserved(self):
+        for affiliation in self.RETIRED:
+            legacy = User.objects.create_user(
+                username=f"legacy_{affiliation.lower()}",
+                password="pass12345",
+                role=User.Role.REQUESTER,
+            )
+            # Simulate a row written before the option was retired.
+            User.objects.filter(pk=legacy.pk).update(affiliation=affiliation)
+            legacy.refresh_from_db()
+            self.assertTrue(legacy.has_affiliation)
+            self.assertNotEqual(legacy.get_affiliation_display(), "")
+            # Legacy accounts remain fully usable campus requesters.
+            self.assertTrue(legacy.can_create_reservations)
+            self.assertEqual(legacy.trusted_requester_type, "CAMPUS")
+
+    def test_external_registration_cannot_select_internal_type(self):
+        """A crafted organization_type=INTERNAL is rejected outright."""
+        response = self.client.post(
+            REGISTER_URL,
+            _external_registration(organization_type="INTERNAL"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(_external_organizations().exists())
+        self.assertFalse(
+            Organization.objects.filter(
+                organization_type=Organization.OrganizationType.INTERNAL,
+                organization_code__startswith="EXT-",
+            ).exists()
+        )
