@@ -1,3 +1,4 @@
+```bash
 #!/usr/bin/env bash
 set -e
 
@@ -6,6 +7,9 @@ pip install -r requirements.txt
 
 echo "==> Running migrations..."
 python manage.py migrate --noinput
+
+echo "==> Seeding production facilities..."
+python manage.py seed_production
 
 echo "==> Collecting static files..."
 python manage.py collectstatic --noinput
@@ -34,7 +38,7 @@ user.is_staff = True
 user.is_superuser = True
 user.is_active = True
 
-# Your application's admin role
+# SAS RESERVE application-level admin role
 if hasattr(user, "role"):
     try:
         user.role = "ADMIN"
@@ -52,3 +56,4 @@ print(f"==> Admin username: {username}")
 PY
 
 echo "==> Build completed successfully."
+```
