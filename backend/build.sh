@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -e
 
@@ -33,12 +32,10 @@ user, created = User.objects.get_or_create(
 
 user.set_password(password)
 
-# Django admin privileges
 user.is_staff = True
 user.is_superuser = True
 user.is_active = True
 
-# SAS RESERVE application-level admin role
 if hasattr(user, "role"):
     try:
         user.role = "ADMIN"
@@ -56,4 +53,3 @@ print(f"==> Admin username: {username}")
 PY
 
 echo "==> Build completed successfully."
-```
