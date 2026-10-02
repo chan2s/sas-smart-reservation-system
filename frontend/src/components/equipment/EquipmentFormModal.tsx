@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/Button'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import {
   EMPTY_GALLERY_STATE,
-  EquipmentImageManager,
-  type EquipmentGalleryState,
-} from '@/components/equipment/EquipmentImageManager'
+  ImageGalleryManager,
+  type GalleryState,
+} from '@/components/ui/ImageGalleryManager'
 import { Modal } from '@/components/ui/Modal'
 import type { Equipment, EquipmentCategory, EquipmentCondition, EquipmentStatus } from '@/lib/types'
 
@@ -93,7 +93,7 @@ export function EquipmentFormModal({
   // Gallery edits (new Files, deletions, order, primary image) are owned by the
   // image manager. The form only keeps the resulting change set, to apply it
   // once the equipment itself is saved.
-  const [gallery, setGallery] = useState<EquipmentGalleryState>(EMPTY_GALLERY_STATE)
+  const [gallery, setGallery] = useState<GalleryState>(EMPTY_GALLERY_STATE)
 
   // Remounting the manager per edit session is what drops stale selections and
   // revokes its preview blob URLs (its unmount cleanup).
@@ -304,10 +304,11 @@ export function EquipmentFormModal({
           className="sm:col-span-2"
           hint="The first image (or the one marked primary) is used everywhere else in the app."
         >
-          <EquipmentImageManager
+          <ImageGalleryManager
             key={galleryKey}
+            inputId="equipment-images"
             existingImages={equipment?.images ?? []}
-            equipmentName={values.name || equipment?.name || 'Equipment'}
+            entityName={values.name || equipment?.name || 'Equipment'}
             disabled={submitting}
             onChange={setGallery}
           />

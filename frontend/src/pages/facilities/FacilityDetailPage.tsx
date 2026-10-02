@@ -19,7 +19,7 @@ import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { Backdrop } from '@/components/decor/Backdrop'
-import { cn, formatTime } from '@/lib/utils'
+import { cn, facilityPrimaryImageUrl, formatTime } from '@/lib/utils'
 
 export function FacilityDetailPage() {
   const { id } = useParams()
@@ -46,6 +46,8 @@ export function FacilityDetailPage() {
   }
 
   const maintenance = facility.status === 'MAINTENANCE'
+  const archived = !facility.is_active
+  const reservable = !maintenance && !archived
   const upcoming = (reservations?.results ?? []).filter(
     (reservation) => reservation.date >= format(new Date(), 'yyyy-MM-dd'),
   )
@@ -70,13 +72,15 @@ export function FacilityDetailPage() {
           <FacilityImage
             name={facility.name}
             facilityType={facility.facility_type}
-            src={facility.image}
+            src={facilityPrimaryImageUrl(facility)}
             rounded="rounded-none"
           />
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-6 pb-5 pt-16 sm:px-8">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="brand">{facility.facility_type_label}</Badge>
-              {maintenance ? (
+              {archived ? (
+                <Badge tone="gray">Archived</Badge>
+              ) : maintenance ? (
                 <Badge tone="orange">
                   <Wrench className="size-3" /> Under maintenance
                 </Badge>
@@ -119,11 +123,11 @@ export function FacilityDetailPage() {
               View calendar
             </Button>
             <Button
-              disabled={maintenance}
+              disabled={!reservable}
               icon={<CalendarDays className="size-4" />}
               onClick={() => navigate(`/reservations/new?facility=${facility.id}`)}
             >
-              Reserve this facility
+              {archived ? 'Unavailable' : 'Reserve this facility'}
             </Button>
           </div>
         </div>
@@ -255,7 +259,17 @@ export function FacilityDetailPage() {
             )}
           </Card>
 
-          {maintenance && (
+          {archived && (
+            <div className="rounded-xl border border-line bg-soft p-4 text-sm text-body">
+              <p className="font-semibold text-ink">Facility archived</p>
+              <p className="mt-1 text-[13px]">
+                This facility is not available for new reservations. Existing reservations and
+                their records remain intact.
+              </p>
+            </div>
+          )}
+
+          {!archived && maintenance && (
             <div className="rounded-xl border border-status-maintenance/25 bg-status-maintenance-bg p-4 text-sm text-status-maintenance">
               <p className="font-semibold">Facility under maintenance</p>
               <p className="mt-1 text-[13px]">

@@ -7,7 +7,13 @@ def facility_availability_summary(facility, date_str=None) -> dict:
     """Lightweight availability snapshot shown on facility cards."""
     summary = {
         "status": facility.status,
-        "is_operational": facility.status == facility.Status.OPERATIONAL,
+        "is_active": facility.is_active,
+        # A disabled/archived facility is never "open for reservations", even
+        # when its operational status still reads OPERATIONAL.
+        "is_operational": (
+            facility.is_active
+            and facility.status == facility.Status.OPERATIONAL
+        ),
     }
     if not date_str:
         return summary

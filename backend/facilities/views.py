@@ -31,13 +31,105 @@ class FacilityViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        facility_type = self.request.query_params.get("type")
+        params = self.request.query_params
+
+        # Archived/disabled facilities must not appear in reservation flows by
+        # default. Only SAS staff may opt in to see them (e.g. to restore one),
+        # and only when they explicitly ask — mirroring EquipmentViewSet.
+        # Retrieval stays unfiltered so an archived facility's detail page (and
+        # its historical reservations) remains reachable.
+        if self.action == "list" and (
+            params.get("include_inactive") != "true"
+            or not self.request.user.is_sas_staff
+        ):
+            qs = qs.filter(is_active=True)
+
+        facility_type = params.get("type")
         if facility_type:
             qs = qs.filter(facility_type=facility_type)
-        status_param = self.request.query_params.get("status")
+        status_param = params.get("status")
         if status_param:
             qs = qs.filter(status=status_param)
         return qs
+
+    # ------------------------------------------------------------------
+    # Audit + lifecycle
+    # ------------------------------------------------------------------
+
+    def perform_create(self, serializer):
+        facility = serializer.save()
+        AuditLog.record(
+            self.request.user,
+            AuditLog.Action.FACILITY_CREATED,
+            object_type="facility",
+            object_id=facility.id,
+            object_repr=facility.name,
+        )
+
+    def perform_update(self, serializer):
+        previous_image = serializer.instance.image.name if serializer.instance.image else None
+        facility = serializer.save()
+        AuditLog.record(
+            self.request.user,
+            AuditLog.Action.FACILITY_EDITED,
+            object_type="facility",
+            object_id=facility.id,
+            object_repr=facility.name,
+        )
+        new_image = facility.image.name if facility.image else None
+        if previous_image != new_image:
+            AuditLog.record(
+                self.request.user,
+                AuditLog.Action.FACILITY_IMAGE,
+                object_type="facility",
+                object_id=facility.id,
+                object_repr=facility.name,
+                detail=f"Image replaced ({previous_image or 'none'} → {new_image or 'none'})",
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        """Safe deletion: archive facilities with history, hard-delete fresh ones.
+
+        A facility that has ever been reserved can never be hard-deleted —
+        ``Reservation.facility`` is ``on_delete=PROTECT`` and reservation
+        history must survive. Such a facility is disabled instead
+        (``is_active = False``), which removes it from new reservation flows
+        while keeping every record intact.
+        """
+        facility = self.get_object()
+        has_history = facility.reservations.exists()
+        if has_history:
+            facility.is_active = False
+            facility.save(update_fields=["is_active", "updated_at"])
+            AuditLog.record(
+                request.user,
+                AuditLog.Action.FACILITY_REMOVED,
+                object_type="facility",
+                object_id=facility.id,
+                object_repr=facility.name,
+                detail="Archived (has reservation history)",
+            )
+            return Response(
+                {
+                    "archived": True,
+                    "id": facility.id,
+                    "detail": (
+                        f"{facility.name} was archived instead of deleted because it "
+                        "has reservation history. Existing reservations remain "
+                        "intact, and the facility can be restored at any time."
+                    ),
+                },
+                status=status.HTTP_200_OK,
+            )
+        AuditLog.record(
+            request.user,
+            AuditLog.Action.FACILITY_REMOVED,
+            object_type="facility",
+            object_id=facility.id,
+            object_repr=facility.name,
+            detail="Permanently deleted (no history)",
+        )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["get"], url_path="resources")
     def resources(self, request, pk=None):

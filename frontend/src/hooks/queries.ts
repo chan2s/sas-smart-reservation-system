@@ -5,11 +5,12 @@ import {
   galleryChangeIsEmpty,
   type CreateReservationPayload,
   type EquipmentGalleryChange,
-  type EquipmentImageRef,
+  type GalleryChange,
+  type GalleryImageRef,
   type EquipmentPayload,
   type ReservationFilters,
 } from '@/lib/api'
-import type { FacilityResourcePayload, RequesterType } from '@/lib/types'
+import type { FacilityPayload, FacilityResourcePayload, RequesterType } from '@/lib/types'
 import type {
   AffiliationPayload,
   OrganizationFilters,
@@ -33,6 +34,98 @@ export function useFacility(id: number | null) {
     queryFn: () => endpoints.facility(id as number),
     enabled: id != null,
   })
+}
+
+/**
+ * Invalidate every cache a facility write touches, so the newly created or
+ * edited facility appears in the admin list, the requester facility page, the
+ * reservation wizard, and filters immediately — no manual refresh.
+ */
+function invalidateFacilities(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['facilities'] })
+  void queryClient.invalidateQueries({ queryKey: ['facility'] })
+  void queryClient.invalidateQueries({ queryKey: ['summary'] })
+}
+
+export function useCreateFacility() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: FormData) => endpoints.createFacility(payload),
+    onSuccess: () => invalidateFacilities(queryClient),
+  })
+}
+
+export function useUpdateFacility(id: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: Partial<FacilityPayload> | FormData) =>
+      endpoints.updateFacility(id, payload),
+    onSuccess: () => invalidateFacilities(queryClient),
+  })
+}
+
+export function useDeleteFacility(id: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.deleteFacility(id),
+    onSuccess: () => invalidateFacilities(queryClient),
+  })
+}
+
+/** Re-enables a disabled/archived facility (PATCH is_active=true). */
+export function useRestoreFacility() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => endpoints.restoreFacility(id),
+    onSuccess: () => invalidateFacilities(queryClient),
+  })
+}
+
+/**
+ * Apply an admin's facility gallery edits, mirroring `useSaveEquipmentGallery`.
+ *
+ * Deletes, uploads, reorder, and primary-promotion run in order and any
+ * failure rejects, so the modal never pretends the images were saved.
+ */
+export function useSaveFacilityGallery() {
+  const queryClient = useQueryClient()
+
+  return async (facilityId: number, change: GalleryChange) => {
+    if (galleryChangeIsEmpty(change)) return
+
+    for (const imageId of change.deleteIds) {
+      await endpoints.deleteFacilityImage(facilityId, imageId)
+    }
+
+    const uploadedIds: number[] = []
+    if (change.files.length > 0) {
+      const response = await endpoints.uploadFacilityImages(facilityId, change.files)
+      for (const image of response.images) {
+        if (image.id != null) uploadedIds.push(image.id)
+      }
+    }
+
+    const resolve = (ref: GalleryImageRef): number | null =>
+      'id' in ref ? ref.id : uploadedIds[ref.fileIndex] ?? null
+
+    const order = change.order
+      .map(resolve)
+      .filter((id): id is number => id != null)
+    if (order.length > 0 && order.length === change.order.length) {
+      await endpoints.reorderFacilityImages(facilityId, order)
+    }
+
+    if (change.primary) {
+      const primaryId = resolve(change.primary)
+      if (primaryId != null) {
+        await endpoints.setPrimaryFacilityImage(facilityId, primaryId)
+      }
+    }
+
+    await queryClient.invalidateQueries({ queryKey: ['facilities'] })
+    await queryClient.invalidateQueries({ queryKey: ['facility', facilityId] })
+    await queryClient.invalidateQueries({ queryKey: ['summary'] })
+  }
 }
 
 /**
@@ -245,7 +338,7 @@ export function useSaveEquipmentGallery() {
       }
     }
 
-    const resolve = (ref: EquipmentImageRef): number | null =>
+    const resolve = (ref: GalleryImageRef): number | null =>
       'id' in ref ? ref.id : uploadedIds[ref.fileIndex] ?? null
 
     const order = change.order

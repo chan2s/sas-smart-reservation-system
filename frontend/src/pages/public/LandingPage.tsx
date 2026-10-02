@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEquipment, useEquipmentStats, useFacilities } from '@/hooks/queries'
-import { getEquipmentImageUrl, cn } from '@/lib/utils'
+import { getEquipmentImageUrl, facilityPrimaryImageUrl, cn } from '@/lib/utils'
 import { BrandMark } from '@/components/auth/AuthPanel'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
 
@@ -912,9 +912,9 @@ export function LandingPage() {
                           data-clip-reveal
                           className="absolute inset-0 scale-[1.12]"
                         >
-                          {facility.image ? (
+                          {facilityPrimaryImageUrl(facility) ? (
                             <img
-                              src={getEquipmentImageUrl(facility.image) ?? undefined}
+                              src={facilityPrimaryImageUrl(facility) ?? undefined}
                               alt=""
                               className="h-full w-full object-cover"
                               loading="lazy"

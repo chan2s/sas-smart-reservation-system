@@ -129,7 +129,11 @@ def check_availability(facility_id, target_date, start, end, items=None, exclude
         .select_related("requester")
         .order_by("start_time")
     )
-    facility_ok = not overlaps and facility.status == Facility.Status.OPERATIONAL
+    facility_ok = (
+        not overlaps
+        and facility.is_active
+        and facility.status == Facility.Status.OPERATIONAL
+    )
 
     # Operating hours -------------------------------------------------------
     oh = operating_hour_for(facility, target_date)
@@ -195,6 +199,16 @@ def check_availability(facility_id, target_date, start, end, items=None, exclude
                     "type": "facility",
                     "message": (
                         f"The {facility.name} is already reserved during this time."
+                    ),
+                }
+            )
+        elif not facility.is_active:
+            problems.append(
+                {
+                    "type": "facility",
+                    "message": (
+                        f"The {facility.name} is not available for reservation. "
+                        "It may have been disabled or archived by the SAS Office."
                     ),
                 }
             )

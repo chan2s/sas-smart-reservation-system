@@ -1,4 +1,7 @@
+import json
+
 from rest_framework import serializers
+from rest_framework.utils import html
 
 from .models import Facility, FacilityImage, OperatingHour
 from .services import facility_availability_summary
@@ -75,6 +78,32 @@ class OperatingHourSerializer(serializers.ModelSerializer):
         return obj.day_label if hasattr(obj, "day_label") else OperatingHour.Day(obj.day_of_week).label
 
 
+class TokenListField(serializers.ListField):
+    """A list of short tokens that also accepts a JSON/CSV string.
+
+    The admin form posts multipart/form-data, where DRF's built-in HTML list
+    support only understands repeated keys and cannot express an empty list.
+    This field accepts a single JSON-encoded array (what the form sends) as
+    well as a comma-separated string or repeated keys, so built-ins can always
+    be set — and cleared — reliably.
+    """
+
+    def get_value(self, dictionary):
+        if html.is_html_input(dictionary):
+            raw = dictionary.get(self.field_name, None)
+            if isinstance(raw, str):
+                text = raw.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                except ValueError:
+                    parsed = [part.strip() for part in text.split(",") if part.strip()]
+                if isinstance(parsed, list):
+                    return parsed
+        return super().get_value(dictionary)
+
+
 class FacilityImageSerializer(serializers.ModelSerializer):
     """One gallery image, as the frontend consumes it."""
 
@@ -97,7 +126,7 @@ class FacilitySerializer(serializers.ModelSerializer):
     seating_type_label = serializers.CharField(
         source="get_seating_type_display", read_only=True
     )
-    built_ins = serializers.ListField(
+    built_ins = TokenListField(
         child=serializers.CharField(max_length=40, allow_blank=True),
         required=False,
         help_text='Items the space already provides, e.g. ["tables", "chairs"].',
@@ -108,6 +137,10 @@ class FacilitySerializer(serializers.ModelSerializer):
     operating_hours = OperatingHourSerializer(many=True, read_only=True)
     image = serializers.ImageField(required=False, allow_null=True)
     images = serializers.SerializerMethodField()
+    #: Drives the admin "archive vs. delete" decision (see FacilityViewSet).
+    has_history = serializers.SerializerMethodField()
+    reservation_count = serializers.SerializerMethodField()
+    is_active = serializers.BooleanField(required=False)
 
     class Meta:
         model = Facility
@@ -129,10 +162,19 @@ class FacilitySerializer(serializers.ModelSerializer):
             "status",
             "status_label",
             "is_active",
+            "has_history",
+            "reservation_count",
             "availability",
             "operating_hours",
         )
-        read_only_fields = ("availability", "operating_hours", "images", "seating_type_label")
+        read_only_fields = (
+            "availability",
+            "operating_hours",
+            "images",
+            "seating_type_label",
+            "has_history",
+            "reservation_count",
+        )
 
     def get_images(self, obj):
         """The gallery, ordered by the model's ordering.
@@ -167,6 +209,36 @@ class FacilitySerializer(serializers.ModelSerializer):
         generic Django failure.
         """
         return validate_facility_image(value)
+
+    def validate_name(self, value):
+        """Facility names are unique and must not be blank.
+
+        The model already enforces uniqueness, but a hand-written message is
+        clearer for the admin UI than DRF's generic validator text.
+        """
+        name = (value or "").strip()
+        if not name:
+            raise serializers.ValidationError("Facility name is required.")
+        existing = Facility.objects.filter(name__iexact=name)
+        if self.instance is not None:
+            existing = existing.exclude(pk=self.instance.pk)
+        if existing.exists():
+            raise serializers.ValidationError(
+                f"A facility named “{name}” already exists. Please use a different name."
+            )
+        return name
+
+    def validate_capacity(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Capacity cannot be negative.")
+        return value
+
+    def get_has_history(self, obj):
+        """True when the facility has reservations and must be archived."""
+        return obj.reservations.exists()
+
+    def get_reservation_count(self, obj):
+        return obj.reservations.count()
 
     def get_availability(self, obj):
         request = self.context.get("request")

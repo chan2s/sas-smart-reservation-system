@@ -14,6 +14,8 @@ import type {
   EquipmentStatus,
   EventType,
   Facility,
+  FacilityImage,
+  FacilityPayload,
   FacilityResource,
   FacilityResourcePayload,
   Insights,
@@ -381,32 +383,39 @@ export interface EquipmentPayload {
 
 /**
  * One gallery change set, produced by the admin image manager and applied by
- * `useSaveEquipmentGallery`.
+ * the gallery save hooks (`useSaveEquipmentGallery`, `useSaveFacilityGallery`).
  *
  * Images are addressed either by their existing gallery id or by their index in
  * `files` (a brand-new image only receives an id once the backend stores it).
+ *
+ * Shared by equipment and facilities: the shape is identical for both, so the
+ * same manager component and save logic serve either entity.
  */
-export type EquipmentImageRef = { id: number } | { fileIndex: number }
+export type GalleryImageRef = { id: number } | { fileIndex: number }
 
-export interface EquipmentGalleryChange {
+export interface GalleryChange {
   /** Every new File to upload, in the order they should appear. Real Files only. */
   files: File[]
   /** Existing gallery image ids the admin removed. */
   deleteIds: number[]
   /** Display order of every surviving image. */
-  order: EquipmentImageRef[]
+  order: GalleryImageRef[]
   /** The image that should become primary, if the admin changed it. */
-  primary: EquipmentImageRef | null
+  primary: GalleryImageRef | null
 }
 
-export const EMPTY_GALLERY_CHANGE: EquipmentGalleryChange = {
+/** Backward-compatible aliases for the equipment naming. */
+export type EquipmentImageRef = GalleryImageRef
+export type EquipmentGalleryChange = GalleryChange
+
+export const EMPTY_GALLERY_CHANGE: GalleryChange = {
   files: [],
   deleteIds: [],
   order: [],
   primary: null,
 }
 
-export function galleryChangeIsEmpty(change: EquipmentGalleryChange): boolean {
+export function galleryChangeIsEmpty(change: GalleryChange): boolean {
   return (
     change.files.length === 0 &&
     change.deleteIds.length === 0 &&
@@ -464,6 +473,37 @@ export const endpoints = {
     return api.get<Facility[]>(`/api/facilities/${qs ? `?${qs}` : ''}`)
   },
   facility: (id: number) => api.get<Facility>(`/api/facilities/${id}/`),
+  // --- Admin facility management (SAS staff only) --------------------
+  createFacility: (payload: FacilityPayload | FormData) =>
+    payload instanceof FormData
+      ? api.postForm<Facility>('/api/facilities/', payload)
+      : api.post<Facility>('/api/facilities/', payload),
+  updateFacility: (id: number, payload: Partial<FacilityPayload> | FormData) =>
+    payload instanceof FormData
+      ? api.patchForm<Facility>(`/api/facilities/${id}/`, payload)
+      : api.patch<Facility>(`/api/facilities/${id}/`, payload),
+  deleteFacility: (id: number) =>
+    api.delete<{ archived?: boolean; detail?: string }>(`/api/facilities/${id}/`),
+  /** Re-enables an archived/disabled facility (PATCH is_active=true). */
+  restoreFacility: (id: number) =>
+    api.patch<Facility>(`/api/facilities/${id}/`, { is_active: true }),
+  // --- Facility image gallery ---------------------------------------
+  facilityImages: (id: number) =>
+    api.get<{ images: FacilityImage[] }>(`/api/facilities/${id}/images/`),
+  /** Uploads one or more gallery images under the repeated `images` field. */
+  uploadFacilityImages: (id: number, files: File[]) => {
+    const form = new FormData()
+    for (const file of files) form.append('images', file)
+    return api.postForm<{ images: FacilityImage[] }>(`/api/facilities/${id}/images/`, form)
+  },
+  deleteFacilityImage: (id: number, imageId: number) =>
+    api.delete<{ images: FacilityImage[] }>(`/api/facilities/${id}/images/${imageId}/`),
+  setPrimaryFacilityImage: (id: number, imageId: number) =>
+    api.post<{ images: FacilityImage[] }>(
+      `/api/facilities/${id}/images/${imageId}/primary/`,
+    ),
+  reorderFacilityImages: (id: number, order: number[]) =>
+    api.post<{ images: FacilityImage[] }>(`/api/facilities/${id}/images/order/`, { order }),
   /**
    * Resources/equipment assigned to a facility (the DB is the source of
    * truth). Optional `date`/`start`/`end` params make `availability` reflect

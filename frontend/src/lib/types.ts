@@ -182,6 +182,15 @@ export interface FacilityAvailability {
   available?: boolean
 }
 
+/** One image in a facility's gallery (primary first). */
+export interface FacilityImage {
+  /** Null for a legacy single image that has no gallery row yet. */
+  id: number | null
+  url: string
+  is_primary: boolean
+  order: number
+}
+
 /** How a facility is physically seated (null means not verified yet). */
 export type SeatingType = 'tables_and_chairs' | 'fixed_rows' | 'open_floor'
 
@@ -205,8 +214,33 @@ export interface Facility {
   status: FacilityStatus
   status_label: string
   is_active: boolean
+  /** The gallery, primary first. Absent on old cached payloads — never assume. */
+  images?: FacilityImage[]
+  /** True when the facility has reservations and must be archived, not deleted. */
+  has_history: boolean
+  reservation_count: number
   availability: FacilityAvailability
   operating_hours?: OperatingHour[]
+}
+
+/**
+ * Writable payload for administering a facility.
+ *
+ * The admin form sends a `FormData` (to carry the image), so this mostly
+ * exists to document the shape and for JSON callers such as "restore".
+ */
+export interface FacilityPayload {
+  name: string
+  facility_type: FacilityType
+  description: string
+  capacity: number
+  location: string
+  status: FacilityStatus
+  is_active: boolean
+  seating_type?: SeatingType | null
+  built_in_seats?: number | null
+  built_ins?: string[]
+  image?: File | null
 }
 
 /** Reservability level computed from the schedule + item status. */

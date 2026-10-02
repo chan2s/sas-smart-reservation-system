@@ -10,7 +10,7 @@ import { PricingBreakdown } from '@/components/reservations/PricingBreakdown'
 import { MonthGrid } from '@/components/calendar/MonthGrid'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
-import { cn, equipmentPrimaryImageUrl, formatTime } from '@/lib/utils'
+import { cn, equipmentPrimaryImageUrl, facilityPrimaryImageUrl, formatTime } from '@/lib/utils'
 import type { ContactDraft, EventDetailsDraft } from '@/lib/reservationDraft'
 import type {
   AlternativeSlot,
@@ -109,7 +109,7 @@ export function StepFacility({
   selected,
   onSelect,
 }: {
-  facilities: { id: number; name: string; facility_type: string; facility_type_label: string; description: string; capacity: number; location: string; image: string | null; status: string }[]
+  facilities: { id: number; name: string; facility_type: string; facility_type_label: string; description: string; capacity: number; location: string; image: string | null; images?: { id: number | null; url: string; is_primary: boolean; order: number }[]; is_active: boolean; status: string }[]
   selected: number | null
   onSelect: (id: number) => void
 }) {
@@ -118,32 +118,35 @@ export function StepFacility({
       <h2 className="text-lg font-semibold text-ink">Choose facility</h2>
       <p className="mt-1 text-sm text-body">Select the space you need for your event.</p>
 
+      {/* Disabled/archived facilities are already excluded by the backend, so
+          this list only ever contains reservable spaces. */}
       <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {facilities.map((facility) => {
           const isSelected = selected === facility.id
-          const maintenance = facility.status === 'MAINTENANCE'
+          const unavailable = facility.status === 'MAINTENANCE' || facility.is_active === false
           return (
             <button
               key={facility.id}
               type="button"
-              onClick={() => !maintenance && onSelect(facility.id)}
+              onClick={() => !unavailable && onSelect(facility.id)}
               aria-pressed={isSelected}
+              disabled={unavailable}
               className={cn(
                 'card card-hover overflow-hidden text-left transition-shadow',
                 isSelected && 'ring-2 ring-brand ring-offset-2',
-                maintenance && 'cursor-not-allowed opacity-60',
+                unavailable && 'cursor-not-allowed opacity-60',
               )}
             >
               <div className="relative h-28">
                 <FacilityImage
                   name={facility.name}
                   facilityType={facility.facility_type as never}
-                  src={facility.image}
+                  src={facilityPrimaryImageUrl(facility)}
                   rounded="rounded-none"
                 />
                 <div className="absolute left-3 top-3">
-                  {maintenance ? (
-                    <Badge tone="orange">Maintenance</Badge>
+                  {unavailable ? (
+                    <Badge tone="orange">Unavailable</Badge>
                   ) : isSelected ? (
                     <Badge tone="brand">Selected</Badge>
                   ) : (
