@@ -3,7 +3,7 @@ from django.db import transaction
 from datetime import time
 
 from facilities.models import Facility, OperatingHour
-
+from equipment.models import EquipmentCategory
 
 FACILITIES = [
     {
@@ -84,13 +84,64 @@ FACILITIES = [
         "is_active": True,
     },
 ]
-
+EQUIPMENT_CATEGORIES = [
+    {
+        "name": "Chairs",
+        "icon": "armchair",
+        "description": "",
+    },
+    {
+        "name": "Microphones",
+        "icon": "mic",
+        "description": "",
+    },
+    {
+        "name": "Other Equipment",
+        "icon": "package",
+        "description": "",
+    },
+    {
+        "name": "Projectors",
+        "icon": "projector",
+        "description": "",
+    },
+    {
+        "name": "Sound Systems",
+        "icon": "volume-2",
+        "description": "",
+    },
+    {
+        "name": "Tables",
+        "icon": "table",
+        "description": "",
+    },
+]
 
 class Command(BaseCommand):
     help = "Create or update the default SAS RESERVE production facilities."
 
     @transaction.atomic
     def handle(self, *args, **options):
+        self.stdout.write("Seeding equipment categories...")
+
+        for data in EQUIPMENT_CATEGORIES:
+            category, created = EquipmentCategory.objects.get_or_create(
+                name=data["name"],
+                defaults={
+                    "icon": data["icon"],
+                    "description": data["description"],
+                },
+            )
+
+        if created:
+            self.stdout.write(
+                self.style.SUCCESS(f"  Created category: {category.name}")
+            )
+        else:
+            self.stdout.write(
+                f"  Category already exists: {category.name}"
+            )
+            
         self.stdout.write("Seeding facilities...")
 
         facilities = {}
