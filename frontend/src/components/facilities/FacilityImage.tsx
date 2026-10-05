@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Building2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FacilityType } from '@/lib/types'
@@ -26,11 +27,22 @@ export function FacilityImage({
   className?: string
   rounded?: string
 }) {
-  if (src) {
+  // A URL that fails to load (moved/deleted file, bad media path) must never
+  // show the browser's broken-image icon — fall back to the same placeholder
+  // used when there is no image at all.
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    setFailed(false)
+  }, [src])
+
+  if (src && !failed) {
     return (
       <img
         src={src}
         alt={`${name} facility`}
+        loading="lazy"
+        onError={() => setFailed(true)}
         className={cn('h-full w-full object-cover', rounded, className)}
       />
     )

@@ -144,6 +144,8 @@ export function ImageGalleryManager({
     initialPrimaryKey(existingImages),
   )
   const [error, setError] = useState<string | null>(null)
+  // The saved image currently awaiting an explicit delete confirmation.
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null)
 
   // Every blob URL this component created, revoked on removal and unmount.
   const liveUrlsRef = useRef<Set<string>>(new Set())
@@ -270,6 +272,22 @@ export function ImageGalleryManager({
     )
   }
 
+  /**
+   * Remove a tile from the manager.
+   *
+   * A saved image is deleted from the server when the form is saved, so it
+   * asks for confirmation first (never a silent destructive change). A new
+   * file that was never uploaded is just dropped, and an already-removed image
+   * is an undo.
+   */
+  function requestRemove(entry: Entry) {
+    if (entry.kind === 'new' || entry.removed) {
+      removeEntry(entry)
+      return
+    }
+    setConfirmingKey(entry.key)
+  }
+
   function moveEntry(key: string, direction: -1 | 1) {
     setEntries((current) => {
       const movable = current.filter((entry) => entry.kind === 'new' || !entry.removed)
@@ -385,6 +403,32 @@ export function ImageGalleryManager({
                     </p>
 
                     <div className="flex items-center gap-1">
+                      {confirmingKey === entry.key ? (
+                        <>
+                          <span className="mr-auto pr-1 text-[11px] font-medium text-status-rejected">
+                            Delete this image?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              removeEntry(entry)
+                              setConfirmingKey(null)
+                            }}
+                            disabled={disabled}
+                            className="rounded-md bg-status-rejected px-2 py-1 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingKey(null)}
+                            className="rounded-md border border-line px-2 py-1 text-[11px] font-medium text-body transition-colors hover:bg-soft"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
                       <button
                         type="button"
                         onClick={() => setPrimaryKey(entry.key)}
@@ -421,7 +465,7 @@ export function ImageGalleryManager({
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeEntry(entry)}
+                        onClick={() => requestRemove(entry)}
                         disabled={disabled || isLegacy}
                         aria-label={isRemoved ? `Keep ${name}` : `Remove ${name}`}
                         title={
@@ -442,6 +486,8 @@ export function ImageGalleryManager({
                           <Trash2 className="size-3.5" />
                         )}
                       </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </li>

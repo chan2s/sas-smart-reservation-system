@@ -30,7 +30,10 @@ def secret_key_length_check(app_configs, **kwargs):
 
 @checks.register()
 def email_backend_configuration_check(app_configs, **kwargs):
-    """Warn when SMTP is selected but the credentials cannot possibly work.
+    """Warn when the selected email backend lacks usable credentials.
+
+    Covers the SMTP backend used for Gmail (needs ``EMAIL_HOST_USER`` /
+    ``EMAIL_HOST_PASSWORD``).
 
     A missing or placeholder ``EMAIL_HOST_USER`` / ``EMAIL_HOST_PASSWORD`` is
     the usual cause of Gmail's ``535 5.7.8 Username and Password not
@@ -45,6 +48,7 @@ def email_backend_configuration_check(app_configs, **kwargs):
     from django.conf import settings
 
     backend = getattr(settings, "EMAIL_BACKEND", "")
+
     if "smtp" not in backend:
         return []  # console / locmem / file backends need no credentials
 

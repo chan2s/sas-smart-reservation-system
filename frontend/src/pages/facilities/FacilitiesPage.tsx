@@ -27,12 +27,12 @@ import { PageHeader, Skeleton, EmptyState } from '@/components/ui/Misc'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Form'
 import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
-import { FacilityImage } from '@/components/facilities/FacilityImage'
+import { FacilityImageCarousel } from '@/components/facilities/FacilityImageCarousel'
 import { FacilityFormModal } from '@/components/facilities/FacilityFormModal'
 import { RemoveFacilityModal } from '@/components/facilities/RemoveFacilityModal'
 import { Badge } from '@/components/ui/Badge'
 import { Backdrop } from '@/components/decor/Backdrop'
-import { cn, facilityPrimaryImageUrl, formatTime } from '@/lib/utils'
+import { cn, facilityImageUrls, formatTime } from '@/lib/utils'
 import type { Facility } from '@/lib/types'
 
 const nextSevenDays = Array.from({ length: 7 }, (_, index) => {
@@ -334,13 +334,13 @@ function FacilityCard({
       className={cn('card card-hover flex flex-col overflow-hidden', archived && 'opacity-70')}
     >
       <div className="relative h-48">
-        <FacilityImage
+        <FacilityImageCarousel
+          images={facilityImageUrls(facility)}
           name={facility.name}
           facilityType={facility.facility_type}
-          src={facilityPrimaryImageUrl(facility)}
           rounded="rounded-none"
         />
-        <div className="absolute left-4 top-4 flex flex-wrap gap-2">
+        <div className="pointer-events-none absolute left-4 top-4 flex flex-wrap gap-2">
           {archived ? (
             <Badge tone="gray">Archived</Badge>
           ) : maintenance ? (

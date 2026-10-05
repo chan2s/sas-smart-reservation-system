@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -17,15 +18,18 @@ import { Skeleton, EmptyState } from '@/components/ui/Misc'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { FacilityImage } from '@/components/facilities/FacilityImage'
+import { FacilityImageCarousel } from '@/components/facilities/FacilityImageCarousel'
+import { FacilityImageViewer } from '@/components/facilities/FacilityImageViewer'
 import { Backdrop } from '@/components/decor/Backdrop'
-import { cn, facilityPrimaryImageUrl, formatTime } from '@/lib/utils'
+import { cn, facilityImageUrls, formatTime } from '@/lib/utils'
 
 export function FacilityDetailPage() {
   const { id } = useParams()
   const facilityId = Number(id)
   const navigate = useNavigate()
   const { isStaff } = useAuth()
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerIndex, setViewerIndex] = useState(0)
   const { data: facility, isLoading } = useFacility(facilityId)
   const { data: reservations } = useReservations({ facility: facilityId })
   // Resources assigned to THIS facility — the admin-configured list, never
@@ -69,32 +73,41 @@ export function FacilityDetailPage() {
       {/* Hero */}
       <div className="mt-4 overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
         <div className="relative h-60 sm:h-72">
-          <FacilityImage
+          <FacilityImageCarousel
+            images={facilityImageUrls(facility)}
             name={facility.name}
             facilityType={facility.facility_type}
-            src={facilityPrimaryImageUrl(facility)}
             rounded="rounded-none"
+            onOpenImage={(index) => {
+              setViewerIndex(index)
+              setViewerOpen(true)
+            }}
+            overlay={
+              // Extra bottom padding keeps the carousel's indicator dots clear
+              // of the title band; pointer-events-none lets the image beneath
+              // still open the full-size preview.
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-6 pb-10 pt-16 sm:px-8">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="brand">{facility.facility_type_label}</Badge>
+                  {archived ? (
+                    <Badge tone="gray">Archived</Badge>
+                  ) : maintenance ? (
+                    <Badge tone="orange">
+                      <Wrench className="size-3" /> Under maintenance
+                    </Badge>
+                  ) : (
+                    <Badge tone="emerald">Available</Badge>
+                  )}
+                </div>
+                <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                  {facility.name}
+                </h1>
+                <p className="mt-1 flex items-center gap-1.5 text-sm text-white/85">
+                  <MapPin className="size-4" aria-hidden /> {facility.location}
+                </p>
+              </div>
+            }
           />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-6 pb-5 pt-16 sm:px-8">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="brand">{facility.facility_type_label}</Badge>
-              {archived ? (
-                <Badge tone="gray">Archived</Badge>
-              ) : maintenance ? (
-                <Badge tone="orange">
-                  <Wrench className="size-3" /> Under maintenance
-                </Badge>
-              ) : (
-                <Badge tone="emerald">Available</Badge>
-              )}
-            </div>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              {facility.name}
-            </h1>
-            <p className="mt-1 flex items-center gap-1.5 text-sm text-white/85">
-              <MapPin className="size-4" aria-hidden /> {facility.location}
-            </p>
-          </div>
         </div>
 
         {/* CTAs */}
@@ -280,6 +293,15 @@ export function FacilityDetailPage() {
           )}
         </div>
       </div>
+
+      <FacilityImageViewer
+        open={viewerOpen}
+        name={facility.name}
+        facilityType={facility.facility_type}
+        images={facilityImageUrls(facility)}
+        initialIndex={viewerIndex}
+        onClose={() => setViewerOpen(false)}
+      />
     </div>
   )
 }

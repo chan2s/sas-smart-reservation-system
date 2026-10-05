@@ -434,12 +434,9 @@ if DEBUG and ALLOW_DEV_TUNNELS:
 # Tests use django.core.mail.backends.locmem.EmailBackend automatically via
 # Django's test runner, so no real SMTP is touched in CI/tests.
 
-EMAIL_BACKEND = os.environ.get(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend",
-)
-
-
+# Standard Django SMTP backend. Gmail SMTP is the default; Resend is no
+# longer on the active path (accounts/email_backends.py is retained only so
+# its unit tests stay valid, but nothing selects it).
 EMAIL_BACKEND = os.environ.get(
     "EMAIL_BACKEND",
     "django.core.mail.backends.smtp.EmailBackend",
@@ -447,7 +444,13 @@ EMAIL_BACKEND = os.environ.get(
 
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "465"))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
+
+# Port 465 uses implicit SSL; port 587 uses STARTTLS. Django raises an error
+# if both EMAIL_USE_SSL and EMAIL_USE_TLS are enabled, so they are read
+# independently and must never be turned on together.
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "true").lower() == "true"
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "false").lower() == "true"
+
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 

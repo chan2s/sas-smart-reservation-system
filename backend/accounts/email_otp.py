@@ -82,9 +82,11 @@ def _email_config_snapshot() -> str:
     Logged before every dispatch and inside every failure path: when a send
     works from ``manage.py shell`` but fails inside a web request, this line
     shows exactly what differs between the two processes (the usual culprit
-    being a server started before ``.env`` was edited). The SMTP password is
-    never included — only whether it is set, its length, and whether it
-    carries stray whitespace.
+    being a server started before ``.env`` was edited).
+
+    Secrets are never included — for SMTP only whether the password is set,
+    its length, and whether it carries stray whitespace. Never the values
+    themselves.
     """
     password = settings.EMAIL_HOST_PASSWORD or ""
     return (
