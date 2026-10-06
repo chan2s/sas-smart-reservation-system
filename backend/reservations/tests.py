@@ -18,6 +18,7 @@ from .models import (
     PricingRule,
     RecommendationRule,
     Reservation,
+    ReservationEvent,
     ReservationItem,
 )
 from .services.availability import check_availability, find_alternatives
@@ -1178,6 +1179,297 @@ class CancellationWindowTests(TestCase):
         self.assertEqual(response.status_code, 404, response.content)
         reservation.refresh_from_db()
         self.assertEqual(reservation.status, Reservation.Status.PENDING)
+
+
+class RequesterCancellationTests(TestCase):
+    """Requester-side cancellation through the existing cancel endpoint.
+
+    Covers the behaviours the CancellationWindowTests do not: authentication,
+    timeline/audit recording of the requester's action, terminal-status
+    refusals (already cancelled / completed / expired), idempotency under a
+    double submission, and release of the facility + equipment the cancelled
+    reservation was holding. All of these exercise the API directly, i.e. the
+    policy holds even when the frontend is bypassed entirely.
+    """
+
+    def setUp(self):
+        # Freeze "now" at 06:00 Asia/Manila so the cancellation window keys off
+        # the event DATE deterministically and no reservation auto-expires
+        # before the assertion runs (see CancellationWindowTests.setUp).
+        frozen_now = timezone.make_aware(
+            datetime.combine(timezone.localdate(), time(6, 0))
+        )
+        patcher = mock.patch("django.utils.timezone.now", return_value=frozen_now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.requester = User.objects.create_user(
+            username="requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.facility = Facility.objects.create(
+            name="AVR", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        # Availability checks also validate operating hours; cover every
+        # weekday so the event date's weekday is always open.
+        for weekday in range(7):
+            OperatingHour.objects.create(
+                facility=self.facility,
+                day_of_week=weekday,
+                open_time=time(6, 0),
+                close_time=time(22, 0),
+            )
+        self.category = EquipmentCategory.objects.create(name="Chairs")
+        self.chairs = Equipment.objects.create(
+            name="Banquet Chair", category=self.category, total_quantity=4
+        )
+        self.event_day = timezone.localdate() + timedelta(days=3)
+        self._reservation_counter = 0
+
+    def _make_reservation(self, **kwargs):
+        defaults = dict(
+            requester=self.requester,
+            event_name="Students Seminar",
+            facility=self.facility,
+            date=self.event_day,
+            start_time=time(8, 0),
+            end_time=time(12, 0),
+            status=Reservation.Status.APPROVED,
+        )
+        defaults.update(kwargs)
+        self._reservation_counter += 1
+        reservation = Reservation.objects.create(**defaults)
+        ReservationItem.objects.create(
+            reservation=reservation, equipment=self.chairs, quantity=3
+        )
+        return reservation
+
+    def _cancel_events(self, reservation):
+        return reservation.events.filter(
+            event_type=ReservationEvent.EventType.CANCELLED
+        )
+
+    def test_unauthenticated_user_cannot_cancel(self):
+        reservation = self._make_reservation()
+        response = self.client.post(f"/api/reservations/{reservation.id}/cancel/")
+        self.assertEqual(response.status_code, 401, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+
+    def test_requester_can_cancel_own_reservation_records_timeline_and_reason(self):
+        """A cancellable own reservation is cancelled, and the action is
+        recorded in the existing activity timeline + audit log (actor, status
+        transition, reason message)."""
+        from accounts.models import AuditLog
+
+        reservation = self._make_reservation()
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/",
+            {"reason": "Event was postponed."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CANCELLED)
+
+        events = self._cancel_events(reservation)
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertEqual(event.actor_id, self.requester.id)
+        self.assertEqual(event.from_status, Reservation.Status.APPROVED)
+        self.assertEqual(event.to_status, Reservation.Status.CANCELLED)
+        self.assertEqual(event.message, "Event was postponed.")
+        self.assertEqual(event.event_type, ReservationEvent.EventType.CANCELLED)
+
+        audits = AuditLog.objects.filter(
+            action=AuditLog.Action.RESERVATION_CANCELLED,
+            object_id=reservation.reservation_id,
+        )
+        self.assertEqual(audits.count(), 1)
+        self.assertEqual(audits.first().actor_id, self.requester.id)
+
+    def test_double_cancellation_rejected_without_duplicate_records(self):
+        """A second cancel click (or a replayed request) is rejected safely and
+        creates no duplicate timeline / audit records."""
+        from accounts.models import AuditLog
+
+        reservation = self._make_reservation()
+        self.client.force_authenticate(self.requester)
+        first = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        second = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertEqual(second.status_code, 400, second.content)
+        self.assertEqual(
+            second.json()["detail"], "This reservation can no longer be cancelled."
+        )
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CANCELLED)
+        self.assertEqual(self._cancel_events(reservation).count(), 1)
+        self.assertEqual(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.RESERVATION_CANCELLED,
+                object_id=reservation.reservation_id,
+            ).count(),
+            1,
+        )
+
+    def test_completed_reservation_cannot_be_cancelled(self):
+        reservation = self._make_reservation(status=Reservation.Status.COMPLETED)
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.COMPLETED)
+        self.assertEqual(self._cancel_events(reservation).count(), 0)
+
+    def test_expired_reservation_cannot_be_cancelled(self):
+        """EXPIRED is terminal: no EXPIRED → CANCELLED transition, ever."""
+        reservation = self._make_reservation(status=Reservation.Status.EXPIRED)
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.EXPIRED)
+        self.assertEqual(self._cancel_events(reservation).count(), 0)
+
+    def test_cancelled_reservation_no_longer_blocks_facility(self):
+        """After cancellation the window is bookable again by anyone."""
+        reservation = self._make_reservation()
+        window = (self.event_day, time(9, 0), time(11, 0))
+        before = check_availability(self.facility.id, *window)
+        self.assertFalse(before["overall"]["ok"])
+        self.assertEqual(len(before["facility"]["conflicts"]), 1)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        after = check_availability(self.facility.id, *window)
+        self.assertTrue(after["overall"]["ok"])
+        self.assertEqual(after["facility"]["conflicts"], [])
+
+    def test_cancelled_reservation_does_not_consume_equipment_availability(self):
+        """The cancelled reservation's equipment quantities become available
+        again through the existing availability engine (no separate release
+        system)."""
+        reservation = self._make_reservation()
+        reservation.status = Reservation.Status.CANCELLED
+        reservation.save(update_fields=["status", "updated_at"])
+
+        report = check_availability(
+            self.facility.id,
+            self.event_day,
+            time(9, 0),
+            time(11, 0),
+            [{"equipment_id": self.chairs.id, "quantity": 4}],
+        )
+        chair = next(
+            r for r in report["items"] if r["equipment_id"] == self.chairs.id
+        )
+        self.assertEqual(chair["status"], "AVAILABLE")
+        self.assertEqual(chair["available"], 4)
+
+
+class CancellationEligibilityApiTests(TestCase):
+    """The detail API reports backend-computed cancellation eligibility.
+
+    ``can_cancel``/``cancellation_reason`` come from
+    ``services.workflow.cancellation_eligibility`` — the same policy the cancel
+    endpoint enforces — and ``requester_id`` lets the frontend match the
+    authenticated user for ownership-aware actions (it used to be missing from
+    the payload, which hid the Cancel button from every requester).
+    """
+
+    def setUp(self):
+        frozen_now = timezone.make_aware(
+            datetime.combine(timezone.localdate(), time(6, 0))
+        )
+        patcher = mock.patch("django.utils.timezone.now", return_value=frozen_now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.client = APIClient()
+        self.staff = User.objects.create_user(
+            username="staffer", password="pass12345", role=User.Role.STAFF
+        )
+        self.requester = User.objects.create_user(
+            username="requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.facility = Facility.objects.create(
+            name="AVR", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        self.in_two_days = timezone.localdate() + timedelta(days=2)
+
+    def _create(self, **kwargs):
+        defaults = dict(
+            requester=self.requester,
+            event_name="Eligibility event",
+            facility=self.facility,
+            date=self.in_two_days,
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=Reservation.Status.APPROVED,
+        )
+        defaults.update(kwargs)
+        return Reservation.objects.create(**defaults)
+
+    def _get_detail(self, reservation, as_user):
+        self.client.force_authenticate(as_user)
+        response = self.client.get(f"/api/reservations/{reservation.id}/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def test_detail_exposes_requester_id(self):
+        """Regression: the payload carries the requester's numeric id so the
+        frontend can recognize the owner (the missing Cancel button bug)."""
+        data = self._get_detail(self._create(), self.requester)
+        self.assertEqual(data["requester_id"], self.requester.id)
+
+    def test_cancellable_own_reservation_reports_can_cancel_true(self):
+        """APPROVED, 2 days out, own reservation → cancellable, no reason."""
+        data = self._get_detail(self._create(), self.requester)
+        self.assertTrue(data["can_cancel"])
+        self.assertIsNone(data["cancellation_reason"])
+
+    def test_window_blocked_reservation_reports_reason(self):
+        """Event tomorrow → not cancellable, with the policy reason."""
+        reservation = self._create(date=timezone.localdate() + timedelta(days=1))
+        data = self._get_detail(reservation, self.requester)
+        self.assertFalse(data["can_cancel"])
+        self.assertEqual(
+            data["cancellation_reason"],
+            "Reservations scheduled within the next 2 days cannot be cancelled.",
+        )
+
+    def test_staff_sees_cancellable_for_window_reservation(self):
+        """Staff are exempt from the window: same reservation, staff viewer."""
+        reservation = self._create(date=timezone.localdate() + timedelta(days=1))
+        data = self._get_detail(reservation, self.staff)
+        self.assertTrue(data["can_cancel"])
+        self.assertIsNone(data["cancellation_reason"])
+
+    def test_terminal_status_reports_not_cancellable(self):
+        reservation = self._create(status=Reservation.Status.CANCELLED)
+        data = self._get_detail(reservation, self.requester)
+        self.assertFalse(data["can_cancel"])
+        self.assertEqual(
+            data["cancellation_reason"],
+            "This reservation can no longer be cancelled.",
+        )
 
 
 class RequesterTypeApiTests(TestCase):

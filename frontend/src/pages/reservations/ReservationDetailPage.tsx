@@ -21,7 +21,6 @@ import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Textarea } from '@/components/ui/Form'
 import { draftFromReservation, saveDraft } from '@/lib/reservationDraft'
-import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
 import type { ReservationDetail, ReservationEvent, ReservationFee } from '@/lib/types'
@@ -103,16 +102,20 @@ export function ReservationDetailPage() {
   const canApprove = isStaff && reservation.status === 'PENDING'
   const canReject = isStaff && reservation.status === 'PENDING'
   const canRequestChanges = isStaff && reservation.status === 'PENDING'
-  // Cancellation-window policy: a requester cannot cancel a reservation whose
-  // event date is today or tomorrow (the backend enforces this too). Staff
-  // keep full cancellation rights — their management functions are unchanged.
-  const daysUntilEvent = Math.round(
-    (new Date(`${reservation.date}T00:00:00`).getTime() - manilaCalendarDate().getTime()) / 86_400_000,
-  )
-  const cancelWindowBlocked = isOwner && !isStaff && daysUntilEvent >= 0 && daysUntilEvent <= 1
-  const canCancel =
+  // Cancellation visibility is decided by the BACKEND: can_cancel is evaluated
+  // by the existing policy in services.workflow — the same source of truth the
+  // cancel endpoint enforces. It is never recomputed or trusted from the client.
+  const canCancel = reservation.can_cancel
+  // When the user manages this reservation but the policy blocks cancellation
+  // (e.g. the 2-day cancellation window), show the backend's reason instead of
+  // an active button. Terminal statuses just show their status badge.
+  const cancellationNotice =
     (isOwner || isStaff) &&
-    !['COMPLETED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(reservation.status)
+      !canCancel &&
+      ['PENDING', 'APPROVED', 'ACTIVE'].includes(reservation.status)
+      ? reservation.cancellation_reason ||
+      'Cancellation is no longer available for this reservation.'
+      : null
   const canCheckIn =
     (isOwner || isStaff) && ['APPROVED', 'ACTIVE'].includes(reservation.status)
   const canCheckOut = isStaff && reservation.status === 'ACTIVE'
@@ -243,24 +246,15 @@ export function ReservationDetailPage() {
             </Button>
           )}
           {canCancel && (
-            <Button
-              variant="ghost"
-              onClick={() => setModal('cancel')}
-              disabled={cancelWindowBlocked}
-              title={
-                cancelWindowBlocked
-                  ? 'Reservations scheduled within the next 2 days cannot be cancelled.'
-                  : undefined
-              }
-            >
+            <Button variant="ghost" onClick={() => setModal('cancel')}>
               Cancel reservation
             </Button>
           )}
         </div>
-        {cancelWindowBlocked && (
+        {cancellationNotice && (
           <p className="mt-2 flex items-center gap-1.5 text-[13px] text-status-maintenance">
             <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-            Reservations scheduled within the next 2 days cannot be cancelled.
+            {cancellationNotice}
           </p>
         )}
       </div>
@@ -338,11 +332,10 @@ export function ReservationDetailPage() {
                 label="Organization"
                 value={
                   reservation.organization
-                    ? `${reservation.organization}${
-                        reservation.organization_code
-                          ? ` (${reservation.organization_code})`
-                          : ''
-                      }`
+                    ? `${reservation.organization}${reservation.organization_code
+                      ? ` (${reservation.organization_code})`
+                      : ''
+                    }`
                     : '—'
                 }
               />
@@ -463,11 +456,10 @@ export function ReservationDetailPage() {
                 <p className="text-sm font-semibold text-ink">{reservation.requester}</p>
                 <p className="text-xs text-muted">
                   {reservation.requester_type === 'EXTERNAL'
-                    ? `External Organization${
-                        reservation.organization_type_label
-                          ? ` · ${reservation.organization_type_label}`
-                          : ''
-                      }`
+                    ? `External Organization${reservation.organization_type_label
+                      ? ` · ${reservation.organization_type_label}`
+                      : ''
+                    }`
                     : 'Campus User'}
                 </p>
               </div>
@@ -628,14 +620,37 @@ export function ReservationDetailPage() {
           </>
         }
       >
-        <Field label="Reason (optional)" htmlFor="cancel-reason">
+        <div className="rounded-xl border border-line bg-soft/60 p-4">
+          <dl className="space-y-2.5 text-sm">
+            <div className="flex items-start justify-between gap-4">
+              <dt className="shrink-0 text-body">Reservation</dt>
+              <dd className="text-right font-medium text-ink">{reservation.event_name}</dd>
+            </div>
+            <div className="flex items-start justify-between gap-4">
+              <dt className="shrink-0 text-body">Facility</dt>
+              <dd className="text-right font-medium text-ink">{reservation.facility}</dd>
+            </div>
+            <div className="flex items-start justify-between gap-4">
+              <dt className="shrink-0 text-body">Date</dt>
+              <dd className="text-right font-medium text-ink">
+                {format(new Date(reservation.date), 'MMMM d, yyyy')}
+                <br />
+                {formatTime(reservation.start_time)} – {formatTime(reservation.end_time)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        {/* <p className="mt-4 text-sm leading-relaxed text-body">
+          Are you sure you want to cancel this reservation?
+        </p> */}
+        {/* <Field label="Reason (optional)" htmlFor="cancel-reason">
           <Input
             id="cancel-reason"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="e.g. Event postponed"
           />
-        </Field>
+        </Field> */}
       </Modal>
 
       {/* Admin override: early check-in requires an explicit confirmation */}

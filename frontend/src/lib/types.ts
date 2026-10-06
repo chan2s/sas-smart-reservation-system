@@ -595,6 +595,10 @@ export interface ReservationSummary {
   check_in_open_time: string
   /** Server-computed: has the 3-hour check-in window opened yet? */
   check_in_window_open: boolean
+  /** Server-computed: may the current user cancel this reservation under the existing policy? */
+  can_cancel: boolean
+  /** Server-computed reason when cancellation is blocked; null when allowed. */
+  cancellation_reason: string | null
   checked_in_at: string | null
   checked_out_at: string | null
   resources: string[]

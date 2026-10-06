@@ -13,6 +13,7 @@ from .models import (
 )
 from .services.availability import check_availability
 from .services.pricing import snapshot_reservation_fees
+from .services import workflow
 
 User = get_user_model()
 
@@ -134,6 +135,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
     facility_id = serializers.IntegerField(source="facility.id", read_only=True)
     facility_type = serializers.CharField(source="facility.facility_type", read_only=True)
     requester = serializers.CharField(source="requester_display_name", read_only=True)
+    # Numeric id of the requester account — lets the frontend match it against
+    # the authenticated user for ownership-aware actions (check-in, cancel).
+    requester_id = serializers.IntegerField(read_only=True)
     requester_type = serializers.CharField(read_only=True)
     requester_type_label = serializers.CharField(read_only=True)
     affiliation = serializers.CharField(read_only=True)
@@ -157,6 +161,12 @@ class ReservationListSerializer(serializers.ModelSerializer):
     fees = ReservationFeeSerializer(many=True, read_only=True)
     check_in_open_time = serializers.SerializerMethodField()
     check_in_window_open = serializers.SerializerMethodField()
+    # Cancellation eligibility under the EXISTING policy, calculated here on
+    # the backend (services.workflow.cancellation_eligibility — the same source
+    # of truth the cancel endpoint enforces). The frontend only displays this
+    # result; it never decides the policy and its value is never trusted.
+    can_cancel = serializers.SerializerMethodField()
+    cancellation_reason = serializers.SerializerMethodField()
     approval_email_status = serializers.CharField(read_only=True)
     approval_email_status_label = serializers.CharField(
         source="get_approval_email_status_display", read_only=True
@@ -171,6 +181,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "event_type",
             "event_type_label",
             "requester",
+            "requester_id",
             "requester_type",
             "requester_type_label",
             "affiliation",
@@ -198,6 +209,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "rebooked_from_reference",
             "check_in_open_time",
             "check_in_window_open",
+            "can_cancel",
+            "cancellation_reason",
             "checked_in_at",
             "checked_out_at",
             "resources",
@@ -234,6 +247,18 @@ class ReservationListSerializer(serializers.ModelSerializer):
         from django.utils import timezone
 
         return timezone.now() >= obj.check_in_open_time
+
+    def _cancellation_eligibility(self, obj):
+        user = getattr(self.context.get("request"), "user", None)
+        return workflow.cancellation_eligibility(obj, user)
+
+    def get_can_cancel(self, obj):
+        return self._cancellation_eligibility(obj)[0]
+
+    def get_cancellation_reason(self, obj):
+        # ``None`` when cancellable — lets the UI show a reason only when the
+        # action is actually blocked.
+        return self._cancellation_eligibility(obj)[2] or None
 
     def to_representation(self, instance):
         """Drop contact details for non-staff viewers of campus reservations.

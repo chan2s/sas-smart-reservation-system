@@ -344,66 +344,116 @@ def request_changes(reservation, actor, message):
     return reservation
 
 
-def cancel_reservation(reservation, actor, reason=""):
-    from_status = reservation.status
-    if reservation.status in (
-        Reservation.Status.COMPLETED,
-        Reservation.Status.CANCELLED,
-        Reservation.Status.REJECTED,
-        Reservation.Status.EXPIRED,
-    ):
-        raise ValueError("This reservation can no longer be cancelled.")
+def cancellation_eligibility(reservation, user):
+    """Evaluate the cancellation policy for ``user`` against ``reservation``.
+
+    Single source of truth for BOTH the API's ``can_cancel`` field (what the
+    frontend displays) and the ``cancel`` endpoint's enforcement — the policy
+    is never decided in React and never trusted from a client flag.
+
+    Returns ``(can_cancel, code, reason)`` where ``code`` is:
+
+    * ``""``                    — cancellable
+    * ``"not_permitted"``       — the user is neither the requester nor staff
+    * ``"status"``              — terminal status (COMPLETED / CANCELLED /
+      REJECTED / EXPIRED can never be cancelled)
+    * ``"cancellation_window"`` — requester (non-staff) cancelling a
+      reservation whose event date is today or tomorrow
+    """
+    staff = bool(user is not None and getattr(user, "is_sas_staff", False))
+    user_id = getattr(user, "id", None)
+    is_owner = (
+        user_id is not None
+        and reservation.requester_id is not None
+        and user_id == reservation.requester_id
+    )
+    if not (is_owner or staff):
+        return False, "not_permitted", ""
+    if reservation.status in Reservation.TERMINAL_STATUSES:
+        return False, "status", "This reservation can no longer be cancelled."
     # Cancellation-window policy: requesters cannot cancel a reservation whose
     # event date is today or tomorrow (even one created days in advance).
     # Staff/admin are exempt — their reservation-management functions are
     # unchanged. Compared against the server's local calendar date (Asia/Manila)
     # using the event date, not the creation date. 2+ days out is cancellable.
+    if is_owner and not staff:
+        days_until_event = (reservation.date - timezone.localdate()).days
+        if 0 <= days_until_event <= 1:
+            return (
+                False,
+                "cancellation_window",
+                "Reservations scheduled within the next 2 days cannot be cancelled.",
+            )
+    return True, "", ""
+
+
+def cancel_reservation(reservation, actor, reason=""):
+    """Cancel a reservation (by its own requester or by SAS staff).
+
+    Policy (unchanged) — enforced via ``cancellation_eligibility``: terminal
+    statuses (COMPLETED, CANCELLED, REJECTED, EXPIRED) can never be cancelled,
+    and a requester cannot cancel a reservation whose event date is today or
+    tomorrow — staff are exempt.
+
+    The whole transition runs in one transaction under a row lock, so the
+    policy always revalidates the CURRENT database state: two rapid
+    cancellation requests (double-click), or a status change made by an
+    administrator in the same instant, produce exactly one transition and
+    one set of timeline/audit/notification records — the losing request is
+    rejected by the same policy (mirrors ``expire_reservation``).
+    """
     is_requester = (
         reservation.requester_id is not None and actor.id == reservation.requester_id
     )
-    days_until_event = (reservation.date - timezone.localdate()).days
-    if is_requester and not actor.is_sas_staff and 0 <= days_until_event <= 1:
-        raise CancellationWindowError(
-            "Reservations scheduled within the next 2 days cannot be cancelled."
+    with transaction.atomic():
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        can_cancel, code, blocker = cancellation_eligibility(locked, actor)
+        if not can_cancel:
+            if code == "cancellation_window":
+                raise CancellationWindowError(blocker)
+            raise ValueError(
+                blocker or "You do not have permission to cancel this reservation."
+            )
+        from_status = locked.status
+        locked.status = Reservation.Status.CANCELLED
+        locked.save(update_fields=["status", "updated_at"])
+        record_event(
+            locked,
+            ReservationEvent.EventType.CANCELLED,
+            actor=actor,
+            from_status=from_status,
+            to_status=locked.status,
+            message=reason or "Cancelled",
         )
-    reservation.status = Reservation.Status.CANCELLED
-    reservation.save(update_fields=["status", "updated_at"])
-    record_event(
-        reservation,
-        ReservationEvent.EventType.CANCELLED,
-        actor=actor,
-        from_status=from_status,
-        to_status=reservation.status,
-        message=reason or "Cancelled",
-    )
-    AuditLog.record(
-        actor,
-        AuditLog.Action.RESERVATION_CANCELLED,
-        object_type="reservation",
-        object_id=reservation.reservation_id,
-        object_repr=reservation.event_name,
-        detail=reason or "Cancelled",
-    )
-    is_requester_cancel = (
-        reservation.requester_id is not None and actor.id == reservation.requester_id
-    )
-    if is_requester_cancel:
-        notify_staff(
-            Notification.Type.RESERVATION,
-            "Reservation cancelled",
-            f"{reservation.event_name} on {reservation.date} was cancelled by the requester.",
-            _reservation_link(reservation),
+        AuditLog.record(
+            actor,
+            AuditLog.Action.RESERVATION_CANCELLED,
+            object_type="reservation",
+            object_id=locked.reservation_id,
+            object_repr=locked.event_name,
+            detail=reason or "Cancelled",
         )
-    else:
-        notify(
-            reservation.requester,
-            Notification.Type.RESERVATION,
-            "Reservation cancelled",
-            f"{reservation.event_name} on {reservation.date} was cancelled.",
-            _reservation_link(reservation),
-        )
-    # Send email notification
-    cancelled_by = "you" if is_requester_cancel else f"{actor.display_name}"
+        if is_requester:
+            notify_staff(
+                Notification.Type.RESERVATION,
+                "Reservation cancelled",
+                f"{locked.event_name} on {locked.date} was cancelled by the requester.",
+                _reservation_link(locked),
+            )
+        else:
+            notify(
+                locked.requester,
+                Notification.Type.RESERVATION,
+                "Reservation cancelled",
+                f"{locked.event_name} on {locked.date} was cancelled.",
+                _reservation_link(locked),
+            )
+    # Keep the caller's in-memory instance in sync with the persisted write,
+    # so the API layer serializes the cancelled state it just recorded.
+    reservation.status = locked.status
+    reservation.updated_at = locked.updated_at
+    # Send email notification — best-effort, outside the row lock; never raises.
+    cancelled_by = "you" if is_requester else actor.display_name
     _send_reservation_email(
         reservation,
         status="CANCELLED",
