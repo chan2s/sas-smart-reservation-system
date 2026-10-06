@@ -144,6 +144,11 @@ class ReservationListSerializer(serializers.ModelSerializer):
     contact_email = serializers.CharField(read_only=True)
     created_by_name = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    # Human explanation of the current status — used for the expired notice.
+    status_reason = serializers.SerializerMethodField()
+    # Rebook / "request new schedule" traceability (see Reservation.rebooked_from).
+    rebooked_from = serializers.PrimaryKeyRelatedField(read_only=True)
+    rebooked_from_reference = serializers.SerializerMethodField()
     event_type_label = serializers.CharField(source="get_event_type_display", read_only=True)
     resources = serializers.SerializerMethodField()
     estimated_total = serializers.DecimalField(
@@ -188,6 +193,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "end_time",
             "status",
             "status_label",
+            "status_reason",
+            "rebooked_from",
+            "rebooked_from_reference",
             "check_in_open_time",
             "check_in_window_open",
             "checked_in_at",
@@ -199,6 +207,14 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "approval_email_status_label",
             "created_at",
         )
+
+    def get_status_reason(self, obj):
+        # Currently only the expired status carries an explanation; other
+        # statuses return an empty string so the UI has nothing to show.
+        return obj.expiration_reason
+
+    def get_rebooked_from_reference(self, obj):
+        return obj.rebooked_from.reservation_id if obj.rebooked_from_id else ""
 
     def get_created_by_name(self, obj):
         # "Who entered this?" is distinct from "who is it for?".
@@ -261,6 +277,9 @@ class ReservationDetailSerializer(ReservationListSerializer):
     events = ReservationEventSerializer(many=True, read_only=True)
     inspection = InspectionReportSerializer(read_only=True)
     availability = serializers.SerializerMethodField()
+    # The reservation a rebook / new-schedule request created, if any. Lets an
+    # expired reservation link forward to its replacement.
+    rescheduled_to = serializers.SerializerMethodField()
 
     class Meta(ReservationListSerializer.Meta):
         fields = ReservationListSerializer.Meta.fields + (
@@ -276,10 +295,26 @@ class ReservationDetailSerializer(ReservationListSerializer):
             "events",
             "inspection",
             "availability",
+            "rescheduled_to",
         )
 
     def get_approved_by_name(self, obj):
         return obj.approved_by.display_name if obj.approved_by else ""
+
+    def get_rescheduled_to(self, obj):
+        latest = (
+            obj.rebookings.order_by("created_at")
+            .only("id", "reservation_id", "status")
+            .first()
+        )
+        if latest is None:
+            return None
+        return {
+            "id": latest.id,
+            "reservation_id": latest.reservation_id,
+            "status": latest.status,
+            "status_label": latest.get_status_display(),
+        }
 
     def get_availability(self, obj):
         """Availability snapshot around this reservation's own window."""
@@ -455,6 +490,13 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
     requester_id = serializers.IntegerField(
         write_only=True, required=False, allow_null=True
     )
+    # Rebook / "request new schedule": the (expired) reservation this new one is
+    # created from. Never a status/"reopen" flag — it only records lineage, so
+    # the original keeps its EXPIRED status and the new one still enters the
+    # normal pending-approval queue.
+    rebooked_from_id = serializers.IntegerField(
+        write_only=True, required=False, allow_null=True
+    )
     requester_type = serializers.ChoiceField(
         choices=Reservation.RequesterType.choices,
         required=False,
@@ -505,6 +547,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "items",
             "requester_id",
             "requester_type",
+            "rebooked_from_id",
         )
 
     def validate(self, attrs):
@@ -513,6 +556,55 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         is_staff = bool(user and user.is_authenticated and user.is_sas_staff)
+
+        # Rebook lineage: resolve and authorise the referenced expired
+        # reservation. This runs BEFORE the requester is resolved so a staff
+        # rebook keeps the original requester even when the client did not send
+        # one. Nothing about the original is copied here — the client supplies
+        # a complete, freshly validated reservation and the backend only links
+        # the two records.
+        rebooked_from_id = attrs.pop("rebooked_from_id", None)
+        if rebooked_from_id:
+            try:
+                original = Reservation.objects.get(pk=rebooked_from_id)
+            except Reservation.DoesNotExist:
+                raise serializers.ValidationError(
+                    {
+                        "rebooked_from_id": (
+                            "The reservation being rebooked was not found."
+                        )
+                    }
+                )
+            if original.status != Reservation.Status.EXPIRED:
+                raise serializers.ValidationError(
+                    {
+                        "rebooked_from_id": (
+                            "Only an expired reservation can be rebooked. "
+                            "This reservation is not expired."
+                        )
+                    }
+                )
+            if not is_staff and original.requester_id != getattr(
+                user, "id", None
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "rebooked_from_id": (
+                            "You can only request a new schedule for your own "
+                            "reservation."
+                        )
+                    }
+                )
+            attrs["_rebooked_from"] = original
+            # A rebook keeps the original requester unless the caller already
+            # named one (an administrator may still book for someone else).
+            if is_staff and not attrs.get("requester_id"):
+                if original.requester_type == Reservation.RequesterType.EXTERNAL:
+                    attrs.setdefault(
+                        "requester_type", Reservation.RequesterType.EXTERNAL
+                    )
+                elif original.requester_id:
+                    attrs["requester_id"] = original.requester_id
 
         # An external-organization member ALWAYS creates an external
         # reservation: the requester type is derived from the authenticated
@@ -634,6 +726,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         validated_data.pop("_availability_report", None)  # validation artifact
         on_behalf_of = validated_data.pop("_on_behalf_of", None)
         organization_ref = validated_data.pop("_organization_ref", None)
+        rebooked_from = validated_data.pop("_rebooked_from", None)
         requester_type = validated_data.pop(
             "requester_type", Reservation.RequesterType.CAMPUS
         )
@@ -664,6 +757,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             requester=requester,
             requester_type=requester_type,
             organization_ref=organization_ref,
+            rebooked_from=rebooked_from,
             created_by=user if authenticated else None,
         )
         for item in items:

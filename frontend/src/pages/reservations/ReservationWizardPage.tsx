@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Search, Users } from 'l
 import { format } from 'date-fns'
 import {
   useAvailabilityCheck,
+  useCampusUser,
   useCampusUsers,
   useCreateReservation,
   useFacilities,
@@ -83,7 +84,7 @@ export function ReservationWizardPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
-  const { user, loading: authLoading } = useAuth()
+  const { user, isStaff, loading: authLoading } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
 
   // A refresh must not wipe the wizard: the draft is restored from
@@ -113,6 +114,12 @@ export function ReservationWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const restored = initial.draft
+
+  // A rebook / "request new schedule" opens this same wizard from an expired
+  // reservation. The schedule is intentionally blank (a new, still-available
+  // slot must be chosen); everything else is prefilled by the draft.
+  const rebookedFromId = restored?.rebookedFromId ?? null
+  const isRebook = rebookedFromId != null
 
   const [step, setStep] = useState(0)
   const [facilityId, setFacilityId] = useState<number | null>(() => initial.facilityId)
@@ -144,10 +151,23 @@ export function ReservationWizardPage() {
   // Requester identification — administrators choose who the reservation is
   // FOR (campus user or external organization). Non-admins are always their
   // own requester, so the whole step is skipped for them.
-  const [requesterType, setRequesterType] = useState<'CAMPUS' | 'EXTERNAL'>('CAMPUS')
+  const [requesterType, setRequesterType] = useState<'CAMPUS' | 'EXTERNAL'>(
+    () => restored?.rebooker?.type ?? 'CAMPUS',
+  )
   const [selectedUser, setSelectedUser] = useState<CampusUserOption | null>(null)
   const [userSearch, setUserSearch] = useState('')
-  const [external, setExternal] = useState(EMPTY_EXTERNAL)
+  const [external, setExternal] = useState(
+    () => restored?.rebooker?.external ?? EMPTY_EXTERNAL,
+  )
+  // Rebook: resolve the original requester account so the "who is it for" step
+  // is already satisfied for staff.
+  const seedRequester =
+    restored?.rebooker?.type === 'CAMPUS' ? restored?.rebooker?.user : undefined
+  const seedRequesterId = seedRequester?.id ?? null
+  const seededRequester = useCampusUser(seedRequesterId)
+  useEffect(() => {
+    if (!selectedUser && seededRequester.data) setSelectedUser(seededRequester.data)
+  }, [selectedUser, seededRequester.data])
 
   const steps = isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
   const stepKey: StepKey = steps[Math.min(step, steps.length - 1)].key
@@ -467,6 +487,9 @@ export function ReservationWizardPage() {
       operatorSelections,
       userEditedItems: [...userEditedItems],
       stepKey,
+      // Preserve the rebook lineage across a refresh mid-wizard.
+      rebookedFromId,
+      rebooker: restored?.rebooker ?? null,
     })
   }, [
     facilityId,
@@ -785,9 +808,17 @@ export function ReservationWizardPage() {
       </Link>
 
       <div className="mt-4">
-        <h1 className="text-[32px] font-semibold tracking-tight text-ink">New reservation</h1>
+        <h1 className="text-[32px] font-semibold tracking-tight text-ink">
+          {isRebook
+            ? isStaff
+              ? 'Rebook reservation'
+              : 'Request new schedule'
+            : 'New reservation'}
+        </h1>
         <p className="mt-1.5 text-[15px] text-body">
-          Reserve a facility and the resources you need for your event.
+          {isRebook
+            ? 'This creates a new reservation that still needs approval. Choose a new date and time — the expired reservation is kept unchanged for history.'
+            : 'Reserve a facility and the resources you need for your event.'}
         </p>
       </div>
 

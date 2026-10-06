@@ -1,5 +1,5 @@
 import type { CreateReservationPayload } from '@/lib/api'
-import type { EventType } from '@/lib/types'
+import type { CampusUserOption, EventType, ReservationDetail } from '@/lib/types'
 
 /**
  * Draft state + wire adapter for the "New reservation" wizard.
@@ -33,6 +33,21 @@ export interface ContactDraft {
   phone: string
 }
 
+/**
+ * Requester prefill for a rebook wizard.
+ *
+ * Rebooking an expired reservation creates a NEW reservation; the requester
+ * and (for external bookings) the organization/contact block are carried over
+ * so an administrator does not have to re-enter them.
+ */
+export interface RebookRequesterSeed {
+  type: 'CAMPUS' | 'EXTERNAL'
+  /** Campus: the original requester account. */
+  user?: CampusUserOption
+  /** External: the original organization + contact details. */
+  external?: ExternalRequesterDraft
+}
+
 export interface WizardDraft {
   facilityId: number | null
   /** ISO `yyyy-MM-dd`, or '' when no date is chosen yet. */
@@ -47,6 +62,10 @@ export interface WizardDraft {
   userEditedItems: number[]
   /** Step key, so a refresh restores the step too (indices differ for staff). */
   stepKey: string
+  /** Set when this wizard was opened to rebook an expired reservation. */
+  rebookedFromId?: number | null
+  /** Requester to preselect when rebooking (staff-created reservations). */
+  rebooker?: RebookRequesterSeed | null
 }
 
 export const EVENT_NAME_MAX = 80
@@ -72,6 +91,82 @@ export function emptyDraft(): WizardDraft {
     operatorSelections: {},
     userEditedItems: [],
     stepKey: 'facility',
+    rebookedFromId: null,
+    rebooker: null,
+  }
+}
+
+/**
+ * Build the wizard draft for a rebook / "request new schedule".
+ *
+ * Everything that identifies the event is carried over EXCEPT the schedule:
+ * the date and times are intentionally blank so a human always picks a new,
+ * still-available slot (the backend revalidates facility, resources, and
+ * organization rules on submit). The expired reservation itself is never
+ * modified — only referenced through `rebookedFromId`.
+ */
+export function draftFromReservation(
+  reservation: ReservationDetail,
+  { staff }: { staff: boolean },
+): WizardDraft {
+  const items: Record<number, number> = {}
+  const operatorSelections: Record<number, boolean> = {}
+  for (const item of reservation.items) {
+    items[item.equipment_id] = item.quantity
+    if (item.operator_requested != null) {
+      operatorSelections[item.equipment_id] = item.operator_requested
+    }
+  }
+
+  const isExternal = reservation.requester_type === 'EXTERNAL'
+  const requester: RebookRequesterSeed | null = isExternal
+    ? {
+        type: 'EXTERNAL',
+        external: {
+          organization: reservation.organization || '',
+          organization_type: reservation.organization_type || 'OTHER',
+          contact_person: reservation.contact_person || '',
+          contact_email: reservation.contact_email || '',
+        },
+      }
+    : staff
+      ? {
+          type: 'CAMPUS',
+          // Filled in by the wizard from the campus-user directory (the id is
+          // all this draft needs to carry).
+          user: {
+            id: reservation.requester_id ?? 0,
+            display_name: reservation.requester,
+            username: '',
+            email: reservation.contact_email || '',
+            organization: reservation.organization || '',
+            role: 'REQUESTER',
+          },
+        }
+      : { type: 'CAMPUS' }
+
+  return {
+    facilityId: reservation.facility_id,
+    dateISO: '',
+    startTime: '',
+    endTime: '',
+    details: {
+      eventName: reservation.event_name,
+      eventType: reservation.event_type,
+      expectedParticipants: String(reservation.expected_participants || ''),
+      purpose: reservation.purpose || '',
+      staffNotes: reservation.notes || '',
+    },
+    contact: {
+      name: reservation.contact_person || reservation.requester || '',
+      phone: reservation.contact_phone || '',
+    },
+    items,
+    operatorSelections,
+    userEditedItems: Object.keys(items).map(Number),
+    stepKey: 'facility',
+    rebookedFromId: reservation.id,
+    rebooker: requester,
   }
 }
 
@@ -297,6 +392,10 @@ export function toCreateReservationPayload(
     items,
   }
 
+  // Only present when the wizard was opened from an expired reservation, so a
+  // normal creation payload is byte-for-byte unchanged.
+  const rebook = draft.rebookedFromId ? { rebooked_from_id: draft.rebookedFromId } : {}
+
   if (external) {
     return {
       ...base,
@@ -308,6 +407,7 @@ export function toCreateReservationPayload(
       contact_email: external.contact_email,
       contact_phone: null,
       requester_type: 'EXTERNAL',
+      ...rebook,
     }
   }
 
@@ -318,5 +418,6 @@ export function toCreateReservationPayload(
     contact_email: undefined,
     contact_phone: normalizePhone(draft.contact.phone) || null,
     ...(requesterId ? { requester_id: requesterId } : {}),
+    ...rebook,
   }
 }

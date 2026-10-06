@@ -26,6 +26,7 @@ const STATUS_TABS: { key: string; label: string }[] = [
   { key: 'COMPLETED', label: 'Completed' },
   { key: 'REJECTED', label: 'Rejected' },
   { key: 'CANCELLED', label: 'Cancelled' },
+  { key: 'EXPIRED', label: 'Expired' },
 ]
 
 export function ReservationsPage() {

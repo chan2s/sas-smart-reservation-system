@@ -46,6 +46,7 @@ const STATUS_PILL_CLASSES: Record<ReservationStatus, string> = {
   COMPLETED: 'bg-status-completed-bg text-status-completed',
   REJECTED: 'bg-status-rejected-bg text-status-rejected',
   CANCELLED: 'bg-status-cancelled-bg text-status-cancelled',
+  EXPIRED: 'bg-status-expired-bg text-status-expired',
 }
 
 const STATUS_DOT_CLASSES: Record<ReservationStatus, string> = {
@@ -55,6 +56,7 @@ const STATUS_DOT_CLASSES: Record<ReservationStatus, string> = {
   COMPLETED: 'bg-status-completed',
   REJECTED: 'bg-status-rejected',
   CANCELLED: 'bg-status-cancelled',
+  EXPIRED: 'bg-status-expired',
 }
 
 /** Solid block used by the week/day timeline events. */
@@ -65,6 +67,7 @@ const STATUS_BLOCK_CLASSES: Record<ReservationStatus, string> = {
   COMPLETED: 'bg-status-completed text-white border-status-completed',
   REJECTED: 'bg-status-rejected text-white border-status-rejected',
   CANCELLED: 'bg-status-cancelled text-white border-status-cancelled',
+  EXPIRED: 'bg-status-expired text-white border-status-expired',
 }
 
 export function CalendarPage() {
@@ -244,6 +247,7 @@ export function CalendarPage() {
             <option value="COMPLETED">Completed</option>
             <option value="REJECTED">Rejected</option>
             <option value="CANCELLED">Cancelled</option>
+            <option value="EXPIRED">Expired</option>
             <option value="">All statuses</option>
           </Select>
         </div>

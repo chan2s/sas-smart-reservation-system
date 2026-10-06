@@ -29,6 +29,7 @@ from notifications.email_service import (
     resolve_requester_email,
 )
 from reservations.models import InspectionReport, Reservation, ReservationEvent
+from reservations.services import expiration
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,13 @@ def auto_approve(reservation, actor, message=""):
     immediately confirmed. Records an APPROVED timeline event and notifies the
     requester via email (dispatched after commit).
     """
+    # Defence in depth: an already-expired reservation is never auto-approved,
+    # even if a caller reaches this helper directly.
+    expiration.refresh_reservation_status(reservation)
+    if reservation.status == Reservation.Status.EXPIRED:
+        raise ValueError(
+            "This reservation has expired and can no longer be approved."
+        )
     from_status = reservation.status
     with transaction.atomic():
         reservation.status = Reservation.Status.APPROVED
@@ -214,6 +222,14 @@ def auto_approve(reservation, actor, message=""):
 
 
 def approve_reservation(reservation, actor, comment=""):
+    # A pending reservation whose event has already started has expired. Sync
+    # the status first so a stale PENDING record can never be approved after the
+    # event began, then refuse with a clear API error.
+    expiration.refresh_reservation_status(reservation)
+    if reservation.status == Reservation.Status.EXPIRED:
+        raise ValueError(
+            "This reservation has expired and can no longer be approved."
+        )
     from_status = reservation.status
     if reservation.status != Reservation.Status.PENDING:
         raise ValueError("Only pending reservations can be approved.")
@@ -250,6 +266,13 @@ def approve_reservation(reservation, actor, comment=""):
 
 
 def reject_reservation(reservation, actor, reason):
+    # An expired reservation is already final; it must not be turned into a
+    # rejection (the Pending → Expired and Pending → Rejected distinctions stay
+    # visible).
+    if reservation.status == Reservation.Status.EXPIRED:
+        raise ValueError(
+            "This reservation has expired and can no longer be rejected."
+        )
     from_status = reservation.status
     if not reason:
         raise ValueError("A rejection reason is required.")
@@ -291,6 +314,13 @@ def reject_reservation(reservation, actor, reason):
 
 
 def request_changes(reservation, actor, message):
+    # Requesting changes puts a reservation back to PENDING; doing that to an
+    # expired reservation would silently reopen it. Those must be rebooked.
+    if reservation.status == Reservation.Status.EXPIRED:
+        raise ValueError(
+            "This reservation has expired and can no longer be reopened. "
+            "Request a new schedule instead."
+        )
     from_status = reservation.status
     if not message:
         raise ValueError("A change request message is required.")
@@ -316,7 +346,12 @@ def request_changes(reservation, actor, message):
 
 def cancel_reservation(reservation, actor, reason=""):
     from_status = reservation.status
-    if reservation.status in (Reservation.Status.COMPLETED, Reservation.Status.CANCELLED, Reservation.Status.REJECTED):
+    if reservation.status in (
+        Reservation.Status.COMPLETED,
+        Reservation.Status.CANCELLED,
+        Reservation.Status.REJECTED,
+        Reservation.Status.EXPIRED,
+    ):
         raise ValueError("This reservation can no longer be cancelled.")
     # Cancellation-window policy: requesters cannot cancel a reservation whose
     # event date is today or tomorrow (even one created days in advance).
@@ -388,6 +423,13 @@ def check_in_reservation(reservation, actor, override=False):
     backend verifies the role itself; a regular user cannot bypass the window
     by sending the flag.
     """
+    # A stale PENDING whose event started is expired first, and an expired
+    # reservation can never be checked in or occupy the facility.
+    expiration.refresh_reservation_status(reservation)
+    if reservation.status == Reservation.Status.EXPIRED:
+        raise ValueError(
+            "This reservation has expired and can no longer be checked in."
+        )
     if reservation.status not in (Reservation.Status.APPROVED, Reservation.Status.ACTIVE):
         raise ValueError("Only approved reservations can be checked in.")
     now = timezone.now()

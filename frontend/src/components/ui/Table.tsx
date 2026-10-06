@@ -202,6 +202,7 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   COMPLETED: 'teal',
   REJECTED: 'rose',
   CANCELLED: 'gray',
+  EXPIRED: 'gray',
   AVAILABLE: 'emerald',
   UNAVAILABLE: 'rose',
   MAINTENANCE: 'orange',

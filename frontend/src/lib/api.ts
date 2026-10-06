@@ -431,6 +431,8 @@ export interface CreateReservationPayload {
   requester_id?: number
   /** Staff only: CAMPUS (default) or EXTERNAL. */
   requester_type?: RequesterType
+  /** Rebook / "request new schedule": the expired reservation this one is from. */
+  rebooked_from_id?: number
 }
 
 export interface GuestReservationPayload {
@@ -590,6 +592,8 @@ export const endpoints = {
     api.get<{ results: CampusUserOption[] }>(
       `/api/reservations/users/?search=${encodeURIComponent(search)}`,
     ),
+  campusUser: (id: number) =>
+    api.get<{ results: CampusUserOption[] }>(`/api/reservations/users/?id=${id}`),
   reservation: (id: number) => api.get<ReservationDetail>(`/api/reservations/${id}/`),
   createReservation: (payload: CreateReservationPayload) =>
     api.post<ReservationDetail>('/api/reservations/', payload),

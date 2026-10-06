@@ -18,10 +18,39 @@ from .serializers import (
     ReservationDetailSerializer,
     ReservationListSerializer,
 )
-from .services import workflow
+from .services import expiration, workflow
 from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
 from .services.recommendations import recommend_resources_with_pricing
+
+
+def _record_rebook_lineage(request, reservation):
+    """Record a rebook / new-schedule link on the ORIGINAL expired reservation.
+
+    The original is never otherwise mutated: this only appends a timeline event
+    naming the new reservation, so history stays accurate and traceable. Staff
+    rebooks read as "Rebooked"; a requester's own request as "New Schedule
+    Requested".
+    """
+    original = reservation.rebooked_from
+    if original is None:
+        return
+    event_type = (
+        ReservationEvent.EventType.REBOOKED
+        if request.user.is_sas_staff
+        else ReservationEvent.EventType.NEW_SCHEDULE_REQUESTED
+    )
+    workflow.record_event(
+        original,
+        event_type,
+        actor=request.user,
+        from_status=Reservation.Status.EXPIRED,
+        to_status=Reservation.Status.EXPIRED,
+        message=(
+            f"Created new reservation {reservation.reservation_id} from "
+            f"expired reservation {original.reservation_id}."
+        ),
+    )
 
 
 def _trusted_requester_type(request, requested) -> str:
@@ -64,6 +93,10 @@ class ReservationViewSet(viewsets.ModelViewSet):
     ordering_fields = ("date", "created_at", "start_time", "status")
 
     def get_queryset(self):
+        # Synchronise expiration before anything is read, so a stale PENDING
+        # never reaches the list, the detail view, or an action endpoint (the
+        # approval and check-in paths re-check their own object as well).
+        expiration.expire_overdue_reservations()
         qs = Reservation.objects.select_related(
             "facility", "requester", "created_by", "approved_by", "organization_ref"
         ).prefetch_related("items__equipment__category", "events")
@@ -139,6 +172,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 )
             raise
         reservation = serializer.save()
+        is_rebook = reservation.rebooked_from_id is not None
         workflow.record_event(
             reservation,
             ReservationEvent.EventType.CREATED,
@@ -150,12 +184,20 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ),
         )
 
+        if is_rebook:
+            _record_rebook_lineage(request, reservation)
+
         # The backend is the source of truth for status: reservations created
         # by an administrator are approved immediately (campus or external
         # requester alike); everyone else enters the normal pending review
         # queue. A status value sent by the client is never trusted (the
         # serializer does not even accept one).
-        if request.user.is_admin:
+        #
+        # Exception: a rebook / request-new-schedule is deliberately NOT
+        # auto-approved even for an administrator — recreating an expired
+        # reservation must go through the normal review (Requirement: the new
+        # reservation always starts PENDING).
+        if request.user.is_admin and not is_rebook:
             workflow.auto_approve(reservation, request.user)
         else:
             notify_staff(
@@ -224,6 +266,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def counts(self, request):
         """Per-status reservation counts for tab badges."""
+        expiration.expire_overdue_reservations()
         qs = Reservation.objects.all()
         if not request.user.is_sas_staff:
             qs = qs.filter(requester=request.user)
@@ -232,6 +275,43 @@ class ReservationViewSet(viewsets.ModelViewSet):
         for key, _ in statuses.items():
             result[key] = qs.filter(status=key).count()
         return Response(result)
+
+    def update(self, request, *args, **kwargs):
+        """Refuse any edit of an expired reservation.
+
+        An expired reservation is a historical record: it can never be edited
+        back into an active one (or have its status changed), by a requester or
+        by staff. Rebook it / request a new schedule instead.
+        """
+        reservation = self.get_object()
+        if reservation.status == Reservation.Status.EXPIRED:
+            return Response(
+                {
+                    "detail": (
+                        "This reservation has expired and can no longer be "
+                        "edited. Rebook it or request a new schedule instead."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        reservation = self.get_object()
+        if reservation.status == Reservation.Status.EXPIRED:
+            return Response(
+                {
+                    "detail": (
+                        "This reservation has expired and must be kept for "
+                        "history. It cannot be deleted."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
     def approve(self, request, pk=None):
@@ -388,6 +468,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
 @permission_classes([IsSasStaff])
 def reservation_by_checkin_code(request, code):
     """Staff scanning interface: resolve a reservation from its QR code."""
+    expiration.expire_overdue_reservations()
     reservation = (
         Reservation.objects.select_related("facility", "requester")
         .prefetch_related("items__equipment__category", "events")
@@ -527,6 +608,7 @@ def pricing_rates(request):
 @permission_classes([IsAuthenticated])
 def calendar_events(request):
     """Reservation events for calendar views within [start, end]."""
+    expiration.expire_overdue_reservations()
     start = request.query_params.get("start")
     end = request.query_params.get("end")
     if not start or not end:

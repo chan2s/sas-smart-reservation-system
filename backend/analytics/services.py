@@ -151,6 +151,12 @@ def summary(user=None) -> dict:
     equipment counts describe the public inventory and are the same for
     everyone.
     """
+    # Sync expiration so the dashboard reflects the same status as the
+    # reservations list (a stale PENDING must never show as pending here).
+    from reservations.services.expiration import expire_overdue_reservations
+
+    expire_overdue_reservations()
+
     is_staff = user is None or user.is_sas_staff
     today = timezone.localdate()
     all_reservations = Reservation.objects.all()

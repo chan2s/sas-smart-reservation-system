@@ -20,6 +20,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Textarea } from '@/components/ui/Form'
+import { draftFromReservation, saveDraft } from '@/lib/reservationDraft'
 import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
@@ -111,10 +112,22 @@ export function ReservationDetailPage() {
   const cancelWindowBlocked = isOwner && !isStaff && daysUntilEvent >= 0 && daysUntilEvent <= 1
   const canCancel =
     (isOwner || isStaff) &&
-    !['COMPLETED', 'CANCELLED', 'REJECTED'].includes(reservation.status)
+    !['COMPLETED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(reservation.status)
   const canCheckIn =
     (isOwner || isStaff) && ['APPROVED', 'ACTIVE'].includes(reservation.status)
   const canCheckOut = isStaff && reservation.status === 'ACTIVE'
+
+  /**
+   * Rebook / request a new schedule: seed the reservation wizard from this
+   * (expired) reservation — event, facility, resources, contact — and open it.
+   * The schedule is deliberately left blank so a NEW, still-available slot is
+   * chosen; the original reservation is never modified.
+   */
+  function startRebook() {
+    if (!reservation) return
+    saveDraft(draftFromReservation(reservation, { staff: isStaff }))
+    navigate(`/reservations/new?rebookFrom=${reservation.id}`)
+  }
 
   function runCheckIn(override: boolean) {
     action.mutate(
@@ -264,6 +277,44 @@ export function ReservationDetailPage() {
             </p>
           </div>
         </div>
+      )}
+
+      {/* Expired notice — the event start time was reached before anyone
+          approved the request. It can no longer be approved; the only way
+          forward is a new reservation (a staff "Rebook" or a requester
+          "Request New Schedule"). */}
+      {reservation.status === 'EXPIRED' && (
+        <div className="mt-5 flex flex-col gap-3 rounded-xl border border-status-expired/25 bg-status-expired-bg px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-2.5">
+            <Clock3 className="mt-0.5 size-4.5 shrink-0 text-status-expired" aria-hidden />
+            <div>
+              <p className="font-semibold text-status-expired">Reservation expired</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-status-expired/90">
+                {reservation.status_reason ||
+                  'This reservation was not approved before the scheduled event time.'}
+              </p>
+            </div>
+          </div>
+          {(isOwner || isStaff) && (
+            <Button className="shrink-0" onClick={startRebook}>
+              {isStaff ? 'Rebook Reservation' : 'Request New Schedule'}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* An expired reservation that has already been replaced links forward. */}
+      {reservation.rescheduled_to && (
+        <p className="mt-3 text-[13px] text-body">
+          A new reservation was created from this one:{' '}
+          <Link
+            to={`/reservations/${reservation.rescheduled_to.id}`}
+            className="font-medium text-brand hover:text-brand-dark"
+          >
+            {reservation.rescheduled_to.reservation_id}
+          </Link>{' '}
+          ({reservation.rescheduled_to.status_label})
+        </p>
       )}
 
       {reservation.rejection_reason && (
@@ -444,6 +495,19 @@ export function ReservationDetailPage() {
               <DetailItem label="Submitted" value={formatDateTime(reservation.created_at)} />
               {reservation.created_by_name && (
                 <DetailItem label="Created by" value={reservation.created_by_name} />
+              )}
+              {reservation.rebooked_from_reference && (
+                <DetailItem
+                  label="Rebooked from"
+                  value={
+                    <Link
+                      to={`/reservations/${reservation.rebooked_from}`}
+                      className="font-medium text-brand hover:text-brand-dark"
+                    >
+                      {reservation.rebooked_from_reference}
+                    </Link>
+                  }
+                />
               )}
               {reservation.approved_by_name && reservation.approved_at && (
                 <DetailItem
@@ -729,6 +793,8 @@ function Timeline({ events }: { events: ReservationEvent[] }) {
               event.event_type === 'CHECKED_IN' && 'bg-status-active',
               event.event_type === 'CHECKED_OUT' && 'bg-status-completed',
               event.event_type === 'CANCELLED' && 'bg-status-cancelled',
+              event.event_type === 'EXPIRED' && 'bg-status-expired',
+              ['REBOOKED', 'NEW_SCHEDULE_REQUESTED'].includes(event.event_type) && 'bg-brand',
               ['CREATED', 'CHANGES_REQUESTED'].includes(event.event_type) && 'bg-status-pending',
               ['COMMENT'].includes(event.event_type) && 'bg-muted',
             )}

@@ -1039,6 +1039,19 @@ class CancellationWindowTests(TestCase):
     """
 
     def setUp(self):
+        # Freeze "now" at 06:00 Asia/Manila. The cancellation-window rule keys
+        # off the event DATE (today/tomorrow are locked, regardless of time),
+        # so a same-day 09:00 reservation must not be auto-expired before the
+        # rule is exercised — otherwise this would only pass before 09:00.
+        frozen_now = timezone.make_aware(
+            datetime.combine(timezone.localdate(), time(6, 0))
+        )
+        patcher = mock.patch(
+            "django.utils.timezone.now", return_value=frozen_now
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
         self.client = APIClient()
         self.admin = User.objects.create_user(
             username="admin", password="pass12345", role=User.Role.ADMIN

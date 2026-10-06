@@ -438,6 +438,19 @@ export function useCampusUsers(search: string, enabled = true) {
   })
 }
 
+/**
+ * One campus user by id — used to prefill the requester when a rebook wizard is
+ * opened from an expired reservation.
+ */
+export function useCampusUser(id: number | null) {
+  return useQuery({
+    queryKey: ['campus-user', id],
+    queryFn: () => endpoints.campusUser(id as number),
+    enabled: id != null && id > 0,
+    select: (data) => data.results[0] ?? null,
+  })
+}
+
 export function useCreateReservation() {
   const queryClient = useQueryClient()
   return useMutation({

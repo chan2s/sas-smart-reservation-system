@@ -337,6 +337,7 @@ class ReservationAdmin(admin.ModelAdmin):
                     "approved_by",
                     "approved_at",
                     "approval_email_status",
+                    "rebooked_from",
                     "estimated_total",
                 )
             },

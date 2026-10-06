@@ -421,6 +421,8 @@ export type ReservationStatus =
   | 'COMPLETED'
   | 'REJECTED'
   | 'CANCELLED'
+  /** Reached its event start time without being approved. */
+  | 'EXPIRED'
 
 /** Who the reservation is FOR — independent of who created it. */
 export type RequesterType = 'CAMPUS' | 'EXTERNAL'
@@ -528,6 +530,9 @@ export interface ReservationEvent {
     | 'CHECKED_IN'
     | 'CHECKED_OUT'
     | 'COMMENT'
+    | 'EXPIRED'
+    | 'REBOOKED'
+    | 'NEW_SCHEDULE_REQUESTED'
   event_type_label: string
   actor: number | null
   actor_name: string
@@ -580,6 +585,12 @@ export interface ReservationSummary {
   end_time: string
   status: ReservationStatus
   status_label: string
+  /** Human explanation for the current status (populated when expired). */
+  status_reason: string
+  /** Id of the expired reservation this one was created from (rebook). */
+  rebooked_from: number | null
+  /** Reservation code of `rebooked_from`, or '' when this is not a rebook. */
+  rebooked_from_reference: string
   /** ISO datetime when the 3-hour check-in window opens (start − 3h). */
   check_in_open_time: string
   /** Server-computed: has the 3-hour check-in window opened yet? */
@@ -683,6 +694,13 @@ export interface ReservationDetail extends ReservationSummary {
   items: ReservationItem[]
   events: ReservationEvent[]
   inspection: InspectionReport | null
+  /** The reservation a rebook / new-schedule request created, if any. */
+  rescheduled_to: {
+    id: number
+    reservation_id: string
+    status: ReservationStatus
+    status_label: string
+  } | null
   availability: {
     ok: boolean
     facility: AvailabilityCheck['facility']
@@ -826,6 +844,7 @@ export type TrackStatus =
   | 'REJECTED'
   | 'CANCELLED'
   | 'COMPLETED'
+  | 'EXPIRED'
   | 'CHECKED_IN'
 
 export interface TrackResult {

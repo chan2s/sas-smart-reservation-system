@@ -67,6 +67,8 @@
   --color-status-rejected-bg: #fff1f2;
   --color-status-cancelled: #6b7280;
   --color-status-cancelled-bg: #f3f4f6;
+  --color-status-expired: #57534e;
+  --color-status-expired-bg: #f5f5f4;
   --color-status-maintenance: #ea580c;
   --color-status-maintenance-bg: #fff7ed;
   --color-status-partial: #d97706;

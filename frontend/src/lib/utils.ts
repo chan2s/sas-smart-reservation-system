@@ -226,6 +226,12 @@ export const STATUS_META: Record<
     bg: 'bg-status-cancelled-bg',
     dot: 'bg-status-cancelled',
   },
+  EXPIRED: {
+    label: 'Expired',
+    text: 'text-status-expired',
+    bg: 'bg-status-expired-bg',
+    dot: 'bg-status-expired',
+  },
 }
 
 export function downloadFile(url: string) {

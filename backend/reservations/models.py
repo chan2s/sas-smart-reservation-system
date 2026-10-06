@@ -313,6 +313,11 @@ class Reservation(models.Model):
         COMPLETED = "COMPLETED", "Completed"
         REJECTED = "REJECTED", "Rejected"
         CANCELLED = "CANCELLED", "Cancelled"
+        # A pending reservation whose scheduled EVENT START TIME was reached
+        # before anyone approved it. Deliberately distinct from REJECTED (an
+        # explicit staff decision) and CANCELLED (withdrawn by a person): it
+        # records that the approval simply never happened in time.
+        EXPIRED = "EXPIRED", "Expired"
 
     class ApprovalEmailStatus(models.TextChoices):
         """Delivery state of the approval notification email.
@@ -340,7 +345,19 @@ class Reservation(models.Model):
         OTHER = "OTHER", "Other"
 
     # Statuses that hold resources and block availability.
+    # EXPIRED is deliberately NOT here: an expired reservation never occupied
+    # the facility or its equipment, so it must not keep blocking them (while
+    # its record is still kept for history/audit).
     ACTIVE_STATUSES = [Status.PENDING, Status.APPROVED, Status.ACTIVE]
+
+    # Historical/final statuses that no longer hold any resource and can never
+    # transition back into the live workflow.
+    TERMINAL_STATUSES = [
+        Status.COMPLETED,
+        Status.REJECTED,
+        Status.CANCELLED,
+        Status.EXPIRED,
+    ]
 
     reservation_id = models.CharField(max_length=20, unique=True, editable=False)
     requester = models.ForeignKey(
@@ -432,6 +449,21 @@ class Reservation(models.Model):
     )
     notes = models.TextField(blank=True)
     rejection_reason = models.TextField(blank=True)
+    # Traceability for rebooks / "request new schedule": the new reservation
+    # points back at the (expired) reservation it was created from. Nullable so
+    # every pre-existing row and every ordinary reservation keeps working, and
+    # ``SET_NULL`` so the link never deletes or cascades into history.
+    rebooked_from = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rebookings",
+        help_text=(
+            "Expired reservation this one was created from "
+            "(rebook / request new schedule)."
+        ),
+    )
 
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -556,6 +588,24 @@ class Reservation(models.Model):
         """Check-in window opens 3 hours before the event start."""
         return self.start_datetime - timedelta(hours=3)
 
+    @property
+    def is_expired(self) -> bool:
+        return self.status == self.Status.EXPIRED
+
+    @property
+    def has_started(self) -> bool:
+        """True once the scheduled EVENT START TIME has been reached."""
+        return timezone.now() >= self.start_datetime
+
+    @property
+    def expiration_reason(self) -> str:
+        """Human explanation shown when this reservation expired."""
+        if self.status == self.Status.EXPIRED:
+            return (
+                "Reservation was not approved before the scheduled event time."
+            )
+        return ""
+
     def __str__(self) -> str:
         return f"{self.reservation_id} — {self.event_name}"
 
@@ -598,6 +648,16 @@ class ReservationEvent(models.Model):
         CHECKED_IN = "CHECKED_IN", "Checked in"
         CHECKED_OUT = "CHECKED_OUT", "Checked out"
         COMMENT = "COMMENT", "Comment"
+        # Reached its event start time without being approved (recorded by the
+        # system, with no actor).
+        EXPIRED = "EXPIRED", "Expired"
+        # A new reservation was created from an expired one, by an
+        # administrator (rebook) or by the requester (request new schedule).
+        REBOOKED = "REBOOKED", "Rebooked"
+        NEW_SCHEDULE_REQUESTED = (
+            "NEW_SCHEDULE_REQUESTED",
+            "New schedule requested",
+        )
 
     reservation = models.ForeignKey(
         Reservation, on_delete=models.CASCADE, related_name="events"
