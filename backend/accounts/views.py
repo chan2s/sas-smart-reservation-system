@@ -9,7 +9,7 @@ from .throttling import (
     AuthRefreshThrottle,
     AuthRegisterThrottle,
     GlobalAnonThrottle,
-    OtpVerifyThrottle,
+    TwoFactorVerifyThrottle,
 )
 from .serializers import (
     LoginSerializer,
@@ -24,28 +24,9 @@ class LoginView(TokenObtainPairView):
 
 
 class RefreshView(TokenRefreshView):
-    """JWT refresh with a server-side account-status check.
-
-    A refresh token from an earlier authentication state must not let a
-    now-pending (first-time verification incomplete) account obtain a fresh
-    access token. Normal refresh behavior for verified users is unchanged.
-    """
+    """JWT refresh (standard simplejwt behavior + endpoint throttling)."""
 
     throttle_classes = [GlobalAnonThrottle, AuthRefreshThrottle]
-
-    def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-
-        if response.status_code == 200:
-            from .jwt import refresh_user_is_pending
-
-            refresh_token = request.data.get("refresh") or ""
-            if refresh_user_is_pending(refresh_token):
-                return Response(
-                    {"detail": "Account is pending email verification."},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-        return response
 
 
 class MeView(generics.RetrieveUpdateAPIView):
@@ -198,7 +179,7 @@ class TwoFactorVerifyLoginView(generics.GenericAPIView):
     """
 
     permission_classes = [permissions.AllowAny]
-    throttle_classes = [GlobalAnonThrottle, OtpVerifyThrottle]
+    throttle_classes = [GlobalAnonThrottle, TwoFactorVerifyThrottle]
 
     def post(self, request):
         token = request.data.get("mfa_token") or ""
@@ -209,13 +190,6 @@ class TwoFactorVerifyLoginView(generics.GenericAPIView):
             return Response(
                 {"detail": "This verification request has expired. Please sign in again."},
                 status=status.HTTP_400_BAD_REQUEST,
-            )
-        if getattr(user, "is_pending_verification", False):
-            # Pending first-time accounts cannot authenticate — even with a
-            # valid 2FA challenge — until email verification completes.
-            return Response(
-                {"detail": "Account is pending email verification."},
-                status=status.HTTP_401_UNAUTHORIZED,
             )
         if not twofa.verify_login(user, code):
             return Response(

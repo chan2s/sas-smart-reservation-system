@@ -28,16 +28,10 @@ from rest_framework.response import Response
 from accounts.models import AuditLog
 from accounts.serializers import UserSerializer
 
-from rest_framework.decorators import permission_classes, throttle_classes
+from rest_framework.decorators import throttle_classes
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from accounts import email_otp
-from accounts.throttling import (
-    GlobalAnonThrottle,
-    GoogleStartThrottle,
-    OtpResendThrottle,
-    OtpVerifyThrottle,
-)
+from accounts.throttling import GlobalAnonThrottle, GoogleStartThrottle
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -300,8 +294,6 @@ def google_callback(request):
     from django.contrib.auth import get_user_model
     from django_otp.plugins.otp_totp.models import TOTPDevice
 
-    from accounts import email_otp
-
     User = get_user_model()
     user = User.objects.filter(email__iexact=email).first()
     created = False
@@ -321,10 +313,7 @@ def google_callback(request):
             last_name=userinfo.get("family_name", "")[:150],
         )
         user.role = "REQUESTER"
-        # Server-authoritative pending state: a newly created Google account
-        # is NOT verified until email OTP verification succeeds.
-        user.first_login_verified = False
-        user.save(update_fields=["role", "first_login_verified"])
+        user.save(update_fields=["role"])
         created = True
         AuditLog.record(
             user,
@@ -335,53 +324,15 @@ def google_callback(request):
         )
     elif TOTPDevice.objects.filter(user=user, confirmed=True).exists():
         # Account has 2FA: do not let social sign-in bypass TOTP.
-        # (A pending first-time 2FA account stays blocked from Google login
-        # until it completes email verification via the password flow.)
         logger.info(
             "Google OAuth: 2FA-gated account sign-in refused (user_id=%s).",
             user.pk,
         )
         return frontend_error("twofa_required")
 
-    # SECURITY: "user exists" is NOT sufficient for authentication.
-    # An account created by first-time Google sign-in remains PENDING
-    # (first_login_verified=False) until the email OTP is verified. Google
-    # verifying the email is not the same as SAS RESERVE verifying it.
-    if not user.first_login_verified:
-        # Pending account (newly created OR a re-entry after pressing Back
-        # on the OTP page): locate/restart the verification session under
-        # rate limits and redirect to the OTP page. NEVER issue a JWT.
-        try:
-            verification_token = email_otp.resume_pending(
-                user, email, request=request
-            )
-        except email_otp.OtpError as exc:
-            logger.warning(
-                "Google OAuth: first-time OTP dispatch failed for user_id=%s "
-                "(code=%s).",
-                user.pk,
-                exc.code,
-            )
-            if exc.code == "email_failed":
-                return frontend_error("otp_send_failed")
-            if exc.code == "resend_cooldown":
-                # Session is live and rate-limited; send them to the OTP
-                # page without a token is useless — they need the token.
-                # Reuse the still-valid session token if one exists, else
-                # surface a friendly error for an immediate retry.
-                return frontend_error("otp_cooldown")
-            if exc.code == "resend_exhausted":
-                return frontend_error("otp_resend_exhausted")
-            return frontend_error("otp_send_failed")
-
-        return redirect(
-            f"{_frontend_url('/auth/verify-otp', request, state_origin)}"
-            f"?token={quote(verification_token)}"
-        )
-
-    if created and user.first_login_verified:  # unreachable; defensive
-        return frontend_error("otp_send_failed")
-
+    # 6. Audit and issue first-party JWTs — no Google tokens reach the
+    #    browser. There is no email-verification gate: every Google account
+    #    with a Google-verified email authenticates directly.
     AuditLog.record(
         user,
         AuditLog.Action.LOGIN,
@@ -389,10 +340,6 @@ def google_callback(request):
         object_repr="Google sign-in",
         request=request,
     )
-
-    # 6b. Existing verified user: issue first-party JWTs — no Google tokens
-    #     reach the browser.
-    from rest_framework_simplejwt.tokens import RefreshToken
 
     refresh = RefreshToken.for_user(user)
 
@@ -404,56 +351,4 @@ def google_callback(request):
     )
 
 
-@api_view(["POST"])
-@permission_classes([AllowAny])
-@throttle_classes([GlobalAnonThrottle, OtpVerifyThrottle])
-def google_verify_otp(request):
-    """POST /api/auth/google/verify-otp/ — complete first-time verification.
 
-    Exchanges the pending session's ``verification_token`` + a 6-digit email
-    OTP for the SAS RESERVE JWT pair. This is the ONLY path that authenticates
-    a first-time Google account — the OAuth callback never issues tokens for
-    new users, so OTP cannot be bypassed by crafting requests.
-    """
-    token = (request.data.get("verification_token") or "").strip()
-    otp = (request.data.get("otp") or "").strip()
-
-    try:
-        user = email_otp.verify(token, otp, request=request)
-    except email_otp.OtpError as exc:
-        return Response(
-            {"detail": exc.message, "code": exc.code},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    refresh = RefreshToken.for_user(user)
-    AuditLog.record(
-        user,
-        AuditLog.Action.LOGIN,
-        object_type="auth",
-        object_repr="Google sign-in (email verified)",
-        request=request,
-    )
-    return Response(
-        {
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user": UserSerializer(user).data,
-        }
-    )
-
-
-@api_view(["POST"])
-@permission_classes([AllowAny])
-@throttle_classes([GlobalAnonThrottle, OtpResendThrottle])
-def google_resend_otp(request):
-    """POST /api/auth/google/resend-otp/ — send a fresh code (rate-limited)."""
-    token = (request.data.get("verification_token") or "").strip()
-    try:
-        email_otp.resend(token, request=request)
-    except email_otp.OtpError as exc:
-        return Response(
-            {"detail": exc.message, "code": exc.code},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    return Response({"detail": "A new verification code has been sent."})

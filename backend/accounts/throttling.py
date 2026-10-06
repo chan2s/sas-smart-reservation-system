@@ -9,8 +9,7 @@ Stricter, endpoint-specific scopes protect abuse-prone operations:
 * ``auth_register``   — 5/minute per IP
 * ``auth_refresh``    — 30/minute per IP
 * ``google_start``    — 10/minute per IP (OAuth entry)
-* ``otp_verify``      — 5 per 10 minutes per IP
-* ``otp_resend``      — 3 per 10 minutes per IP
+* ``2fa_verify``      — 5 per 10 minutes per IP (2FA login challenges)
 
 Implementation notes:
 * DRF's cache-based throttles use the configured Django cache. Set
@@ -72,10 +71,10 @@ class GoogleStartThrottle(AnonRateThrottle):
     scope = "google_start"
 
 
-class OtpVerifyThrottle(SimpleRateThrottle):
-    """Email-OTP verification attempts — 5 per 10 minutes per IP."""
+class TwoFactorVerifyThrottle(SimpleRateThrottle):
+    """2FA login-code attempts — 5 per 10 minutes per IP."""
 
-    scope = "otp_verify"
+    scope = "2fa_verify"
     rate = "5/600s"  # set directly; DRF only parses single-char periods
     duration = 600
     num_requests = 5
@@ -97,25 +96,3 @@ class OtpVerifyThrottle(SimpleRateThrottle):
         }
 
 
-class OtpResendThrottle(SimpleRateThrottle):
-    """OTP resend requests — 3 per 10 minutes per IP."""
-
-    scope = "otp_resend"
-    rate = "3/600s"
-    duration = 600
-    num_requests = 3
-
-    def __init__(self):
-        super().__init__()
-
-    def get_rate(self):
-        return self.rate
-
-    def parse_rate(self, rate):
-        return self.num_requests, self.duration
-
-    def get_cache_key(self, request, view):
-        return self.cache_format % {
-            "scope": self.scope,
-            "ident": self.get_ident(request),
-        }

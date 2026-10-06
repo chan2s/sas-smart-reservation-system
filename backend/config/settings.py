@@ -19,11 +19,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from backend/.env
 ENV_FILE = BASE_DIR / ".env"
 
-# mtime captured at import time. Used by the email diagnostics
-# (accounts/email_otp.py) to flag a process that is still running with the
-# values it read at startup while .env has since been edited.
-ENV_FILE_MTIME = ENV_FILE.stat().st_mtime if ENV_FILE.exists() else None
-
 # ``override=True`` is deliberate. python-dotenv defaults to NOT overwriting
 # variables that already exist in the process environment, so an exported or
 # inherited variable silently won over .env and `runserver` could be using
@@ -234,8 +229,7 @@ REST_FRAMEWORK = {
         "auth_refresh": "30/min",
         "google_start": "10/min",
         # DRF periods are single-char: s/m/h/d — 10 min = 600 s.
-        "otp_verify": "5/600s",
-        "otp_resend": "3/600s",
+        "2fa_verify": "5/600s",
         # Chatbot Q&A — modest per-user limit; visitors are IP-limited
         # because the endpoint also serves the public landing/login pages.
         "chatbot": "30/min",
@@ -425,40 +419,6 @@ CSRF_TRUSTED_ORIGINS = [
 if DEBUG and ALLOW_DEV_TUNNELS:
     ALLOWED_HOSTS.append(".devtunnels.ms")
     CSRF_TRUSTED_ORIGINS.append("https://*.devtunnels.ms")
-
-
-# ---------------------------------------------------------------------------
-# Email
-# ---------------------------------------------------------------------------
-# Credentials come from backend/.env — never hardcoded, never committed.
-# Tests use django.core.mail.backends.locmem.EmailBackend automatically via
-# Django's test runner, so no real SMTP is touched in CI/tests.
-
-# Standard Django SMTP backend. Gmail SMTP is the default; Resend is no
-# longer on the active path (accounts/email_backends.py is retained only so
-# its unit tests stay valid, but nothing selects it).
-EMAIL_BACKEND = os.environ.get(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend",
-)
-
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "465"))
-
-# Port 465 uses implicit SSL; port 587 uses STARTTLS. Django raises an error
-# if both EMAIL_USE_SSL and EMAIL_USE_TLS are enabled, so they are read
-# independently and must never be turned on together.
-EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "true").lower() == "true"
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "false").lower() == "true"
-
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-
-DEFAULT_FROM_EMAIL = os.environ.get(
-    "DEFAULT_FROM_EMAIL",
-    "SAS RESERVE <no-reply@example.com>",
-)
-
 
 # ---------------------------------------------------------------------------
 # Cache (used by DRF throttling)

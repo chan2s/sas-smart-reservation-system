@@ -1,23 +1,21 @@
-"""Security tests: first-time OTP bypass, JWT protection, rate limiting.
+"""Security tests: Google OAuth hardening, JWT protection, rate limiting.
 
 Covers the required security model:
-* pending first-time Google account  =>  NOT AUTHENTICATED (any route)
-* re-running the Google callback while pending never issues a JWT
-* refresh tokens from a pre-pending state cannot mint access tokens
+* the Google callback issues JWTs directly — no email OTP step exists
+* every callback error path redirects to the SPA, never leaks internals
+* Google sign-in never bypasses TOTP-protected accounts
 * global API throttles (anon/user) and sensitive-endpoint throttles
 """
 
-from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, unquote, urlparse
 
 from django.core import mail
 from django.test import override_settings
 from django.urls import reverse
-from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
-from .models import EmailOTPVerification, User
+from .models import User
 
 
 def _oauth_callback(client, email: str):
@@ -41,173 +39,116 @@ def _oauth_callback(client, email: str):
             )
 
 
-def _token_from_redirect(response) -> str:
-    query = parse_qs(urlparse(response.url).query)
-    return unquote(query["token"][0])
+def _fragment_tokens(response) -> dict:
+    return dict(
+        pair.split("=", 1)
+        for pair in urlparse(response.url).fragment.split("&")
+    )
 
 
-def _code_from_outbox(index: int = -1) -> str:
-    body = mail.outbox[index].body
-    digits = "".join(ch for ch in body if ch.isdigit())
-    code = digits.replace("10", "", 1) if len(digits) > 6 else digits
-    return code[:6]
-
-
-class FirstTimeOtpBypassTests(APITestCase):
-    """BUG #1: re-running Google sign-in while pending must never issue a JWT."""
+class FirstTimeGoogleSignInTests(APITestCase):
+    """New Google accounts authenticate immediately — no OTP step."""
 
     def setUp(self):
         self.client = APIClient()
         self.email = "bypass.user@gmail.com"
-        # First-time sign-in → pending account + OTP email.
+
+    def test_new_google_user_receives_jwt_immediately(self):
         first = _oauth_callback(self.client, self.email)
         self.assertEqual(first.status_code, 302)
-        self.assertIn("/auth/verify-otp", first.url)
-        self.user = User.objects.get(email=self.email)
-        self.assertFalse(self.user.first_login_verified)
+        self.assertIn("/auth/callback", first.url)
+        self.assertIn("access=", first.url)
+        self.assertNotIn("verify-otp", first.url)
+        # Exactly one account was created, active and non-privileged.
+        self.assertEqual(User.objects.filter(email=self.email).count(), 1)
+        user = User.objects.get(email=self.email)
+        self.assertTrue(user.is_active)
+        self.assertEqual(user.role, "REQUESTER")
 
-    def test_second_callback_while_pending_never_issues_jwt(self):
-        # User presses Back and signs in with Google again.
+    def test_second_callback_signs_in_without_duplicates(self):
+        _oauth_callback(self.client, self.email)
         second = _oauth_callback(self.client, self.email)
         self.assertEqual(second.status_code, 302)
-        # MUST go to the OTP page, never to the token handoff.
-        self.assertIn("/auth/verify-otp", second.url)
-        self.assertNotIn("/auth/callback", second.url)
-        self.assertNotIn("access=", second.url)
-        # Still exactly one account, still pending.
+        self.assertIn("/auth/callback", second.url)
+        self.assertIn("access=", second.url)
+        # Still exactly one account.
         self.assertEqual(User.objects.filter(email=self.email).count(), 1)
-        self.user.refresh_from_db()
-        self.assertFalse(self.user.first_login_verified)
 
-    def test_no_duplicate_session_on_reentry(self):
-        second = _oauth_callback(self.client, self.email)
-        self.assertIn("/auth/verify-otp", second.url)
-        # resume_pending reuses/restarts — still exactly one session row.
-        self.assertEqual(
-            EmailOTPVerification.objects.filter(user=self.user).count(), 1
-        )
-
-    def test_pending_user_cannot_access_authenticated_api_without_jwt(self):
-        response = self.client.get("/api/auth/me/")
-        self.assertEqual(response.status_code, 401)
-
-    def test_pending_user_receives_no_jwt_after_correct_otp_via_callback(self):
-        # Even a correct OTP submitted through the callback URL does nothing.
-        response = _oauth_callback(self.client, self.email)
-        self.assertNotIn("access=", response.url)
-        self.assertNotIn("refresh=", response.url)
+    def test_no_email_is_ever_sent(self):
+        _oauth_callback(self.client, self.email)
+        self.assertEqual(len(mail.outbox), 0)
 
 
-class PendingAccountJwtProtectionTests(APITestCase):
-    """A pending account cannot mint or use JWTs through ANY route."""
+class GoogleJwtProtectionTests(APITestCase):
+    """JWTs issued by the callback authenticate; nothing else mints them."""
 
     def setUp(self):
         self.client = APIClient()
         self.email = "jwtblock.user@gmail.com"
-        _oauth_callback(self.client, self.email)
-        self.user = User.objects.get(email=self.email)
 
-    def test_password_login_blocked_while_pending(self):
-        self.user.set_password("Str0ngPass!x")
-        self.user.save()
+    def test_callback_jwt_authenticates_the_new_user(self):
+        response = _oauth_callback(self.client, self.email)
+        tokens = _fragment_tokens(response)
+        self.assertIn("access", tokens)
+        self.assertIn("refresh", tokens)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+        me = self.client.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.data["email"], self.email)
+
+    def test_inactive_google_account_cannot_use_issued_token(self):
+        """An inactive account's JWT cannot authenticate (no active-based bypass)."""
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        user = User.objects.create_user(
+            username="inactive",
+            email=self.email,
+            is_active=False,
+        )
+        stale = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {stale.access_token}")
+        self.assertEqual(self.client.get("/api/auth/me/").status_code, 401)
+
+    def test_password_login_of_google_created_account_without_password(self):
+        """A Google-created account has no usable password — login must fail."""
+        _oauth_callback(self.client, self.email)
+        user = User.objects.get(email=self.email)
+        self.assertFalse(user.has_usable_password())
         response = self.client.post(
             "/api/auth/login/",
-            {"username": self.user.username, "password": "Str0ngPass!x"},
+            {"username": user.username, "password": "whatever"},
         )
-        self.assertEqual(response.status_code, 400)
+        # 400 (validation) or 401 (authentication failure) — either way no
+        # tokens may be issued.
+        self.assertIn(response.status_code, (400, 401))
         self.assertNotIn("access", response.data)
-
-    def test_refresh_token_minting_blocked_while_pending(self):
-        """A refresh token from an earlier state cannot mint an access token."""
-        from rest_framework_simplejwt.tokens import RefreshToken
-
-        # Simulate a token obtained before the account became pending.
-        stale_refresh = str(RefreshToken.for_user(self.user))
-        self.user.first_login_verified = False
-        self.user.save(update_fields=["first_login_verified"])
-
-        response = self.client.post(
-            "/api/auth/refresh/", {"refresh": stale_refresh}
-        )
-        self.assertIn(response.status_code, (401, 403))
-        self.assertNotIn("access", response.data)
-
-    def test_access_token_rejected_while_pending(self):
-        from rest_framework_simplejwt.tokens import RefreshToken
-
-        stale = RefreshToken.for_user(self.user)
-        self.user.first_login_verified = False
-        self.user.save(update_fields=["first_login_verified"])
-
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {stale.access_token}")
-        response = self.client.get("/api/auth/me/")
-        self.assertEqual(response.status_code, 401)
-
-    def test_verification_token_reuse_rejected(self):
-        # Verify with the correct OTP → tokens issued, session consumed.
-        response = _oauth_callback(self.client, self.email)
-        token = _token_from_redirect(response)
-        code = _code_from_outbox()
-        ok = self.client.post(
-            "/api/auth/google/verify-otp/",
-            {"verification_token": token, "otp": code},
-        )
-        self.assertEqual(ok.status_code, 200)
-
-        # The same token cannot start a second verification.
-        reused = self.client.post(
-            "/api/auth/google/verify-otp/",
-            {"verification_token": token, "otp": code},
-        )
-        self.assertEqual(reused.status_code, 400)
-
-    def test_otp_endpoint_is_the_only_path_that_sets_verified(self):
-        response = _oauth_callback(self.client, self.email)
-        token = _token_from_redirect(response)
-        code = _code_from_outbox()
-        self.client.post(
-            "/api/auth/google/verify-otp/",
-            {"verification_token": token, "otp": code},
-        )
-        self.user.refresh_from_db()
-        self.assertTrue(self.user.first_login_verified)
 
 
 class VerifiedUserFlowTests(APITestCase):
-    """End-to-end: verify → JWT → authenticated APIs work."""
+    """End-to-end: Google sign-in → JWT → authenticated APIs work."""
 
     def setUp(self):
         self.client = APIClient()
         self.email = "happy.path@gmail.com"
 
-    def test_full_flow_from_pending_to_authenticated(self):
+    def test_full_flow_from_google_to_authenticated_apis(self):
         response = _oauth_callback(self.client, self.email)
-        token = _token_from_redirect(response)
-        code = _code_from_outbox()
-
-        result = self.client.post(
-            "/api/auth/google/verify-otp/",
-            {"verification_token": token, "otp": code},
-        )
-        self.assertEqual(result.status_code, 200)
-        self.assertIn("access", result.data)
-        self.assertIn("refresh", result.data)
-        self.assertEqual(result.data["user"]["role"], "REQUESTER")
+        tokens = _fragment_tokens(response)
+        self.assertIn("access", tokens)
 
         # JWT works on authenticated endpoints.
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {result.data['access']}")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
         me = self.client.get("/api/auth/me/")
         self.assertEqual(me.status_code, 200)
 
-        # Refresh works for verified users.
+        # Refresh works.
         refreshed = self.client.post(
-            "/api/auth/refresh/", {"refresh": result.data["refresh"]}
+            "/api/auth/refresh/", {"refresh": tokens["refresh"]}
         )
         self.assertEqual(refreshed.status_code, 200)
         self.assertIn("access", refreshed.data)
 
-        # Later Google sign-ins skip OTP entirely (no repeat verification).
-        mail.outbox.clear()
+        # Later Google sign-ins keep working identically (idempotent).
         again = _oauth_callback(self.client, self.email)
         self.assertIn("/auth/callback", again.url)
         self.assertEqual(len(mail.outbox), 0)
@@ -239,8 +180,11 @@ class ThrottlingTests(APITestCase):
 
         client = APIClient()
         statuses = []
+        # /api/auth/google/ is AllowAny, so requests actually reach (and are
+        # counted by) the global anon throttle — permission-protected views
+        # 401 before the throttle runs.
         for _ in range(61):
-            statuses.append(client.get("/api/public/facilities/").status_code)
+            statuses.append(client.get("/api/auth/google/").status_code)
         self.assertIn(429, statuses)
         cache.clear()
 
@@ -268,7 +212,7 @@ class ThrottlingTests(APITestCase):
         self.assertIn(429, statuses)
         cache.clear()
 
-    def test_otp_verify_throttle(self):
+    def test_2fa_verify_login_throttle(self):
         from django.core.cache import cache
 
         client = APIClient()
@@ -276,23 +220,8 @@ class ThrottlingTests(APITestCase):
         for _ in range(7):
             statuses.append(
                 client.post(
-                    "/api/auth/google/verify-otp/",
-                    {"verification_token": "bogus", "otp": "000000"},
-                ).status_code
-            )
-        self.assertIn(429, statuses)
-        cache.clear()
-
-    def test_otp_resend_throttle(self):
-        from django.core.cache import cache
-
-        client = APIClient()
-        statuses = []
-        for _ in range(5):
-            statuses.append(
-                client.post(
-                    "/api/auth/google/resend-otp/",
-                    {"verification_token": "bogus"},
+                    "/api/auth/2fa/verify-login/",
+                    {"mfa_token": "bogus", "code": "000000"},
                 ).status_code
             )
         self.assertIn(429, statuses)
@@ -303,13 +232,13 @@ class ThrottlingTests(APITestCase):
 
         client = APIClient()
         for _ in range(7):
-            response = client.post(
-                "/api/auth/google/verify-otp/",
-                {"verification_token": "bogus", "otp": "000000"},
+            client.post(
+                "/api/auth/2fa/verify-login/",
+                {"mfa_token": "bogus", "code": "000000"},
             )
         last = client.post(
-            "/api/auth/google/verify-otp/",
-            {"verification_token": "bogus", "otp": "000000"},
+            "/api/auth/2fa/verify-login/",
+            {"mfa_token": "bogus", "code": "000000"},
         )
         self.assertEqual(last.status_code, 429)
         self.assertEqual(
@@ -321,5 +250,5 @@ class ThrottlingTests(APITestCase):
         client = APIClient()
         # A handful of ordinary requests must never be throttled.
         for _ in range(10):
-            response = client.get("/api/public/facilities/")
+            response = client.get("/api/auth/google/")
             self.assertNotEqual(response.status_code, 429)

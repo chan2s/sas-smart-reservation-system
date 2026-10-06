@@ -93,10 +93,6 @@ urlpatterns = [
     path("google/start/", oauth_views.google_start, name="google-start"),
     path("google/callback/", oauth_views.google_callback, name="google-callback"),
 
-    # First-time Google sign-in email OTP verification.
-    path("google/verify-otp/", oauth_views.google_verify_otp, name="google-verify-otp"),
-    path("google/resend-otp/", oauth_views.google_resend_otp, name="google-resend-otp"),
-
     # Two-factor authentication (TOTP).
     path("2fa/status/", TwoFactorStatusView.as_view(), name="twofa-status"),
     path("2fa/setup/", TwoFactorSetupView.as_view(), name="twofa-setup"),

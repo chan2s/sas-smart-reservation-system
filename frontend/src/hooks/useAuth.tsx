@@ -15,8 +15,6 @@ interface AuthContextValue {
   login: (username: string, password: string) => Promise<User>
   /** Completes a 2FA-challenged login with a TOTP or backup code. */
   verifyTwoFactorLogin: (mfaToken: string, code: string) => Promise<User>
-  /** Completes first-time Google sign-in email OTP verification. */
-  verifyGoogleOtp: (verificationToken: string, otp: string) => Promise<User>
   logout: () => void
   updateUser: (user: User) => void
   isStaff: boolean
@@ -77,12 +75,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user
   }, [])
 
-  const verifyGoogleOtp = useCallback(async (verificationToken: string, otp: string) => {
-    const user = await api.verifyGoogleOtp(verificationToken, otp)
-    setUser(user)
-    return user
-  }, [])
-
   const logout = useCallback(() => {
     tokenStore.clear()
     setUser(null)
@@ -97,7 +89,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         login,
         verifyTwoFactorLogin,
-        verifyGoogleOtp,
         logout,
         updateUser,
         isStaff: user?.role === 'ADMIN' || user?.role === 'STAFF',

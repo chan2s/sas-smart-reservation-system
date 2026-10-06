@@ -21,11 +21,6 @@ const AuthCallbackPage = lazy(() =>
     default: module.AuthCallbackPage,
   })),
 )
-const VerifyOtpPage = lazy(() =>
-  import('@/pages/login/VerifyOtpPage').then((module) => ({
-    default: module.VerifyOtpPage,
-  })),
-)
 const DashboardPage = lazy(() =>
   import('@/pages/dashboard/DashboardPage').then((module) => ({ default: module.DashboardPage })),
 )
@@ -137,7 +132,6 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        <Route path="/auth/verify-otp" element={<VerifyOtpPage />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           {/* Affiliation completion — reachable at any time from the profile. */}

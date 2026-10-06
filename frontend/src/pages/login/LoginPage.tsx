@@ -21,8 +21,6 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
     'Your Google account email is not verified. Use a verified account or sign in with your password.',
   twofa_required:
     'This account uses two-factor authentication. Sign in with your password to complete verification.',
-  otp_send_failed:
-    "We couldn't send a verification code to your email. Please sign in with Google again to retry.",
 }
 
 function GoogleIcon() {

@@ -237,7 +237,7 @@ class User(AbstractUser):
 
     ``affiliation`` is how SAS RESERVE identifies *who the person represents*
     (NORSU student/faculty/office or an external organization), layered on top
-    of the existing Google/OTP/2FA authentication — it is never used as a
+    of the existing Google/2FA authentication — it is never used as a
     credential and never replaces it. Existing accounts keep their current
     behavior: a blank affiliation means "campus user as before".
     """
@@ -303,23 +303,12 @@ class User(AbstractUser):
         ),
     )
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
-    # Persistent first-time verification state (server-authoritative):
-    # accounts created by first-time Google sign-in start as False and are
-    # flipped to True ONLY by successful email-OTP verification. While
-    # False the account cannot authenticate through ANY route (OAuth
-    # callback, password login, token refresh, or an existing JWT).
-    # Password-registered accounts are verified by default.
-    first_login_verified = models.BooleanField(default=True)
 
     def save(self, *args, **kwargs):
         # Administrators get Django admin access automatically.
         if self.role == self.Role.ADMIN:
             self.is_staff = True
         super().save(*args, **kwargs)
-
-    @property
-    def is_pending_verification(self) -> bool:
-        return not self.first_login_verified
 
     @property
     def display_name(self) -> str:
@@ -591,67 +580,3 @@ class TwoFactorBackupCode(models.Model):
     @classmethod
     def remaining(cls, user) -> int:
         return cls.objects.filter(user=user, used_at__isnull=True).count()
-
-
-# Verification limits (kept at module level so the service and tests share
-# one source of truth).
-OTP_LIFETIME_SECONDS = 600  # 10 minutes
-OTP_MAX_ATTEMPTS = 5
-OTP_RESEND_COOLDOWN_SECONDS = 60
-OTP_MAX_RESENDS = 5
-MAX_OTP_ATTEMPTS = OTP_MAX_ATTEMPTS
-MAX_OTP_RESENDS = OTP_MAX_RESENDS
-
-
-class EmailOTPVerification(models.Model):
-    """Pending first-time Google sign-in email verification session.
-
-    A new Google account is created but NOT authenticated until the user
-    proves ownership of their Google-verified email via a 6-digit OTP.
-
-    Security properties:
-    * The OTP is stored hashed (password hashers) — a DB leak exposes no
-      usable codes.
-    * The session token given to the SPA is random and stored hashed; it is
-      single-purpose (only OTP verify/resend) and short-lived. It is NOT a
-      JWT and grants nothing else.
-    * The OTP expires, is single-use, and is invalidated by a resend.
-    * Verification attempts and resends are capped per session.
-    """
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="email_otp_verification",
-    )
-    email = models.EmailField()
-    otp_hash = models.CharField(max_length=200)
-    token_hash = models.CharField(max_length=200, db_index=True)
-    expires_at = models.DateTimeField()
-    attempts = models.PositiveIntegerField(default=0)
-    resend_count = models.PositiveIntegerField(default=0)
-    last_sent_at = models.DateTimeField(null=True, blank=True)
-    verified_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        indexes = [
-            models.Index(fields=["user", "verified_at"]),
-            models.Index(fields=["email"]),
-        ]
-
-    def __str__(self) -> str:  # pragma: no cover — debug convenience only
-        return f"email OTP verification for {self.email} ({'verified' if self.verified_at else 'pending'})"
-
-    @property
-    def is_expired(self) -> bool:
-        return timezone.now() >= self.expires_at
-
-    @property
-    def is_locked(self) -> bool:
-        return self.attempts >= MAX_OTP_ATTEMPTS
-
-    @property
-    def is_exhausted(self) -> bool:
-        return self.resend_count >= MAX_OTP_RESENDS

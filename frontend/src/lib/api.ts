@@ -231,22 +231,6 @@ export const api = {
           : ''
       }`,
     ),
-  verifyGoogleOtp: async (verificationToken: string, otp: string) => {
-    const data = await request<{ access: string; refresh: string; user: User }>(
-      '/api/auth/google/verify-otp/',
-      {
-        method: 'POST',
-        body: JSON.stringify({ verification_token: verificationToken, otp }),
-      },
-      false,
-    )
-    tokenStore.set(data.access, data.refresh)
-    return data.user
-  },
-  resendGoogleOtp: (verificationToken: string) =>
-    api.post<{ detail: string }>('/api/auth/google/resend-otp/', {
-      verification_token: verificationToken,
-    }),
   twoFactorStatus: () =>
     api.get<{ enabled: boolean; backup_codes_remaining: number }>(
       '/api/auth/2fa/status/',
