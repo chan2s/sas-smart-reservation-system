@@ -24,7 +24,10 @@ export function AffiliationPrompt() {
       <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-white">
         <IdCard className="size-4" aria-hidden />
       </span>
-      <div className="min-w-0 flex-1">
+      {/* basis-48 makes the row wrap on narrow phones — with the default
+          basis-0 the text column is squeezed to a few characters wide while
+          the button still fits, so flex-wrap never triggers. */}
+      <div className="min-w-0 flex-1 basis-48">
         <p className="text-[13px] font-medium text-ink">
           Tell us how you&apos;re affiliated with NORSU
         </p>

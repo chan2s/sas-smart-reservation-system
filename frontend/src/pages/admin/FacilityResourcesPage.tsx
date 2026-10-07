@@ -183,7 +183,7 @@ export function FacilityResourcesPage() {
                         {resource.operator_required && ' (required)'}
                       </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <Button
                         variant="ghost"
                         size="sm"

@@ -37,7 +37,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={{ toast }}>
       {children}
       <div
-        className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-full max-w-sm flex-col gap-2"
+        className="pointer-events-none fixed inset-x-4 bottom-20 z-[60] flex flex-col gap-2 sm:inset-x-auto sm:right-4 sm:bottom-20 sm:w-full sm:max-w-sm lg:bottom-4"
         aria-live="polite"
       >
         {toasts.map((item) => (

@@ -110,7 +110,7 @@ export function Modal({
         </div>
         <div className="px-6 py-5">{children}</div>
         {footer && (
-          <div className="flex items-center justify-end gap-3 border-t border-line px-6 py-4">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 border-t border-line px-6 py-4">
             {footer}
           </div>
         )}

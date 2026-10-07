@@ -37,6 +37,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         className={cn(
           'inline-flex items-center justify-center font-medium whitespace-nowrap',
+          // Long labels ("Mark under maintenance") may wrap on narrow phones so
+          // button groups never force a modal/page to scroll sideways.
+          'max-[420px]:whitespace-normal',
           'transition-colors duration-150 select-none disabled:cursor-not-allowed',
           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
           variantClasses[variant],

@@ -118,8 +118,8 @@ export function CheckOutPage() {
           ) : (
             <ul className="mt-4 divide-y divide-line">
               {reservation.items.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-4 py-3">
-                  <div className="min-w-0 flex-1">
+                <li key={item.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+                  <div className="min-w-0 flex-1 basis-40">
                     <p className="text-sm font-medium text-ink">{item.equipment_name}</p>
                     <p className="text-xs text-muted">{item.category} · {item.quantity}×</p>
                   </div>

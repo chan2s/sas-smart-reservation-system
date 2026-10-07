@@ -111,7 +111,7 @@ export function PageHeader({
         </h1>
         {description && <p className="mt-2 max-w-2xl text-[15px] text-body">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2.5">{actions}</div>}
+      {actions && <div className="flex flex-wrap shrink-0 items-center gap-2.5">{actions}</div>}
     </div>
   )
 }

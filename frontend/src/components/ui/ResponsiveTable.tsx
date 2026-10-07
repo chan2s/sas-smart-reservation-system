@@ -81,30 +81,34 @@ export function ResponsiveTable<T>({
       {!errorState && !isLoading && isEmpty && emptyState}
       {!errorState && !isLoading && !isEmpty && (
         <>
-          {/* Desktop / tablet — semantic table preserved from the original UI */}
-          <table className={cn('w-full text-left', tableVisibility)}>
-            {caption && <caption className="sr-only">{caption}</caption>}
-            <thead>
-              <tr className="border-b border-line text-left text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
-                {columns.map((column) => (
-                  <th
-                    key={column.key}
-                    scope="col"
-                    className={cn(
-                      'py-3.5 first:pl-5 last:pr-5 px-4',
-                      column.align === 'right' && 'text-right',
-                      column.className,
-                    )}
-                  >
-                    {column.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {data.map((item, index) => renderDesktopRow(item, index))}
-            </tbody>
-          </table>
+          {/* Desktop / tablet — semantic table preserved from the original UI.
+              Contained in its own horizontal scroller so wide rows can never
+              push the page itself sideways. */}
+          <div className="overflow-x-auto">
+            <table className={cn('w-full text-left', tableVisibility)}>
+              {caption && <caption className="sr-only">{caption}</caption>}
+              <thead>
+                <tr className="border-b border-line text-left text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+                  {columns.map((column) => (
+                    <th
+                      key={column.key}
+                      scope="col"
+                      className={cn(
+                        'py-3.5 first:pl-5 last:pr-5 px-4',
+                        column.align === 'right' && 'text-right',
+                        column.className,
+                      )}
+                    >
+                      {column.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {data.map((item, index) => renderDesktopRow(item, index))}
+              </tbody>
+            </table>
+          </div>
 
           {/* Mobile — stacked cards with semantic labels */}
           <ul className={cn('divide-y divide-line', cardVisibility)}>

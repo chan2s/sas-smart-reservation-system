@@ -139,8 +139,9 @@ export function EquipmentPage() {
         }
       />
 
-      {/* Stats */}
-      <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
+      {/* Stats — full-width rows on phones so labels stay readable (2-up
+          crushed "Under Maintenance" to ~50px), 3-up on tablets, 7-up on desktop */}
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <EquipmentStat icon={<Package className="size-[18px]" />} label="Equipment Types" value={stats?.equipment_types} suffix="types" />
         <EquipmentStat icon={<Package className="size-[18px]" />} label="Total Units" value={stats?.total_units} suffix="units" />
         <EquipmentStat icon={<CircleCheck className="size-[18px]" />} label="Available" value={stats?.available_units} suffix="units" accent="text-status-available" />

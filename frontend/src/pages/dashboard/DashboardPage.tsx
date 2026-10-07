@@ -94,8 +94,9 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* Statistics */}
-      <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* Statistics — one column on phones so labels never crush; 2-up on
+          tablets, 4-up on desktop */}
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<Ticket className="size-[18px]" />}
           label="Total Reservations"
@@ -140,8 +141,9 @@ export function DashboardPage() {
         </p>
       )}
 
-      {/* Row: today + utilization */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+      {/* Row: today + utilization. min-w-0 on the cards lets truncate() work
+          inside grid tracks (grid items default to min-width:auto). */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-3 [&>*]:min-w-0">
         <Card className="lg:col-span-2">
           <CardHeader
             title={isStaff ? "Today's reservations" : "Your Reservations"}
@@ -220,7 +222,7 @@ export function DashboardPage() {
       </div>
 
       {/* Row: pending + upcoming + facility availability */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+      <div className="mt-6 grid gap-6 lg:grid-cols-3 [&>*]:min-w-0">
         <Card>
           <CardHeader
             title={isStaff ? 'Pending approval' : 'My pending requests'}
@@ -306,7 +308,7 @@ export function DashboardPage() {
       </div>
 
       {/* Row: equipment attention + activity */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-6 grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
         <Card>
           <CardHeader
             title="Equipment requiring attention"

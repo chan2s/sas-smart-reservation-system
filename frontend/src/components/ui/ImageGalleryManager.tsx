@@ -439,7 +439,7 @@ export function ImageGalleryManager({
                             ? 'This image predates the gallery and cannot be made primary here.'
                             : 'Set as primary'
                         }
-                        className="flex size-7 items-center justify-center rounded-md border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex size-8 items-center justify-center rounded-md border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40 sm:size-7"
                       >
                         <Star className="size-3.5" />
                       </button>
@@ -449,7 +449,7 @@ export function ImageGalleryManager({
                         disabled={isRemoved || isLegacy || disabled || index === 0}
                         aria-label={`Move ${name} earlier`}
                         title="Move earlier"
-                        className="flex size-7 items-center justify-center rounded-md border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex size-8 items-center justify-center rounded-md border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40 sm:size-7"
                       >
                         <ArrowLeft className="size-3.5" />
                       </button>
@@ -459,7 +459,7 @@ export function ImageGalleryManager({
                         disabled={isRemoved || isLegacy || disabled || index === entries.length - 1}
                         aria-label={`Move ${name} later`}
                         title="Move later"
-                        className="flex size-7 items-center justify-center rounded-md border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex size-8 items-center justify-center rounded-md border border-line text-body transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40 sm:size-7"
                       >
                         <ArrowRight className="size-3.5" />
                       </button>
@@ -476,7 +476,7 @@ export function ImageGalleryManager({
                               : 'Remove image'
                         }
                         className={cn(
-                          'ml-auto flex size-7 items-center justify-center rounded-md border border-line transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40',
+                          'ml-auto flex size-8 items-center justify-center rounded-md border border-line transition-colors hover:bg-soft disabled:cursor-not-allowed disabled:opacity-40 sm:size-7',
                           isRemoved ? 'text-body' : 'text-body hover:text-status-rejected',
                         )}
                       >

@@ -417,7 +417,7 @@ function FacilityCard({
           )}
         </div>
 
-        <div className="mt-5 flex items-center justify-between border-t border-line pt-4">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line pt-4">
           <div className="flex items-center gap-3">
             <Link
               to={`/facilities/${facility.id}`}

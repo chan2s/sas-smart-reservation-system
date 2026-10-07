@@ -238,9 +238,11 @@ function LandingNav({
             >
               Log In
             </Link>
+            {/* Hidden on small phones — the mobile menu carries the same link,
+                and the pill would force the brand mark to wrap at 320px. */}
             <Link
               to="/register"
-              className="inline-flex h-10 items-center gap-1.5 rounded-full bg-[var(--nav-button-background)] px-4 text-sm font-semibold text-[var(--nav-button-foreground)] shadow-sm transition-colors hover:bg-brand-dark"
+              className="hidden h-10 items-center gap-1.5 rounded-full bg-[var(--nav-button-background)] px-4 text-sm font-semibold text-[var(--nav-button-foreground)] shadow-sm transition-colors hover:bg-brand-dark sm:inline-flex"
             >
               Create Account
               <ArrowRight className="size-3.5" aria-hidden />
@@ -623,7 +625,7 @@ export function LandingPage() {
           aria-hidden
         />
 
-        <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1 flex-col justify-center px-10 pb-20 pt-32 sm:px-12 sm:pt-36 lg:px-[max(40px,8vw)] lg:pt-40">
+        <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1 flex-col justify-center px-5 pb-20 pt-32 sm:px-12 sm:pt-36 lg:px-[max(40px,8vw)] lg:pt-40">
           <div className="max-w-[850px]">
             <p
               className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-brand-faint"

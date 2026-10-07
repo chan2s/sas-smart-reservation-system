@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Bot, SendHorizonal, Trash2, X } from 'lucide-react'
 import { Spinner } from '@/components/ui/Misc'
 import { useAuth } from '@/hooks/useAuth'
@@ -70,6 +71,10 @@ export function ChatWidget() {
   const suggestions = user ? REQUESTER_SUGGESTIONS : PUBLIC_SUGGESTIONS
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // The reservation wizard keeps a sticky Back/Continue footer at the bottom
+  // of the viewport; lift the launcher above it so the two never overlap.
+  const { pathname } = useLocation()
+  const wizardFooterVisible = pathname.startsWith('/reservations/new')
 
   // Scroll to the newest message whenever the conversation grows.
   useEffect(() => {
@@ -159,7 +164,10 @@ export function ChatWidget() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-brand text-white shadow-float transition-transform duration-150 hover:scale-105 hover:bg-brand-dark lg:bottom-6 lg:right-6"
+          className={cn(
+            'fixed right-4 z-40 flex size-14 items-center justify-center rounded-full bg-brand text-white shadow-float transition-transform duration-150 hover:scale-105 hover:bg-brand-dark lg:bottom-6 lg:right-6',
+            wizardFooterVisible ? 'bottom-40' : 'bottom-20',
+          )}
           aria-label="Open assistant"
         >
           <Bot className="size-6" aria-hidden />
@@ -213,11 +221,11 @@ export function ChatWidget() {
                       conversation. */}
                   {clearConfirmOpen && (
                     <div
-                      className="absolute right-0 top-full z-10 mt-1.5 flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-float"
+                      className="absolute right-0 top-full z-10 mt-1.5 flex max-w-full flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-line bg-surface px-3 py-2 shadow-float"
                       role="group"
                       aria-label="Clear conversation confirmation"
                     >
-                      <span className="whitespace-nowrap text-xs font-medium text-ink">
+                      <span className="text-xs font-medium text-ink">
                         Clear this conversation?
                       </span>
                       <button
@@ -325,7 +333,7 @@ export function ChatWidget() {
                         never shifts. Escape cancels; focus starts on Cancel
                         so Enter cannot immediately destroy the message. */}
                     {confirming && (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-2xl border border-line bg-surface/95 px-2 text-ink">
+                      <div className="absolute inset-0 z-10 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 rounded-2xl border border-line bg-surface/95 px-2 text-ink">
                         <Trash2 className="size-3.5 shrink-0 text-status-rejected" aria-hidden />
                         <span className="text-xs font-medium">Delete this message?</span>
                         <button

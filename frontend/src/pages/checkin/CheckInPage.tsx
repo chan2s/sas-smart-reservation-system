@@ -214,7 +214,7 @@ function StaffScanner() {
         </Button>
 
         <div className="flex gap-2.5">
-          <Field label="QR code value" htmlFor="qr-code" className="flex-1">
+          <Field label="QR code value" htmlFor="qr-code" className="min-w-0 flex-1">
             <Input
               id="qr-code"
               value={code}
