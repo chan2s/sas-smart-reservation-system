@@ -1,6 +1,6 @@
 import { Info, Receipt } from 'lucide-react'
 import type { PricingFeeLine, PricingQuote } from '@/lib/types'
-import { cn, formatCurrency } from '@/lib/utils'
+import { cn, formatCurrency, pluralizeUnit } from '@/lib/utils'
 
 /**
  * Estimated-cost breakdown for a reservation.
@@ -82,6 +82,17 @@ export function PricingBreakdown({
           detail: equipmentDetail(line),
           amount: line.subtotal,
         })),
+        // Backend-computed sum of the EQUIPMENT lines, shown only when
+        // equipment is actually part of the quote.
+        ...(equipmentLines.length > 0
+          ? [
+              {
+                label: 'Equipment Subtotal',
+                detail: null as string | null,
+                amount: pricing.equipment_subtotal,
+              },
+            ]
+          : []),
       ]
     : []
 
@@ -172,7 +183,11 @@ function formatHours(hours: number): string {
   return `${value} ${hours === 1 ? 'hour' : 'hours'}`
 }
 
-/** Human-readable arithmetic for an equipment line, e.g. "100 × ₱5.00". */
+/** Human-readable arithmetic for an equipment line, using the item's own
+ * counting unit: "1 set × ₱1,000.00", "112 pieces × ₱5.00". */
 function equipmentDetail(line: PricingFeeLine): string {
-  return `${line.quantity} × ${formatCurrency(line.unit_price)}`
+  const quantity = Number(line.quantity)
+  const unit = line.equipment_unit || 'unit'
+  const noun = quantity === 1 ? unit : pluralizeUnit(unit)
+  return `${line.quantity} ${noun} × ${formatCurrency(line.unit_price)}`
 }

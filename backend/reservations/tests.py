@@ -22,7 +22,7 @@ from .models import (
     ReservationItem,
 )
 from .services.availability import check_availability, find_alternatives
-from .services.pricing import quote_fees, snapshot_reservation_fees
+from .services.pricing import quote_fees, quote_to_dict, snapshot_reservation_fees
 from .services.recommendations import (
     _MICROPHONE_OVERSIZED_QUANTITY,
     _MICROPHONE_TIERS,
@@ -2634,3 +2634,380 @@ class ExternalOrganizationPricingTests(TestCase):
             Reservation.RequesterType.EXTERNAL, self.avr, self._chairs(10)
         )
         self.assertEqual(self._money(external["total"]), "0.00")
+
+
+class EquipmentPricePricingTests(TestCase):
+    """Per-equipment pricing: each item's own ``Equipment.price`` is the
+    primary source for reservation equipment fees.
+
+    Priority: facility-resource ``additional_fee`` override > item price >
+    legacy per-category ``PricingRule``. Requester-type rules are untouched
+    (internal campus requesters are still never charged), and snapshots keep
+    historical reservations correct after a later price change.
+    """
+
+    def setUp(self):
+        from decimal import Decimal as D
+
+        self.client = APIClient()
+        self.staff = User.objects.create_user(
+            username="staff", password="pass12345", role=User.Role.STAFF
+        )
+        self.requester = User.objects.create_user(
+            username="campus", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.cafeteria = Facility.objects.create(
+            name="Cafeteria", facility_type=Facility.FacilityType.CAFETERIA, capacity=500
+        )
+        self.avr = Facility.objects.create(
+            name="Audio-Visual Room", facility_type=Facility.FacilityType.AVR, capacity=120
+        )
+        # A Monday in the near future so availability checks pass anytime.
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
+        for facility in (self.cafeteria, self.avr):
+            OperatingHour.objects.create(
+                facility=facility,
+                day_of_week=self.day.weekday(),
+                open_time=time(6, 0),
+                close_time=time(22, 0),
+            )
+
+        self.sound_category = EquipmentCategory.objects.create(name="Sound Systems")
+        self.mic_category = EquipmentCategory.objects.create(name="Microphones")
+        self.projector_category = EquipmentCategory.objects.create(name="Projectors")
+        self.chairs_category = EquipmentCategory.objects.create(name="Chairs")
+
+        self.sound = Equipment.objects.create(
+            name="Portable Sound System",
+            category=self.sound_category,
+            total_quantity=4,
+            price=D("1000.00"),
+        )
+        self.mic = Equipment.objects.create(
+            name="Wired Microphone",
+            category=self.mic_category,
+            total_quantity=6,
+            price=D("100.00"),
+        )
+        self.projector = Equipment.objects.create(
+            name="Portable Projector",
+            category=self.projector_category,
+            total_quantity=3,
+            price=D("500.00"),
+        )
+        self.chairs = Equipment.objects.create(
+            name="Folding Chair",
+            category=self.chairs_category,
+            total_quantity=300,
+            price=D("5.00"),
+        )
+        # Legacy category rate for chairs only — sound/mic/projector have no
+        # category rule, mirroring a database configured purely per item.
+        PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.EQUIPMENT,
+            equipment_category=self.chairs_category,
+            label="Chairs",
+            unit=PricingRule.Unit.UNIT,
+            unit_price=D("9.00"),
+        )
+
+    # -- helpers ----------------------------------------------------------
+
+    def _quote(self, requester_type, facility, items=None, start=None, end=None):
+        return quote_fees(
+            requester_type,
+            facility=facility,
+            items=items or [],
+            start_time=start or time(8, 0),
+            end_time=end or time(19, 0),
+        )
+
+    @staticmethod
+    def _money(value):
+        return f"{value:.2f}"
+
+    def _equipment_lines(self, quote):
+        return [f for f in quote["fees"] if f["fee_type"] == PricingRule.FeeType.EQUIPMENT]
+
+    # -- per-item price resolution ----------------------------------------
+
+    def test_item_price_used_when_no_category_rule(self):
+        """Sound ₱1,000 × 1 from the item's own price — no category rule."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.sound.id, "quantity": 1}],
+        )
+        lines = self._equipment_lines(quote)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["description"], "Portable Sound System")
+        self.assertEqual(lines[0]["unit_price"], 1000)
+        self.assertEqual(self._money(lines[0]["subtotal"]), "1000.00")
+        self.assertEqual(self._money(quote["total"]), "1000.00")
+
+    def test_item_price_overrides_category_rule(self):
+        """Chair item price ₱5 wins over the legacy ₱9 category rate."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.chairs.id, "quantity": 112}],
+        )
+        line = self._equipment_lines(quote)[0]
+        self.assertEqual(line["unit_price"], 5)
+        self.assertEqual(self._money(line["subtotal"]), "560.00")
+
+    def test_zero_item_price_falls_back_to_category_rule(self):
+        """An item with no configured price keeps the legacy category rate."""
+        self.chairs.price = 0
+        self.chairs.save(update_fields=["price"])
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.chairs.id, "quantity": 10}],
+        )
+        line = self._equipment_lines(quote)[0]
+        self.assertEqual(line["unit_price"], 9)
+        self.assertEqual(line["description"], "Chairs")
+
+    def test_item_without_any_price_source_is_free(self):
+        """No item price and no category rule → no EQUIPMENT fee at all."""
+        self.projector.price = 0
+        self.projector.save(update_fields=["price"])
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.projector.id, "quantity": 3}],
+        )
+        self.assertEqual(self._equipment_lines(quote), [])
+        self.assertEqual(self._money(quote["total"]), "0.00")
+
+        # Configuring the item price makes it chargeable immediately.
+        self.projector.price = 500
+        self.projector.save(update_fields=["price"])
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.projector.id, "quantity": 3}],
+        )
+        self.assertEqual(self._money(self._equipment_lines(quote)[0]["subtotal"]), "1500.00")
+
+    def test_facility_resource_override_still_beats_item_price(self):
+        """The facility-specific additional_fee remains the top priority."""
+        FacilityResource.objects.create(
+            facility=self.avr,
+            equipment=self.sound,
+            additional_fee=800,
+        )
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.sound.id, "quantity": 1}],
+        )
+        line = self._equipment_lines(quote)[0]
+        self.assertEqual(line["unit_price"], 800)
+
+        # Same item at a facility without an override uses the item price.
+        other = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.cafeteria,
+            [{"equipment_id": self.sound.id, "quantity": 1}],
+        )
+        self.assertEqual(self._equipment_lines(other)[0]["unit_price"], 1000)
+
+    def test_zero_price_facility_resource_falls_back_to_item_price(self):
+        """A facility resource with additional_fee 0 = 'no override', so the
+        item price applies through the resource branch too."""
+        FacilityResource.objects.create(
+            facility=self.avr,
+            equipment=self.chairs,
+            additional_fee=0,
+        )
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.chairs.id, "quantity": 112}],
+        )
+        line = self._equipment_lines(quote)[0]
+        self.assertEqual(line["unit_price"], 5)
+        self.assertEqual(line["description"], "Folding Chair")
+
+    def test_operator_rule_still_triggers_via_category(self):
+        """Operator service rules are unchanged by the item-price feature."""
+        PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.OPERATOR,
+            equipment_category=self.sound_category,
+            label="Sound System Operator",
+            unit=PricingRule.Unit.FLAT,
+            unit_price=500,
+        )
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.sound.id, "quantity": 1}],
+        )
+        fee_types = [f["fee_type"] for f in quote["fees"]]
+        self.assertIn(PricingRule.FeeType.OPERATOR, fee_types)
+        self.assertEqual(self._money(quote["total"]), "1500.00")
+
+    def test_client_cannot_inject_price_or_total(self):
+        """Payload price fields are ignored; the DB price is authoritative."""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [
+                {
+                    "equipment_id": self.sound.id,
+                    "quantity": 1,
+                    "price": 0,
+                    "unit_price": 0,
+                    "total": 0,
+                }
+            ],
+        )
+        line = self._equipment_lines(quote)[0]
+        self.assertEqual(line["unit_price"], 1000)
+        self.assertEqual(self._money(quote["total"]), "1000.00")
+
+    def test_quote_lines_carry_the_items_counting_unit(self):
+        """EQUIPMENT lines expose the item's configured unit so clients can
+        say "112 pieces × ₱5.00" — without touching the pricing unit."""
+        self.chairs.unit = "pair"
+        self.chairs.save(update_fields=["unit"])
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.avr,
+            [{"equipment_id": self.chairs.id, "quantity": 112}],
+        )
+        line = self._equipment_lines(quote)[0]
+        self.assertEqual(line["equipment_unit"], "pair")
+        self.assertEqual(line["unit"], "unit")  # pricing unit unchanged
+        data = quote_to_dict(quote)
+        self.assertEqual(data["fees"][0]["equipment_unit"], "pair")
+
+    # -- full scenario ------------------------------------------------------
+
+    def test_section_scenario_cafeteria_graduation(self):
+        """The acceptance scenario: Cafeteria Oct 8, 8:00 AM–7:00 PM with
+        Sound ×1 / Mic ×2 / Projector ×3 / Chairs ×112.
+
+        Facility ₱5,000 + overtime 2h × ₱300 + equipment 3260 = ₱8,860.
+        (No operator charge: the payload expresses no operator opt-in,
+        matching the wizard.)"""
+        quote = self._quote(
+            Reservation.RequesterType.EXTERNAL,
+            self.cafeteria,
+            [
+                {"equipment_id": self.sound.id, "quantity": 1},
+                {"equipment_id": self.mic.id, "quantity": 2},
+                {"equipment_id": self.projector.id, "quantity": 3},
+                {"equipment_id": self.chairs.id, "quantity": 112},
+            ],
+        )
+        self.assertEqual(quote["external"], True)
+        self.assertEqual(self._money(quote["total"]), "8860.00")
+        data = quote_to_dict(quote)
+        self.assertEqual(data["equipment_subtotal"], "3260.00")
+        self.assertEqual(data["total"], "8860.00")
+        self.assertEqual(data["overtime_hours"], "2")
+        self.assertEqual(data["duration_hours"], "11")
+
+    def test_internal_requester_still_free_with_item_prices(self):
+        """The requester-type rule is untouched: item prices never charge an
+        internal campus requester."""
+        quote = self._quote(
+            Reservation.RequesterType.CAMPUS,
+            self.cafeteria,
+            [
+                {"equipment_id": self.sound.id, "quantity": 1},
+                {"equipment_id": self.mic.id, "quantity": 2},
+                {"equipment_id": self.projector.id, "quantity": 3},
+                {"equipment_id": self.chairs.id, "quantity": 112},
+            ],
+        )
+        self.assertEqual(quote["fees"], [])
+        self.assertEqual(self._money(quote["total"]), "0.00")
+
+    # -- snapshot / history --------------------------------------------------
+
+    def test_snapshot_uses_item_price_and_survives_later_price_change(self):
+        """Creation snapshots the item price; a later admin edit never rewrites
+        an existing reservation's recorded amount."""
+        reservation = Reservation.objects.create(
+            requester_type=Reservation.RequesterType.EXTERNAL,
+            organization="ABC School",
+            contact_person="Juan",
+            contact_email="juan@example.com",
+            event_name="External Seminar",
+            event_type=Reservation.EventType.SEMINAR,
+            facility=self.avr,
+            date=self.day,
+            start_time=time(13, 0),
+            end_time=time(17, 0),
+            expected_participants=100,
+            purpose="Seminar",
+        )
+        ReservationItem.objects.create(
+            reservation=reservation, equipment=self.sound, quantity=1
+        )
+        snapshot_reservation_fees(reservation)
+        self.assertEqual(str(reservation.estimated_total), "1000.00")
+
+        # Admin reconfigures the sound-system price afterwards.
+        self.sound.price = 1500
+        self.sound.save(update_fields=["price"])
+        reservation.refresh_from_db()
+        self.assertEqual(str(reservation.estimated_total), "1000.00")
+        fee = reservation.fees.get(fee_type=PricingRule.FeeType.EQUIPMENT)
+        self.assertEqual(str(fee.unit_price), "1000.00")
+
+        # A NEW reservation picks up the new price.
+        fresh = Reservation.objects.create(
+            requester_type=Reservation.RequesterType.EXTERNAL,
+            organization="XYZ School",
+            contact_person="Maria",
+            contact_email="maria@example.com",
+            event_name="New Seminar",
+            facility=self.avr,
+            date=self.day,
+            start_time=time(13, 0),
+            end_time=time(17, 0),
+            expected_participants=50,
+            purpose="Seminar",
+        )
+        ReservationItem.objects.create(reservation=fresh, equipment=self.sound, quantity=1)
+        snapshot_reservation_fees(fresh)
+        self.assertEqual(str(fresh.estimated_total), "1500.00")
+
+    def test_availability_endpoint_returns_item_prices(self):
+        """The live availability API prices items from the equipment records
+        and exposes the equipment subtotal."""
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            "/api/availability/check/",
+            {
+                "facility_id": self.cafeteria.id,
+                "date": self.day.isoformat(),
+                "start_time": "08:00",
+                "end_time": "19:00",
+                "requester_type": "EXTERNAL",
+                "items": [
+                    {"equipment_id": self.sound.id, "quantity": 1},
+                    {"equipment_id": self.mic.id, "quantity": 2},
+                    {"equipment_id": self.projector.id, "quantity": 3},
+                    {"equipment_id": self.chairs.id, "quantity": 112},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        pricing = response.json()["pricing"]
+        self.assertEqual(pricing["equipment_subtotal"], "3260.00")
+        self.assertEqual(pricing["total"], "8860.00")
+        equipment_lines = [f for f in pricing["fees"] if f["fee_type"] == "EQUIPMENT"]
+        self.assertEqual(len(equipment_lines), 4)
+        mic_line = next(f for f in equipment_lines if f["description"] == "Wired Microphone")
+        self.assertEqual(mic_line["quantity"], "2")
+        self.assertEqual(mic_line["unit_price"], "100.00")
+        self.assertEqual(mic_line["subtotal"], "200.00")

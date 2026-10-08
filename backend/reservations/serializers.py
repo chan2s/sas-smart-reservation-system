@@ -651,7 +651,10 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             attrs.pop("requester_id", None)
             if is_staff:
                 # Reservation on behalf of an organization without an account
-                # — unchanged behavior for SAS staff.
+                # — unchanged behavior for SAS staff. ``contact_email`` is no
+                # longer required: the form does not collect it (email
+                # notifications are removed from SAS RESERVE) and the model
+                # field allows blank.
                 if not (attrs.get("organization") or "").strip():
                     raise serializers.ValidationError(
                         {"organization": "Organization name is required for external reservations."}
@@ -659,10 +662,6 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 if not (attrs.get("contact_person") or "").strip():
                     raise serializers.ValidationError(
                         {"contact_person": "Contact person is required for external reservations."}
-                    )
-                if not (attrs.get("contact_email") or "").strip():
-                    raise serializers.ValidationError(
-                        {"contact_email": "Email address is required for external reservations."}
                     )
             elif user is not None and user.is_authenticated and user.is_external_organization:
                 # The organization itself is resolved from the caller's own

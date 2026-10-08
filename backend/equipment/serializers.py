@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import (
@@ -105,6 +107,16 @@ class EquipmentSerializer(serializers.ModelSerializer):
     availability = serializers.SerializerMethodField()
     has_history = serializers.SerializerMethodField()
     is_active = serializers.BooleanField(required=False)
+    #: Per-unit price used by reservation pricing. Writable only through the
+    #: equipment endpoints, which are staff-only (``IsSasStaffOrReadOnly``) —
+    #: requesters can read prices but can never change them. ``0`` means the
+    #: per-category rate applies (see ``pricing.quote_fees``).
+    price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        default=Decimal("0.00"),
+    )
 
     class Meta:
         model = Equipment
@@ -116,6 +128,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "description",
             "total_quantity",
             "unit",
+            "price",
             "condition",
             "condition_label",
             "status",

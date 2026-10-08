@@ -31,13 +31,26 @@ class Equipment(models.Model):
         UNAVAILABLE = "UNAVAILABLE", "Unavailable"
         RETIRED = "RETIRED", "Retired"
 
+    class Unit(models.TextChoices):
+        """Counting unit shown with quantities ("112 pieces × ₱5.00")."""
+
+        UNIT = "unit", "Unit"
+        PIECE = "piece", "Piece"
+        SET = "set", "Set"
+        PAIR = "pair", "Pair"
+        BOX = "box", "Box"
+
     name = models.CharField(max_length=120)
     category = models.ForeignKey(
         EquipmentCategory, on_delete=models.PROTECT, related_name="items"
     )
     description = models.TextField(blank=True)
     total_quantity = models.PositiveIntegerField(default=1)
-    unit = models.CharField(max_length=40, default="unit")
+    #: Counting unit displayed with quantities. A controlled vocabulary
+    #: (validated by the API); the default matches every pre-existing row.
+    unit = models.CharField(
+        max_length=40, choices=Unit.choices, default=Unit.UNIT
+    )
     condition = models.CharField(
         max_length=16, choices=Condition.choices, default=Condition.GOOD
     )
@@ -46,6 +59,20 @@ class Equipment(models.Model):
     )
     storage_location = models.CharField(max_length=120, blank=True)
     asset_code = models.CharField(max_length=60, blank=True)
+    #: Per-unit price configured by the SAS Office in the equipment manager.
+    #: This is the primary source for reservation equipment pricing; ``0``
+    #: falls back to the per-category ``PricingRule`` (legacy behaviour), and
+    #: a facility's own ``FacilityResource.additional_fee`` still overrides
+    #: both for that facility. Never negative (see the model constraint).
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text=(
+            "Per-unit price used when pricing reservations. "
+            "0 = use the configured per-category rate (no item override)."
+        ),
+    )
     image = models.ImageField(upload_to="equipment/", blank=True, null=True)
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -54,6 +81,12 @@ class Equipment(models.Model):
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(price__gte=0),
+                name="equipment_price_nonnegative",
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.name

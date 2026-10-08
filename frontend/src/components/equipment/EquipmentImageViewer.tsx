@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, Package, X } from 'lucide-react'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import type { ReservableResource } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import { cn, pluralizeUnit } from '@/lib/utils'
 
 /**
  * Lightbox for an equipment item's images.
@@ -169,7 +169,8 @@ export function EquipmentImageViewer({
             <span className="text-muted">{equipment.storage_location}</span>
           )}
           <span className="text-muted">
-            {equipment.availability.available} of {equipment.total_quantity} {equipment.unit}s available
+            {equipment.availability.available} of {equipment.total_quantity}{' '}
+            {pluralizeUnit(equipment.unit)} available
           </span>
         </div>
       </div>

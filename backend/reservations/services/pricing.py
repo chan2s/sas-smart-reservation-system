@@ -18,7 +18,11 @@ rates can change without touching source code:
   for the hours beyond the matching facility rule's ``included_hours``
   (e.g. ₱300 per hour past the 9-hour base period).
 * ``EQUIPMENT`` — per-unit fee matched on the equipment *category*
-  (e.g. chairs ₱5 each, sound system ₱1,000 each).
+  (e.g. chairs ₱5 each, sound system ₱1,000 each). This is the *legacy*
+  fallback: the primary source for equipment pricing is each item's own
+  ``Equipment.price``, configured per item in the equipment manager. A
+  facility's ``FacilityResource.additional_fee`` overrides both for that
+  facility.
 * ``OPERATOR``  — fee triggered when a matching equipment category is part of
   the reservation (e.g. a sound system needs its operator). Charged ``flat``
   for the whole reservation by default (₱500 service pay); a rule configured
@@ -202,6 +206,10 @@ def quote_fees(
             "total": Decimal("2000.00"),
         }
 
+    The quote dict also carries ``included_hours``/``overtime_hours``;
+    ``quote_to_dict`` adds an ``equipment_subtotal`` (sum of the EQUIPMENT
+    lines) for the client breakdown.
+
     Internal requesters always get an empty, zero-total quote.
     """
     currency = CURRENCY
@@ -264,11 +272,14 @@ def quote_fees(
             )
 
     # Equipment + operator fees ---------------------------------------------
-    # A facility's own ``FacilityResource`` row may override the price for a
-    # resource it defines (so the same item can cost differently from facility
-    # to facility). A zero ``additional_fee`` means "no override", so the
-    # global per-category ``PricingRule`` still applies; resources the facility
-    # has not configured use the category rule directly.
+    # Unit prices resolve in priority order:
+    #   1. a facility's own ``FacilityResource.additional_fee`` for that item
+    #      (so the same item can cost differently from facility to facility —
+    #      a non-zero fee overrides everything below; 0 means "no override"),
+    #   2. the equipment item's own ``Equipment.price`` (configured per item
+    #      by the SAS Office in the equipment manager),
+    #   3. the legacy per-category ``PricingRule`` (kept so databases with
+    #      category rates and items without a configured price keep working).
     equipment_rules = _rules_by_category(PricingRule.FeeType.EQUIPMENT)
     operator_rules = _rules_by_category(PricingRule.FeeType.OPERATOR)
     facility_resources = _facility_resources(facility)
@@ -278,15 +289,21 @@ def quote_fees(
         category_id = equipment.category_id
         resource = facility_resources.get(equipment.id)
         rule = equipment_rules.get(category_id)
+        # The equipment item's own price — the primary per-item rate.
+        item_price = money(getattr(equipment, "price", None) or 0)
 
         if resource is not None:
             # Facility-configured resource. A non-zero ``additional_fee`` is a
             # facility-specific override; when it is zero no override is
-            # configured, so the global per-category rate still applies. A
-            # resource is therefore free only when neither is set.
+            # configured, so the item price (then the per-category rate)
+            # still applies. A resource is therefore free only when none of
+            # the three sources is set.
             unit_price = money(resource.additional_fee)
             unit = PricingRule.Unit.UNIT
-            if unit_price <= 0 and rule is not None:
+            description = equipment.name
+            if unit_price <= 0 and item_price > 0:
+                unit_price = item_price
+            elif unit_price <= 0 and rule is not None:
                 unit_price = money(rule.unit_price)
                 unit = rule.unit or PricingRule.Unit.UNIT
             if unit_price > 0:
@@ -295,13 +312,16 @@ def quote_fees(
                         "fee_type": PricingRule.FeeType.EQUIPMENT,
                         # Show the resource the requester actually selected
                         # rather than the generic category label.
-                        "description": equipment.name,
+                        "description": description,
                         "quantity": money(quantity),
                         "unit": unit,
                         "unit_price": unit_price,
                         "subtotal": money(unit_price * quantity),
                         "equipment_id": equipment.id,
                         "equipment_category_id": category_id,
+                        # The item's configured counting unit ("piece", "set",
+                        # …) so clients can say "112 pieces × ₱5.00".
+                        "equipment_unit": equipment.unit,
                     }
                 )
             # Operator service: only when explicitly requested (or forced by
@@ -327,18 +347,31 @@ def quote_fees(
                 )
             continue
 
-        if rule is not None:
+        if item_price > 0:
+            unit_price = item_price
+            unit = PricingRule.Unit.UNIT
+            description = equipment.name
+        elif rule is not None:
             unit_price = money(rule.unit_price)
+            unit = rule.unit or PricingRule.Unit.UNIT
+            description = rule.display_label
+        else:
+            unit_price = Decimal("0.00")
+            description = equipment.name
+
+        if unit_price > 0:
             fees.append(
                 {
                     "fee_type": PricingRule.FeeType.EQUIPMENT,
-                    "description": rule.display_label,
+                    "description": description,
                     "quantity": money(quantity),
-                    "unit": rule.unit or PricingRule.Unit.UNIT,
+                    "unit": unit,
                     "unit_price": unit_price,
                     "subtotal": money(unit_price * quantity),
                     "equipment_id": equipment.id,
                     "equipment_category_id": category_id,
+                    # The item's configured counting unit ("piece", "set", …).
+                    "equipment_unit": equipment.unit,
                 }
             )
 
@@ -407,11 +440,23 @@ def fee_line_to_dict(line: dict) -> dict:
         "subtotal": f"{money(line['subtotal']):.2f}",
         "equipment_id": line.get("equipment_id"),
         "equipment_category_id": line.get("equipment_category_id"),
+        # Counting unit of the selected equipment item (EQUIPMENT lines only).
+        "equipment_unit": line.get("equipment_unit"),
     }
 
 
 def quote_to_dict(quote: dict) -> dict:
     """JSON-friendly form of a quote (money as fixed-point strings)."""
+    equipment_subtotal = money(
+        sum(
+            (
+                line["subtotal"]
+                for line in quote["fees"]
+                if line["fee_type"] == PricingRule.FeeType.EQUIPMENT
+            ),
+            Decimal("0.00"),
+        )
+    )
     return {
         "requester_type": quote["requester_type"],
         "requester_type_label": dict(Reservation.RequesterType.choices).get(
@@ -423,6 +468,7 @@ def quote_to_dict(quote: dict) -> dict:
         "duration_hours": _fmt_qty(quote.get("duration_hours") or Decimal("0")),
         "included_hours": _fmt_qty(quote.get("included_hours") or Decimal("0")),
         "overtime_hours": _fmt_qty(quote.get("overtime_hours") or Decimal("0")),
+        "equipment_subtotal": f"{equipment_subtotal:.2f}",
         "fees": [fee_line_to_dict(line) for line in quote["fees"]],
         "total": f"{money(quote['total']):.2f}",
         "note": (

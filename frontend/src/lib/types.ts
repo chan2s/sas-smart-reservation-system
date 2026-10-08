@@ -289,6 +289,8 @@ export interface Equipment {
   description: string
   total_quantity: number
   unit: string
+  /** Per-unit price configured by the SAS Office ("1000.00"). "0.00" = free / no item override. */
+  price: string
   condition: EquipmentCondition
   condition_label: string
   status: EquipmentStatus
@@ -493,6 +495,8 @@ export interface PricingFeeLine {
   subtotal: string
   equipment_id?: number | null
   equipment_category_id?: number | null
+  /** The selected item's configured counting unit (EQUIPMENT lines only). */
+  equipment_unit?: string | null
 }
 
 /**
@@ -512,6 +516,8 @@ export interface PricingQuote {
   included_hours: string
   /** Hours beyond the included base period, billed as overtime (e.g. "2"). */
   overtime_hours: string
+  /** Backend-computed sum of the EQUIPMENT fee lines (e.g. "3260.00"). */
+  equipment_subtotal: string
   fees: PricingFeeLine[]
   total: string
   /** Human note clarifying that the amount is an estimate until approval. */

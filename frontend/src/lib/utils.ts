@@ -176,6 +176,14 @@ export function weekdayLabel(dayOfWeek: number): string {
   ]
 }
 
+/**
+ * Plural form of an equipment counting unit ("unit" | "piece" | "set" |
+ * "pair" | "box" — all five follow the same +s/+es rule as "boxes").
+ */
+export function pluralizeUnit(unit: string): string {
+  return unit === 'box' ? 'boxes' : `${unit}s`
+}
+
 export function initials(name: string): string {
   return name
     .split(' ')

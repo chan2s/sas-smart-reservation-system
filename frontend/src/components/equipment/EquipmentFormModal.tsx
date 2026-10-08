@@ -16,6 +16,7 @@ export interface EquipmentFormValues {
   description: string
   total_quantity: string
   unit: string
+  price: string
   condition: EquipmentCondition
   status: EquipmentStatus
   storage_location: string
@@ -38,6 +39,15 @@ const STATUSES: { value: EquipmentStatus; label: string }[] = [
   { value: 'RETIRED', label: 'Retired' },
 ]
 
+/** Controlled unit vocabulary — must mirror Equipment.Unit on the backend. */
+const UNITS: { value: string; label: string }[] = [
+  { value: 'unit', label: 'Unit' },
+  { value: 'piece', label: 'Piece' },
+  { value: 'set', label: 'Set' },
+  { value: 'pair', label: 'Pair' },
+  { value: 'box', label: 'Box' },
+]
+
 function initialValues(equipment: Equipment | null): EquipmentFormValues {
   return {
     name: equipment?.name ?? '',
@@ -45,6 +55,7 @@ function initialValues(equipment: Equipment | null): EquipmentFormValues {
     description: equipment?.description ?? '',
     total_quantity: String(equipment?.total_quantity ?? 1),
     unit: equipment?.unit ?? 'unit',
+    price: equipment ? String(equipment.price ?? '0.00') : '0.00',
     condition: equipment?.condition ?? 'GOOD',
     status: equipment?.status ?? 'AVAILABLE',
     storage_location: equipment?.storage_location ?? '',
@@ -114,6 +125,11 @@ export function EquipmentFormModal({
     setError(null)
     const name = values.name.trim()
     const quantity = Number(values.total_quantity)
+    // Normalize the price: empty/invalid input means "no item override" (the
+    // per-category rate applies). Negative values are rejected here and by
+    // the backend.
+    const parsedPrice = Number(values.price)
+    const price = Number.isFinite(parsedPrice) && parsedPrice > 0 ? parsedPrice.toFixed(2) : '0.00'
 
     if (!name) {
       setError('Equipment name is required.')
@@ -127,6 +143,10 @@ export function EquipmentFormModal({
       setError('Total quantity must be a whole number of at least 1.')
       return
     }
+    if (parsedPrice < 0) {
+      setError('Price cannot be negative.')
+      return
+    }
 
     const form = new FormData()
     form.append('name', name)
@@ -134,6 +154,7 @@ export function EquipmentFormModal({
     form.append('description', values.description)
     form.append('total_quantity', String(quantity))
     form.append('unit', values.unit.trim() || 'unit')
+    form.append('price', price)
     form.append('condition', values.condition)
     form.append('status', values.status)
     form.append('storage_location', values.storage_location)
@@ -158,6 +179,15 @@ export function EquipmentFormModal({
   }
 
   const isEditing = equipment != null
+
+  // Editing a record whose stored unit predates the controlled vocabulary:
+  // surface the raw value as an extra option so the admin sees the current
+  // state and nothing is silently rewritten on save.
+  const knownUnits = new Set(UNITS.map((option) => option.value))
+  const unitOptions =
+    equipment?.unit && !knownUnits.has(equipment.unit)
+      ? [{ value: equipment.unit, label: `Current: "${equipment.unit}"` }, ...UNITS]
+      : UNITS
 
   return (
     <Modal
@@ -240,11 +270,37 @@ export function EquipmentFormModal({
           />
         </Field>
 
-        <Field label="Unit" htmlFor="equipment-unit" hint="e.g. unit, set, pair">
-          <Input
+        <Field
+          label="Unit"
+          htmlFor="equipment-unit"
+          hint="Counting unit shown with quantities, e.g. “112 pieces × ₱5.00”."
+        >
+          <Select
             id="equipment-unit"
             value={values.unit}
             onChange={(event) => set('unit', event.target.value)}
+          >
+            {unitOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field
+          label="Price (₱)"
+          htmlFor="equipment-price"
+          hint="Per-unit cost used when pricing reservations. ₱0.00 uses the category rate, if configured."
+        >
+          <Input
+            id="equipment-price"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
+            value={values.price}
+            onChange={(event) => set('price', event.target.value)}
           />
         </Field>
 

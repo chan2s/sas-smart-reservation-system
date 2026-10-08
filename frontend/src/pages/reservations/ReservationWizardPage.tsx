@@ -572,11 +572,7 @@ export function ReservationWizardPage() {
     ? true
     : requesterType === 'CAMPUS'
       ? selectedUser != null
-      : Boolean(
-          external.organization.trim() &&
-            external.contact_person.trim() &&
-            external.contact_email.trim(),
-        )
+      : Boolean(external.organization.trim() && external.contact_person.trim())
   const stepFieldsValid =
     stepKey === 'requester'
       ? requesterStepValid
@@ -631,7 +627,6 @@ export function ReservationWizardPage() {
       const missing: string[] = []
       if (!external.organization.trim()) missing.push('Organization / school name')
       if (!external.contact_person.trim()) missing.push('Contact person')
-      if (!external.contact_email.trim()) missing.push('Email address')
       if (missing.length > 0) {
         setStepError(`Complete the requester information: ${missing.join(', ')}.`)
         return
@@ -975,7 +970,7 @@ export function ReservationWizardPage() {
                       </p>
                       <p className="text-xs text-muted">
                         {requesterType === 'EXTERNAL'
-                          ? `External Organization · ${external.contact_person} · ${external.contact_email}`
+                          ? `External Organization · ${external.contact_person}`
                           : `Campus User · ${selectedUser?.organization || selectedUser?.email || ''}`}
                       </p>
                     </div>
@@ -1278,20 +1273,6 @@ function StepRequester({
                 value={external.contact_person}
                 onChange={(event) => setExternal('contact_person', event.target.value)}
                 placeholder="e.g. Juan Dela Cruz"
-              />
-            </Field>
-            <Field
-              label="Email address"
-              htmlFor="ext-email"
-              error={externalFieldError('Email address', !external.contact_email.trim())}
-              hint="Used to track the reservation."
-            >
-              <Input
-                id="ext-email"
-                type="email"
-                value={external.contact_email}
-                onChange={(event) => setExternal('contact_email', event.target.value)}
-                placeholder="e.g. juan@example.com"
               />
             </Field>
           </div>

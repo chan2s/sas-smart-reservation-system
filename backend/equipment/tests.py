@@ -1081,3 +1081,160 @@ class EquipmentGalleryApiTests(TestCase):
         self.assertEqual(
             EquipmentImage.objects.filter(equipment=self.item).count(), 1
         )
+
+
+class EquipmentPriceApiTests(TestCase):
+    """The admin-configured equipment price: exposed through the existing
+    equipment API, writable only by SAS staff, never negative, and consumed
+    by reservation pricing."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.requester = User.objects.create_user(
+            username="requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.category = EquipmentCategory.objects.create(name="Sound Systems")
+        self.sound = Equipment.objects.create(
+            name="Portable Sound System", category=self.category, total_quantity=4
+        )
+
+    def _auth(self, user):
+        self.client.force_authenticate(user)
+
+    def test_create_with_price_returns_configured_price(self):
+        self._auth(self.admin)
+        response = self.client.post(
+            "/api/equipment/",
+            {
+                "name": "LED Projector",
+                "category_id": self.category.id,
+                "total_quantity": 2,
+                "price": "500.00",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["price"], "500.00")
+        self.assertEqual(
+            Equipment.objects.get(name="LED Projector").price, 500
+        )
+
+    def test_price_defaults_to_zero_when_omitted(self):
+        self._auth(self.admin)
+        response = self.client.post(
+            "/api/equipment/",
+            {"name": "Free Item", "category_id": self.category.id, "total_quantity": 1},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["price"], "0.00")
+
+    def test_admin_can_edit_price(self):
+        self._auth(self.admin)
+        response = self.client.patch(
+            f"/api/equipment/{self.sound.id}/", {"price": "1500.00"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.sound.refresh_from_db()
+        self.assertEqual(str(self.sound.price), "1500.00")
+
+    def test_price_is_visible_to_requesters(self):
+        self.sound.price = 1000
+        self.sound.save(update_fields=["price"])
+        self._auth(self.requester)
+        response = self.client.get(f"/api/equipment/{self.sound.id}/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["price"], "1000.00")
+
+    def test_requester_cannot_modify_price(self):
+        """Equipment writes are staff-only (IsSasStaffOrReadOnly), so a
+        requester cannot change a price through the API at all."""
+        self._auth(self.requester)
+        response = self.client.patch(
+            f"/api/equipment/{self.sound.id}/", {"price": "0.00"}, format="json"
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.sound.refresh_from_db()
+        self.assertEqual(str(self.sound.price), "0.00")
+
+    def test_negative_price_rejected(self):
+        self._auth(self.admin)
+        response = self.client.patch(
+            f"/api/equipment/{self.sound.id}/", {"price": "-5.00"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("price", response.json())
+        self.sound.refresh_from_db()
+        self.assertEqual(str(self.sound.price), "0.00")
+
+
+class EquipmentUnitApiTests(TestCase):
+    """The equipment unit field is a controlled vocabulary: exactly
+    unit/piece/set/pair/box, validated by the API, with every pre-existing
+    record (all "unit") still working untouched."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.category = EquipmentCategory.objects.create(name="Audio")
+
+    def _auth(self, user):
+        self.client.force_authenticate(user)
+
+    def _create(self, **overrides):
+        self._auth(self.admin)
+        payload = {"name": "Mic", "category_id": self.category.id, "total_quantity": 1}
+        payload.update(overrides)
+        return self.client.post("/api/equipment/", payload, format="json")
+
+    def test_all_five_units_accepted(self):
+        for unit in ("unit", "piece", "set", "pair", "box"):
+            response = self._create(unit=unit, name=f"Mic {unit}")
+            self.assertEqual(response.status_code, 201, response.content)
+            self.assertEqual(response.json()["unit"], unit)
+
+    def test_omitted_unit_defaults_to_unit(self):
+        response = self._create()
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["unit"], "unit")
+
+    def test_invalid_unit_rejected_by_api(self):
+        for bogus in ("pcs", "baskets", "kilogram", "UNIT", ""):
+            response = self._create(unit=bogus, name=f"Bad {bogus or 'empty'}")
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertIn("unit", response.json())
+
+    def test_invalid_unit_on_update_rejected(self):
+        item = Equipment.objects.create(
+            name="Speaker", category=self.category, unit="set"
+        )
+        self._auth(self.admin)
+        response = self.client.patch(
+            f"/api/equipment/{item.id}/", {"unit": "containers"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        item.refresh_from_db()
+        self.assertEqual(item.unit, "set")
+
+    def test_edit_persists_chosen_unit(self):
+        response = self._create(unit="pair", name="Stereo Headphones")
+        item_id = response.json()["id"]
+        response = self.client.get(f"/api/equipment/{item_id}/")
+        self.assertEqual(response.json()["unit"], "pair")
+
+    def test_legacy_free_text_still_readable(self):
+        """A record created before the controlled vocabulary (raw value stored
+        by the old free-text field) still serializes — it is never silently
+        rewritten; only new writes are validated."""
+        item = Equipment.objects.all().create(
+            name="Legacy Item", category=self.category, unit="pcs"
+        )
+        self._auth(self.admin)
+        response = self.client.get(f"/api/equipment/{item.id}/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["unit"], "pcs")
