@@ -23,6 +23,7 @@ import { DetailsStep } from '@/components/reservations/DetailsStep'
 import type { OperatorConfig } from '@/components/reservations/OtherEquipmentPicker'
 import type { FacilitySeatingMetadata } from '@/components/reservations/resourceSuggestions'
 import {
+  EARLIEST_START_TIME,
   StepFacility,
   StepSchedule,
   StepReview,
@@ -126,7 +127,9 @@ export function ReservationWizardPage() {
   const [date, setDate] = useState<Date | null>(() =>
     restored?.dateISO ? new Date(`${restored.dateISO}T00:00:00`) : null,
   )
-  const [startTime, setStartTime] = useState(restored?.startTime ?? '')
+  // A new schedule starts at the system-wide earliest slot (8:00 AM). A valid
+  // restored draft selection is preserved; an empty one falls back to 8:00.
+  const [startTime, setStartTime] = useState(restored?.startTime || EARLIEST_START_TIME)
   const [endTime, setEndTime] = useState(restored?.endTime ?? '')
   const [details, setDetails] = useState<EventDetailsDraft>(restored?.details ?? EMPTY_DETAILS)
   const [contact, setContact] = useState<ContactDraft>(

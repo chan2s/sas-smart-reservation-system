@@ -11,7 +11,7 @@ from .models import (
     ReservationFee,
     ReservationItem,
 )
-from .services.availability import check_availability
+from .services.availability import EARLIEST_START_TIME, check_availability
 from .services.pricing import snapshot_reservation_fees
 from .services import workflow
 
@@ -381,6 +381,13 @@ class _ReservationCreateMixin:
 
         if end <= start:
             raise serializers.ValidationError({"end_time": "End time must be after start time."})
+        if start < EARLIEST_START_TIME:
+            # System-wide policy: no reservation may start before 8:00 AM. The
+            # frontend selector hides earlier slots, but the backend is the
+            # source of truth so a crafted API request cannot bypass it.
+            raise serializers.ValidationError(
+                {"start_time": "Start time cannot be earlier than 8:00 AM."}
+            )
         if target_date < timezone.localdate():
             raise serializers.ValidationError({"date": "Date cannot be in the past."})
 

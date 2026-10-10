@@ -2082,14 +2082,31 @@ class SameDayStartTimeApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
 
     def test_tomorrow_allows_earlier_start_than_current_time(self):
+        # 08:00 tomorrow is still earlier than the current 13:00 clock, but at
+        # or past the 8:00 AM minimum, so a future date may start before "now".
         response = self._post(
-            self._payload(date="2026-09-15", start_time="06:00", end_time="08:00")
+            self._payload(date="2026-09-15", start_time="08:00", end_time="10:00")
         )
         self.assertEqual(response.status_code, 201, response.content)
 
-    def test_future_day_allows_any_operating_hour(self):
+    def test_future_day_allows_early_start_within_policy(self):
         response = self._post(
-            self._payload(date="2026-09-21", start_time="06:00", end_time="08:00")
+            self._payload(date="2026-09-21", start_time="08:00", end_time="10:00")
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+    def test_start_before_earliest_allowed_time_is_rejected(self):
+        """The backend rejects any start before 8:00 AM, not just the frontend."""
+        response = self._post(
+            self._payload(date="2026-09-15", start_time="07:30", end_time="09:30")
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("start_time", response.json())
+        self.assertIn("8:00 AM", str(response.json()["start_time"]))
+
+    def test_start_exactly_at_earliest_allowed_time_is_accepted(self):
+        response = self._post(
+            self._payload(date="2026-09-15", start_time="08:00", end_time="09:00")
         )
         self.assertEqual(response.status_code, 201, response.content)
 

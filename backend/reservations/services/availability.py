@@ -18,6 +18,12 @@ from facilities.models import Facility, OperatingHour
 from reservations.models import Reservation
 
 
+#: System-wide earliest bookable start time. A reservation may never begin
+#: before 8:00 AM, regardless of how early a facility opens. Enforced by the
+#: reservation serializers and mirrored by the frontend time selector.
+EARLIEST_START_TIME = time_cls(8, 0)
+
+
 # ---------------------------------------------------------------------------
 # Queries
 # ---------------------------------------------------------------------------
@@ -354,6 +360,10 @@ def find_alternatives(
             if candidate in seen:
                 continue
             seen.add(candidate)
+            # Never propose a slot before the system-wide 8:00 AM minimum —
+            # it would be rejected on submit anyway.
+            if candidate < EARLIEST_START_TIME:
+                continue
             candidate_end = (
                 datetime.combine(day, candidate) + duration
             ).time()

@@ -26,6 +26,15 @@ import type {
  * step (see DetailsStep) and the review summary.
  */
 
+/**
+ * System-wide earliest bookable start time. Reservations may never start
+ * before 8:00 AM, regardless of how early a facility opens. The backend
+ * enforces the same minimum, so this is a convenience, not the source of
+ * truth.
+ */
+export const EARLIEST_START_TIME = '08:00'
+const EARLIEST_START_MINUTES = 8 * 60
+
 export const EVENT_TYPE_OPTIONS: [EventType, string][] = [
   ['SEMINAR', 'Seminar'],
   ['MEETING', 'Meeting'],
@@ -258,7 +267,9 @@ export function StepSchedule({
     const slots: string[] = []
     const [openHour, openMinute] = hours.open_time.split(':').map(Number)
     const [closeHour, closeMinute] = hours.close_time.split(':').map(Number)
-    let cursor = openHour * 60 + openMinute
+    // The first bookable slot is the later of the facility's opening time and
+    // the system-wide 8:00 AM minimum, so no earlier option is ever offered.
+    let cursor = Math.max(openHour * 60 + openMinute, EARLIEST_START_MINUTES)
     const close = closeHour * 60 + closeMinute
     while (cursor < close) {
       if (!isToday || cursor > nowMinutes) {
@@ -283,17 +294,20 @@ export function StepSchedule({
   }, [startTime, hours])
 
   useEffect(() => {
-    if (startTime) {
-      if (!timeSlots.includes(startTime)) {
-        onStartTime('')
-        onEndTime('')
-        return
-      }
+    // Leave the default (and any restored selection) untouched until a
+    // facility and date are chosen and its slots are known. Once they are, a
+    // selection that is no longer valid (including one before 8:00 AM) is
+    // cleared so it can never be submitted.
+    if (!facility || !date) return
+    if (startTime && !timeSlots.includes(startTime)) {
+      onStartTime('')
+      onEndTime('')
+      return
     }
     if (endTime && !endSlots.includes(endTime)) {
       onEndTime('')
     }
-  }, [timeSlots, endSlots, startTime, endTime, onStartTime, onEndTime])
+  }, [facility, date, timeSlots, endSlots, startTime, endTime, onStartTime, onEndTime])
 
   return (
     <section aria-label="Choose schedule" className="grid gap-6 lg:grid-cols-2">
