@@ -123,35 +123,9 @@ export function ReservationsPage() {
       <div className="mt-8">
         <Tabs items={tabItems} active={status} onChange={setStatus} />
 
-        {/* Requester type filter — campus vs external at a glance */}
-        <div className="mt-4 flex items-center gap-2">
-          <span className="text-[13px] font-medium text-muted">Requester:</span>
-          {(
-            [
-              ['ALL', 'All'],
-              ['CAMPUS', 'Campus'],
-              ['EXTERNAL', 'External'],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setRequesterType(value)}
-              className={cn(
-                'rounded-full border px-3 py-1 text-[13px] font-medium transition-colors duration-150',
-                requesterType === value
-                  ? 'border-brand bg-brand text-white'
-                  : 'border-line bg-surface text-body hover:border-line-strong hover:text-ink',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Filters */}
-        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center">
-          <div className="relative flex-1 md:max-w-sm">
+        {/* Filters — search, dimensions, and requester type in one compact bar */}
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1 lg:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden />
             <Input
               type="search"
@@ -162,12 +136,12 @@ export function ReservationsPage() {
               aria-label="Search reservations"
             />
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <Select
               value={facility}
               onChange={(event) => setFacility(event.target.value)}
               aria-label="Filter by facility"
-              className="w-full md:w-auto"
+              className="w-full sm:w-auto"
             >
               <option value="">All facilities</option>
               {(facilities ?? []).map((item) => (
@@ -181,14 +155,14 @@ export function ReservationsPage() {
               value={date}
               onChange={(event) => setDate(event.target.value)}
               aria-label="Filter by date"
-              className="w-full md:w-auto"
+              className="w-full sm:w-auto"
             />
             {isStaff && (
               <Select
                 value={organization}
                 onChange={(event) => setOrganization(event.target.value)}
                 aria-label="Filter by organization"
-                className="w-full md:w-auto"
+                className="w-full sm:w-auto"
               >
                 <option value="">All organizations</option>
                 {(internalOrganizations ?? []).map((item) => (
@@ -199,6 +173,30 @@ export function ReservationsPage() {
                 <option value="EXTERNAL">External organizations</option>
               </Select>
             )}
+            {/* Requester type — campus vs external at a glance */}
+            <div className="flex items-center gap-1.5">
+              {(
+                [
+                  ['ALL', 'All'],
+                  ['CAMPUS', 'Campus'],
+                  ['EXTERNAL', 'External'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setRequesterType(value)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-[13px] font-medium transition-colors duration-150',
+                    requesterType === value
+                      ? 'border-brand bg-brand text-white'
+                      : 'border-line bg-surface text-body hover:border-line-strong hover:text-ink',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             {(search || facility || date || organization || requesterType !== 'ALL') && (
               <Button
                 variant="ghost"
@@ -307,35 +305,35 @@ function RequesterTypeBadge({ type }: { type: ReservationSummary['requester_type
 function ReservationTableRow({ reservation }: { reservation: ReservationSummary }) {
   return (
     <tr className="transition-colors hover:bg-soft/70">
-      <td className="px-5 py-4">
+      <td className="px-5 py-3.5">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-ink">{reservation.requester}</p>
           <RequesterTypeBadge type={reservation.requester_type} />
         </div>
         <p className="text-xs text-muted">{reservation.organization || '—'}</p>
       </td>
-      <td className="px-4 py-4">
+      <td className="px-4 py-3.5">
         <Link to={`/reservations/${reservation.id}`} className="text-sm font-medium text-ink hover:text-brand">
           {reservation.event_name}
         </Link>
         <p className="text-xs text-muted">{reservation.reservation_id}</p>
       </td>
-      <td className="px-4 py-4 text-sm text-body">{reservation.facility}</td>
-      <td className="px-4 py-4 text-sm tabular-nums text-body">
+      <td className="px-4 py-3.5 text-sm text-body">{reservation.facility}</td>
+      <td className="px-4 py-3.5 text-sm tabular-nums text-body">
         {format(new Date(reservation.date), 'MMM d, yyyy')}
       </td>
-      <td className="px-4 py-4 text-sm tabular-nums text-body">
+      <td className="px-4 py-3.5 text-sm tabular-nums text-body">
         {formatTime(reservation.start_time)}–{formatTime(reservation.end_time)}
       </td>
-      <td className="max-w-[220px] px-4 py-4">
+      <td className="max-w-[220px] px-4 py-3.5">
         <p className="truncate text-[13px] text-body" title={reservation.resources.join(', ')}>
           {reservation.resources.length ? reservation.resources.join(', ') : '—'}
         </p>
       </td>
-      <td className="px-4 py-4">
+      <td className="px-4 py-3.5">
         <StatusBadge status={reservation.status} />
       </td>
-      <td className="px-5 py-4 text-right">
+      <td className="px-5 py-3.5 text-right">
         <Link
           to={`/reservations/${reservation.id}`}
           className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-dark"
@@ -350,7 +348,7 @@ function ReservationTableRow({ reservation }: { reservation: ReservationSummary 
 function ReservationMobileRow({ reservation }: { reservation: ReservationSummary }) {
   return (
     <li>
-      <Link to={`/reservations/${reservation.id}`} className="flex items-start gap-3 px-5 py-4">
+      <Link to={`/reservations/${reservation.id}`} className="flex items-start gap-3 px-5 py-3.5">
         <span className="flex size-10 shrink-0 flex-col items-center justify-center rounded-xl bg-soft leading-none">
           <span className="text-[13px] font-bold text-ink">{format(new Date(reservation.date), 'd')}</span>
           <span className="text-[9px] font-semibold uppercase text-muted">

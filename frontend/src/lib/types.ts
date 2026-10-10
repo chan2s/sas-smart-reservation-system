@@ -409,6 +409,8 @@ export interface EquipmentStats {
 export interface EquipmentHistoryItem {
   reservation: number
   reservation_id: string
+  /** Organization behind the reservation ("" when none could be resolved). */
+  organization_name: string
   event_name: string
   date: string
   quantity: number

@@ -275,19 +275,41 @@ def equipment_stats(request=None) -> dict:
     }
 
 
+def _reservation_organization_name(reservation) -> str:
+    """The organization name behind a reservation, or "" when none is known.
+
+    Prefers the verified organization linked through the reservation's
+    ``organization_ref`` relationship (the actual organization record) and
+    falls back to the human-readable snapshot stored on the reservation
+    itself. Never raises for a missing link, so a usage row always renders.
+    """
+    organization = reservation.organization_ref
+    if organization is not None:
+        name = organization.display_name or organization.organization_name
+        if name:
+            return name
+    return reservation.organization or ""
+
+
 def equipment_usage_history(equipment_id: int) -> list:
-    """Reservation usage rows for the equipment detail page (most recent first)."""
+    """Reservation usage rows for the equipment detail page (most recent first).
+
+    Rows carry the reservation's organization name (resolved through the
+    organization relationship) instead of the event name, and are ordered by
+    reservation date descending so callers can show the most recent first.
+    """
     from reservations.models import ReservationItem
 
     rows = (
         ReservationItem.objects.filter(equipment_id=equipment_id)
-        .select_related("reservation")
+        .select_related("reservation", "reservation__organization_ref")
         .order_by("-reservation__date", "-reservation__start_time")
     )
     return [
         {
             "reservation": item.reservation.id,
             "reservation_id": item.reservation.reservation_id,
+            "organization_name": _reservation_organization_name(item.reservation),
             "event_name": item.reservation.event_name,
             "date": item.reservation.date.isoformat(),
             "quantity": item.quantity,

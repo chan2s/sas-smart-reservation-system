@@ -15,9 +15,7 @@ import {
   useEquipmentCategories,
   useEquipmentHistory,
   useEquipmentItem,
-  useEquipmentMaintenance,
   useReportEquipmentIssue,
-  useResolveMaintenance,
   useRestoreEquipment,
   useSaveEquipmentGallery,
   useSetEquipmentMaintenance,
@@ -52,7 +50,6 @@ export function EquipmentDetailPage() {
   const { toast } = useToast()
   const { isStaff } = useAuth()
   const { data: item, isLoading } = useEquipmentItem(equipmentId)
-  const { data: maintenance } = useEquipmentMaintenance(equipmentId)
   const { data: history } = useEquipmentHistory(equipmentId)
   const { data: categories } = useEquipmentCategories()
   const reportIssue = useReportEquipmentIssue(equipmentId)
@@ -86,6 +83,14 @@ export function EquipmentDetailPage() {
 
   const currentItem = item
   const availability = item.availability
+
+  // Reservation usage only shows completed reservations. The backend already
+  // returns rows newest-first, but re-sort defensively by reservation date and
+  // take the three most recent so the section is correct regardless of order.
+  const recentCompleted = [...(history ?? [])]
+    .filter((row) => row.status === 'COMPLETED')
+    .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
+    .slice(0, 3)
 
   function submitIssue() {
     const form = new FormData()
@@ -239,38 +244,38 @@ export function EquipmentDetailPage() {
           <Card>
             <CardHeader
               title="Reservation usage"
-              description="Every reservation that has included this equipment"
+              description="The three most recent completed reservations that used this equipment"
             />
-            {!history || history.length === 0 ? (
+            {recentCompleted.length === 0 ? (
               <EmptyState
                 icon={<History className="size-5" />}
-                title="No usage yet"
-                description="Reservations that include this equipment will appear here."
+                title="No completed reservations"
+                description="No completed reservations for this equipment yet."
               />
             ) : (
               <div className="mt-4">
                 <table className="hidden w-full sm:table">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
-                      <th className="py-2.5 pr-4">Reservation</th>
-                      <th className="px-4 py-2.5">Event</th>
+                      {/* <th className="py-2.5 pr-4">Reservation</th> */}
+                      <th className="px-4 py-2.5">Organization</th>
                       <th className="px-4 py-2.5">Date</th>
                       <th className="px-4 py-2.5">Quantity</th>
                       <th className="px-4 py-2.5">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
-                    {history.map((row) => (
+                    {recentCompleted.map((row) => (
                       <tr key={`${row.reservation}-${row.quantity}`} className="text-sm">
-                        <td className="py-3 pr-4">
+                        {/* <td className="py-3 pr-4">
                           <Link
                             to={`/reservations/${row.reservation}`}
                             className="font-medium text-ink hover:text-brand"
                           >
                             {row.reservation_id}
                           </Link>
-                        </td>
-                        <td className="px-4 py-3 text-body">{row.event_name}</td>
+                        </td> */}
+                        <td className="px-4 py-3 text-body">{row.organization_name || '—'}</td>
                         <td className="px-4 py-3 tabular-nums text-body">
                           {format(new Date(`${row.date}T00:00:00`), 'MMM d, yyyy')}
                         </td>
@@ -278,105 +283,32 @@ export function EquipmentDetailPage() {
                           {row.quantity} {row.quantity > 1 ? 'units' : 'unit'}
                         </td>
                         <td className="px-4 py-3">
-                          <Badge
-                            tone={
-                              row.status === 'COMPLETED'
-                                ? 'teal'
-                                : row.status === 'APPROVED'
-                                  ? 'sky'
-                                  : row.status === 'ACTIVE'
-                                    ? 'sky'
-                                    : row.status === 'PENDING'
-                                      ? 'amber'
-                                      : row.status === 'REJECTED'
-                                        ? 'rose'
-                                        : 'gray'
-                            }
-                          >
-                            {row.status_label}
-                          </Badge>
+                          <Badge tone="teal">{row.status_label}</Badge>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <ul className="divide-y divide-line sm:hidden">
-                  {history.map((row) => (
+                  {recentCompleted.map((row) => (
                     <li key={`${row.reservation}-${row.quantity}`} className="py-3">
                       <Link
                         to={`/reservations/${row.reservation}`}
                         className="text-sm font-medium text-ink hover:text-brand"
                       >
-                        {row.event_name}
+                        {row.organization_name || row.reservation_id}
                       </Link>
                       <p className="mt-0.5 text-xs text-muted">
                         {row.reservation_id} · {format(new Date(`${row.date}T00:00:00`), 'MMM d, yyyy')} ·{' '}
                         {row.quantity} {row.quantity > 1 ? 'units' : 'unit'}
                       </p>
                       <div className="mt-1.5">
-                        <Badge tone={row.status === 'COMPLETED' ? 'teal' : row.status === 'APPROVED' || row.status === 'ACTIVE' ? 'sky' : row.status === 'PENDING' ? 'amber' : row.status === 'REJECTED' ? 'rose' : 'gray'}>
-                          {row.status_label}
-                        </Badge>
+                        <Badge tone="teal">{row.status_label}</Badge>
                       </div>
                     </li>
                   ))}
                 </ul>
               </div>
-            )}
-          </Card>
-
-          {/* Maintenance history */}
-          <Card>
-            <CardHeader
-              title="Maintenance history"
-              description="Open maintenance can be resolved by SAS staff once the work is done."
-            />
-            {!maintenance || maintenance.length === 0 ? (
-              <EmptyState
-                icon={<Wrench className="size-5" />}
-                title="No maintenance records"
-                description="Issues reported for this equipment will appear here."
-              />
-            ) : (
-              <ul className="mt-4 divide-y divide-line">
-                {maintenance.map((record) => (
-                  <li key={record.id} className="flex items-start gap-4 py-3.5">
-                    <span
-                      className={cn(
-                        'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg',
-                        record.status === 'OPEN'
-                          ? 'bg-status-maintenance-bg text-status-maintenance'
-                          : 'bg-status-available-bg text-status-available',
-                      )}
-                    >
-                      <Wrench className="size-4" aria-hidden />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-ink">
-                          {record.issue_type_label}
-                          <span className="ml-1.5 text-xs font-normal text-muted">
-                            · {record.quantity} {record.quantity > 1 ? 'units' : 'unit'}
-                          </span>
-                        </p>
-                        <Badge tone={record.status === 'OPEN' ? 'orange' : 'emerald'}>
-                          {record.status_label}
-                        </Badge>
-                      </div>
-                      {record.description && (
-                        <p className="mt-1 text-[13px] text-body">{record.description}</p>
-                      )}
-                      <p className="mt-1 text-xs text-muted">
-                        {record.reported_by_name || 'SAS Staff'} · {formatDateTime(record.created_at)}
-                        {record.resolved_at && ` · Resolved ${formatDateTime(record.resolved_at)}`}
-                      </p>
-                    </div>
-                    {isStaff && record.status === 'OPEN' && (
-                      <ResolveMaintenanceButton equipmentId={equipmentId} recordId={record.id} />
-                    )}
-                  </li>
-                ))}
-              </ul>
             )}
           </Card>
         </div>
@@ -534,26 +466,6 @@ export function EquipmentDetailPage() {
       {/* Remove modal */}
       {removeOpen && <RemoveEquipmentModal equipment={item} onClose={() => setRemoveOpen(false)} />}
     </div>
-  )
-}
-
-function ResolveMaintenanceButton({ equipmentId, recordId }: { equipmentId: number; recordId: number }) {
-  const { toast } = useToast()
-  const resolve = useResolveMaintenance(equipmentId)
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      loading={resolve.isPending}
-      onClick={() =>
-        resolve.mutate(recordId, {
-          onSuccess: () => toast('Maintenance resolved — units are reservable again.'),
-          onError: () => toast('Unable to resolve this record.', 'error'),
-        })
-      }
-    >
-      Resolve
-    </Button>
   )
 }
 

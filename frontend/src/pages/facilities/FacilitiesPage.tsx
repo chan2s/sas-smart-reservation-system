@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Form'
 import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
 import { FacilityImageCarousel } from '@/components/facilities/FacilityImageCarousel'
+import { FacilityImageViewer } from '@/components/facilities/FacilityImageViewer'
 import { FacilityFormModal } from '@/components/facilities/FacilityFormModal'
 import { RemoveFacilityModal } from '@/components/facilities/RemoveFacilityModal'
 import { Badge } from '@/components/ui/Badge'
@@ -170,15 +171,15 @@ export function FacilitiesPage() {
       </div>
 
       {/* Cards */}
-      <div className="mt-6 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {isLoading &&
-          Array.from({ length: 3 }).map((_, index) => (
+          Array.from({ length: 6 }).map((_, index) => (
             <div key={index} className="card overflow-hidden">
-              <Skeleton className="h-48 rounded-none" />
+              <Skeleton className="h-40 rounded-none" />
               <div className="space-y-3 p-5">
                 <Skeleton className="h-5 w-1/2" />
                 <Skeleton className="h-3 w-4/5" />
-                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-9 w-full" />
               </div>
             </div>
           ))}
@@ -308,6 +309,8 @@ function FacilityCard({
 }) {
   const { toast } = useToast()
   const updateFacility = useUpdateFacility(facility.id)
+  // Index of the gallery image open in the lightbox, or null when closed.
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null)
 
   const archived = !facility.is_active
   const availability = facility.availability
@@ -333,12 +336,13 @@ function FacilityCard({
     <article
       className={cn('card card-hover flex flex-col overflow-hidden', archived && 'opacity-70')}
     >
-      <div className="relative h-48">
+      <div className="relative h-40">
         <FacilityImageCarousel
           images={facilityImageUrls(facility)}
           name={facility.name}
           facilityType={facility.facility_type}
           rounded="rounded-none"
+          onOpenImage={(index) => setViewerIndex(index)}
         />
         <div className="pointer-events-none absolute left-4 top-4 flex flex-wrap gap-2">
           {archived ? (
@@ -443,6 +447,16 @@ function FacilityCard({
           )}
         </div>
       </div>
+
+      {/* Reuses the gallery already loaded for this card — no extra fetch. */}
+      <FacilityImageViewer
+        open={viewerIndex !== null}
+        name={facility.name}
+        facilityType={facility.facility_type}
+        images={facilityImageUrls(facility)}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
     </article>
   )
 }

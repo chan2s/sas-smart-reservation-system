@@ -131,13 +131,18 @@ export function FacilityImageCarousel({
                   type="button"
                   onClick={() => onOpenImage(i)}
                   aria-label={`Open image ${i + 1} of ${count} at full size`}
-                  className="block h-full w-full cursor-zoom-in"
+                  className="group/image relative block h-full w-full cursor-pointer"
                 >
                   <FacilityImage
                     name={name}
                     facilityType={facilityType}
                     src={url}
                     rounded="rounded-none"
+                  />
+                  {/* Subtle hover cue so it is obvious the picture opens. */}
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 bg-ink/0 transition-colors duration-200 group-hover/image:bg-ink/10"
                   />
                 </button>
               ) : (
@@ -155,6 +160,15 @@ export function FacilityImageCarousel({
         {/* Caller-owned band (hero title/badges). Pointer-transparent so the
             image underneath still opens the full-size preview. */}
         {overlay}
+
+        {onOpenImage && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute bottom-3 right-2 inline-flex items-center gap-1 rounded-full bg-ink/70 px-2 py-0.5 text-[11px] font-medium text-white"
+          >
+            <Expand className="size-3" /> View larger
+          </span>
+        )}
 
         {/* Only rendered when there is more than one image to navigate. */}
         {count > 1 && (
@@ -182,15 +196,6 @@ export function FacilityImageCarousel({
             >
               {safeIndex + 1} / {count}
             </span>
-
-            {onOpenImage && (
-              <span
-                aria-hidden
-                className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-ink/70 px-2 py-0.5 text-[11px] font-medium text-white"
-              >
-                <Expand className="size-3" /> View larger
-              </span>
-            )}
 
             {/* Indicator dots (● ○ ○ ○). */}
             <div

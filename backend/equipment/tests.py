@@ -7,6 +7,7 @@ from django.test import TestCase
 from PIL import Image as PilImage
 from rest_framework.test import APIClient
 
+from accounts.models import Organization
 from facilities.models import Facility, OperatingHour
 from reservations.models import Reservation, ReservationItem
 from reservations.services.availability import check_availability
@@ -427,6 +428,7 @@ class EquipmentManagementApiTests(TestCase):
         reservation = Reservation.objects.create(
             requester=self.requester,
             event_name="Recognition Program",
+            organization="Student Affairs",
             facility=self.facility,
             date=date(2026, 9, 14),
             start_time=time(9, 0),
@@ -443,8 +445,45 @@ class EquipmentManagementApiTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["reservation_id"], reservation.reservation_id)
         self.assertEqual(rows[0]["event_name"], "Recognition Program")
+        # Without a linked organization the snapshot's name is used.
+        self.assertEqual(rows[0]["organization_name"], "Student Affairs")
         self.assertEqual(rows[0]["quantity"], 4)
         self.assertEqual(rows[0]["status"], "APPROVED")
+
+    def test_usage_history_uses_linked_organization_name(self):
+        """The organization name comes from the reservation's org relationship."""
+        organization = Organization.objects.create(
+            organization_name="College of Arts and Sciences",
+            acronym="TESTCAS",
+            organization_type=Organization.OrganizationType.INTERNAL,
+            contact_person="Dean",
+            contact_email="cas@example.com",
+            verification_status=Organization.VerificationStatus.APPROVED,
+        )
+        reservation = Reservation.objects.create(
+            requester=self.requester,
+            event_name="Recognition Program",
+            # A stale free-text snapshot must lose to the linked record.
+            organization="Old snapshot name",
+            organization_ref=organization,
+            facility=self.facility,
+            date=date(2026, 9, 14),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            status=Reservation.Status.COMPLETED,
+        )
+        ReservationItem.objects.create(
+            reservation=reservation, equipment=self.mics, quantity=2
+        )
+        self._auth(self.admin)
+        response = self.client.get(f"/api/equipment/{self.mics.id}/history/")
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["organization_name"], "TESTCAS — College of Arts and Sciences"
+        )
+        self.assertEqual(rows[0]["status"], "COMPLETED")
 
     def test_stats_include_unavailable_units(self):
         unavailable = Equipment.objects.create(

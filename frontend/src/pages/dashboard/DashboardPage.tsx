@@ -1,11 +1,10 @@
+import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
   Building2,
-  CalendarClock,
-  CheckCircle2,
+  CalendarDays,
   ClipboardList,
-  Clock3,
   Package,
   Plus,
   RefreshCw,
@@ -19,13 +18,32 @@ import {
   useUtilization,
 } from '@/hooks/queries'
 import { useAuth } from '@/hooks/useAuth'
-import { PageHeader, Skeleton, EmptyState } from '@/components/ui/Misc'
+import { PageHeader, Skeleton } from '@/components/ui/Misc'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import {
+  ResponsiveTable,
+  type ResponsiveTableColumn,
+} from '@/components/ui/ResponsiveTable'
 import { Backdrop } from '@/components/decor/Backdrop'
-import { cn, formatTime, STATUS_META } from '@/lib/utils'
-import type { DashboardReservationRow } from '@/lib/types'
+import { cn, formatTime } from '@/lib/utils'
+import type { DashboardReservationRow, Facility } from '@/lib/types'
+
+// Compact caps — the dashboard surfaces only the most relevant rows and links
+// out to the full lists.
+const MAX_MY_RESERVATIONS = 3
+const MAX_FACILITIES = 5
+const MAX_UPCOMING = 5
+const MAX_UTILIZATION_BARS = 5
+
+const upcomingColumns: ResponsiveTableColumn[] = [
+  { key: 'facility', label: 'Facility' },
+  { key: 'event', label: 'Event' },
+  { key: 'date', label: 'Date' },
+  { key: 'time', label: 'Time' },
+  { key: 'status', label: 'Status', align: 'right' },
+]
 
 export function DashboardPage() {
   const navigate = useNavigate()
@@ -38,16 +56,27 @@ export function DashboardPage() {
     isFetching: summaryFetching,
   } = useDashboardSummary()
   const { data: facilities } = useFacilities()
-  const { data: utilization } = useUtilization(30)
+  const { data: utilization, isError: utilizationError } = useUtilization(30)
 
   // All dashboard rows come from the backend summary — computed with the
   // backend's Asia/Manila clock and scoped server-side to the signed-in
   // user's role. The frontend applies no filtering of its own.
-  const today = summary?.today ?? []
-  const upcoming = summary?.upcoming ?? []
-  const pending = summary?.pending ?? []
-  const recentActivity = summary?.recent ?? []
-  const equipmentAttention = summary?.equipment_attention ?? []
+  //
+  // "My Reservations" consolidates the old today/pending cards into one list:
+  // today's schedule, requests awaiting review, and what's coming up —
+  // deduped, soonest first.
+  const myReservations = useMemo(() => {
+    if (!summary) return []
+    const seen = new Set<number>()
+    return [...summary.today, ...summary.pending, ...summary.upcoming]
+      .filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)))
+      .sort((a, b) =>
+        `${a.date} ${a.start_time}`.localeCompare(`${b.date} ${b.start_time}`),
+      )
+      .slice(0, MAX_MY_RESERVATIONS)
+  }, [summary])
+
+  const upcoming = (summary?.upcoming ?? []).slice(0, MAX_UPCOMING)
 
   return (
     <div className="relative">
@@ -94,313 +123,251 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* Statistics — one column on phones so labels never crush; 2-up on
+      {/* Statistics — one column on phones so labels never crush; 2×2 on
           tablets, 4-up on desktop */}
       <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          icon={<Ticket className="size-[18px]" />}
+          icon={<Ticket className="size-4" />}
           label="Total Reservations"
           value={summary?.total_reservations}
           loading={summaryLoading}
         />
         <StatCard
-          icon={<ClipboardList className="size-[18px]" />}
+          icon={<ClipboardList className="size-4" />}
           label="Pending Requests"
           value={summary?.pending_requests}
           loading={summaryLoading}
-          accent="text-status-pending"
         />
         <StatCard
-          icon={<Building2 className="size-[18px]" />}
+          icon={<Building2 className="size-4" />}
           label="Active Facilities"
           value={summary?.facilities}
           loading={summaryLoading}
         />
         <StatCard
-          icon={<Package className="size-[18px]" />}
-          label="Total Units"
+          icon={<Package className="size-4" />}
+          label="Total Equipment Units"
           value={summary?.equipment}
           loading={summaryLoading}
-          suffix="units"
         />
       </div>
 
-      {/* Campus vs external usage split */}
-      {isStaff && (
-        <p className="mt-3 text-sm text-muted">
-          Campus reservations:{' '}
-          <span className="font-semibold tabular-nums text-ink">
-            {summary?.campus_reservations ?? 0}
-          </span>{' '}· External reservations:{' '}
-          <span className="font-semibold tabular-nums text-ink">
-            {summary?.external_reservations ?? 0}
-          </span>{' '}·{' '}
-          <Link to="/analytics" className="font-medium text-brand hover:text-brand-dark">
-            View breakdown
-          </Link>
-        </p>
-      )}
-
-      {/* Row: today + utilization. min-w-0 on the cards lets truncate() work
-          inside grid tracks (grid items default to min-width:auto). */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3 [&>*]:min-w-0">
-        <Card className="lg:col-span-2">
+      {/* Main row: reservations + facility availability. min-w-0 on the cards
+          lets truncate() work inside grid tracks (grid items default to
+          min-width:auto). */}
+      <div className="mt-5 grid gap-5 lg:grid-cols-5 [&>*]:min-w-0">
+        <Card className="flex flex-col lg:col-span-3">
           <CardHeader
-            title={isStaff ? "Today's reservations" : "Your Reservations"}
+            title="My Reservations"
             description={
               summary?.today_date
                 ? format(new Date(`${summary.today_date}T00:00:00`), 'EEEE, MMMM d, yyyy')
                 : undefined
             }
-            action={
-              <Link
-                to="/calendar"
-                className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-dark"
-              >
-                View calendar <ArrowRight className="size-3.5" />
-              </Link>
-            }
+            action={<SectionLink to="/reservations">View all</SectionLink>}
           />
           {summaryLoading ? (
-            <div className="mt-4 space-y-2">
-              <Skeleton className="h-12" />
-              <Skeleton className="h-12" />
+            <div className="mt-4 space-y-3" aria-busy="true" aria-label="Loading reservations">
+              <Skeleton className="h-14" />
+              <Skeleton className="h-14" />
+              <Skeleton className="h-14" />
             </div>
-          ) : today.length === 0 ? (
-            <EmptyState
-              title={isStaff ? "No reservations today" : "You don't have any reservations yet."}
-              description={isStaff
-                ? "The facility calendar is clear — create a reservation to get started."
-                : "When you book a reservation, it will appear here with its current status."}
-              action={
-                <Button size="sm" onClick={() => navigate('/reservations/new')}>
-                  Create reservation
-                </Button>
-              }
-            />
-          ) : (
-            <ul className="mt-4 divide-y divide-line">
-              {today.map((reservation) => (
-                <TodayRow key={reservation.id} reservation={reservation} />
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader
-            title="Facility utilization"
-            description="Share of operating hours booked — last 30 days"
-          />
-          <div className="mt-5 space-y-4">
-            {(utilization?.facility.facilities ?? []).slice(0, 5).map((facility) => (
-              <div key={facility.facility_id}>
-                <div className="mb-1.5 flex items-baseline justify-between gap-3">
-                  <p className="truncate text-sm font-medium text-ink">{facility.name}</p>
-                  <p className="shrink-0 text-[13px] tabular-nums text-body">
-                    {facility.utilization}%
-                  </p>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-softer" role="presentation">
-                  <div
-                    className={cn(
-                      'h-full rounded-full transition-all duration-500',
-                      facility.utilization > 75
-                        ? 'bg-status-pending'
-                        : facility.utilization > 40
-                          ? 'bg-brand'
-                          : 'bg-status-available',
-                    )}
-                    style={{ width: `${Math.min(facility.utilization, 100)}%` }}
-                  />
-                </div>
+          ) : myReservations.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+              <div className="flex size-11 items-center justify-center rounded-full bg-soft text-muted">
+                <CalendarDays className="size-5" aria-hidden />
               </div>
-            ))}
-            {!utilization && <Skeleton className="h-24" />}
+              <h3 className="mt-3 text-sm font-semibold text-ink">
+                {isStaff ? 'Nothing scheduled today' : 'No reservations yet'}
+              </h3>
+              <p className="mt-1 max-w-xs text-[13px] text-body">
+                {isStaff
+                  ? "Today's calendar is clear — new requests awaiting your approval will appear here."
+                  : 'Reservations you book — and requests awaiting review — will appear here.'}
+              </p>
+              <Button size="sm" className="mt-4" onClick={() => navigate('/reservations/new')}>
+                Create reservation
+              </Button>
+            </div>
+          ) : (
+            <ul className="mt-2 divide-y divide-line">
+              {myReservations.map((reservation) => (
+                <MyReservationRow
+                  key={reservation.id}
+                  reservation={reservation}
+                  showRequester={isStaff}
+                />
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader
+            title="Facility Availability"
+            action={<SectionLink to="/facilities">View all</SectionLink>}
+          />
+          {!facilities ? (
+            <div className="mt-4 space-y-3" aria-busy="true" aria-label="Loading facilities">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+            </div>
+          ) : facilities.length === 0 ? (
+            <p className="mt-4 text-sm text-muted">No facilities have been added yet.</p>
+          ) : (
+            <ul className="mt-2 divide-y divide-line">
+              {facilities.slice(0, MAX_FACILITIES).map((facility) => (
+                <FacilityRow key={facility.id} facility={facility} />
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+
+      {/* Bottom row: upcoming reservations (+ utilization for staff — the
+          analytics endpoint is SAS-staff-only, so requesters get the full
+          width for the table instead of a permanently empty panel) */}
+      <div className="mt-5 grid gap-5 lg:grid-cols-5 [&>*]:min-w-0">
+        <Card
+          padding="none"
+          className={cn('overflow-hidden', isStaff ? 'lg:col-span-3' : 'lg:col-span-5')}
+        >
+          <div className="px-5 pt-5">
+            <CardHeader
+              title="Upcoming Reservations"
+              description="Approved events in the next 7 days"
+              action={<SectionLink to="/calendar">View calendar</SectionLink>}
+            />
           </div>
-        </Card>
-      </div>
-
-      {/* Row: pending + upcoming + facility availability */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3 [&>*]:min-w-0">
-        <Card>
-          <CardHeader
-            title={isStaff ? 'Pending approval' : 'My pending requests'}
-            description={isStaff ? 'Requests awaiting your decision' : 'Requests awaiting SAS review'}
-          />
-          {summaryLoading ? (
-            <Skeleton className="mt-4 h-16" />
-          ) : pending.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">Nothing awaiting approval.</p>
-          ) : (
-            <ul className="mt-3 divide-y divide-line">
-              {pending.map((reservation) => (
-                <PendingRow key={reservation.id} reservation={reservation} />
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader title="Upcoming reservations" description="Approved events in the next 7 days" />
-          {summaryLoading ? (
-            <Skeleton className="mt-4 h-16" />
-          ) : upcoming.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">No approved events on the horizon.</p>
-          ) : (
-            <ul className="mt-3 divide-y divide-line">
-              {upcoming.map((reservation) => (
-                <UpcomingRow key={reservation.id} reservation={reservation} />
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader
-            title="Facility availability"
-            action={
-              <Link
-                to="/facilities"
-                className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-dark"
-              >
-                All facilities <ArrowRight className="size-3.5" />
-              </Link>
-            }
-          />
-          <ul className="mt-4 space-y-3">
-            {(facilities ?? []).map((facility) => (
-              <li key={facility.id}>
-                <Link
-                  to={`/facilities/${facility.id}`}
-                  className="group flex items-center gap-3 rounded-xl border border-line p-3 transition-colors duration-150 hover:border-line-strong hover:bg-soft"
-                >
-                  <span
-                    className={cn(
-                      'size-2 shrink-0 rounded-full',
-                      facility.status === 'MAINTENANCE'
-                        ? 'bg-status-maintenance'
-                        : facility.availability.available === false
-                          ? 'bg-status-rejected'
-                          : 'bg-status-available',
-                    )}
-                    aria-hidden
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-ink">{facility.name}</p>
-                    <p className="truncate text-xs text-muted">
-                      {facility.location} · Capacity {facility.capacity}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-xs font-medium text-body group-hover:text-brand">
-                    {facility.status === 'MAINTENANCE'
-                      ? 'Maintenance'
-                      : facility.availability.available === false
-                        ? 'Reserved'
-                        : 'Available'}
-                  </span>
-                </Link>
-              </li>
-            ))}
-            {!facilities && <Skeleton className="h-24" />}
-          </ul>
-        </Card>
-      </div>
-
-      {/* Row: equipment attention + activity */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
-        <Card>
-          <CardHeader
-            title="Equipment requiring attention"
-            description="Low availability, maintenance, or poor condition"
-            action={
-              <Link
-                to="/equipment"
-                className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-dark"
-              >
-                Inventory <ArrowRight className="size-3.5" />
-              </Link>
-            }
-          />
-          {summaryLoading ? (
-            <Skeleton className="mt-4 h-16" />
-          ) : equipmentAttention.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">All equipment is in good standing.</p>
-          ) : (
-            <ul className="mt-3 divide-y divide-line">
-              {equipmentAttention.slice(0, 5).map((item) => (
-                <li key={item.id} className="flex items-center gap-3 py-2.5">
-                  <span className="flex size-8 items-center justify-center rounded-lg bg-status-maintenance-bg text-status-maintenance">
-                    <TriangleAlert className="size-4" aria-hidden />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <Link to={`/equipment/${item.id}`} className="text-sm font-medium text-ink hover:text-brand">
-                      {item.name}
-                    </Link>
-                    <p className="text-xs text-muted">
-                      {item.category} · {item.condition_label}
-                    </p>
-                  </div>
-                  <span
-                    className={cn(
-                      'shrink-0 rounded-md px-2 py-0.5 text-xs font-medium',
-                      item.availability_status === 'AVAILABLE'
-                        ? 'bg-status-available-bg text-status-available'
-                        : 'bg-status-rejected-bg text-status-rejected',
-                    )}
+          <ResponsiveTable
+            columns={upcomingColumns}
+            data={upcoming}
+            rowKey={(row) => row.id}
+            isLoading={summaryLoading}
+            isEmpty={!summaryLoading && upcoming.length === 0}
+            skeletonRows={3}
+            breakpoint="md"
+            caption="Upcoming reservations"
+            renderDesktopRow={(row) => (
+              <tr className="group transition-colors hover:bg-soft">
+                <td className="max-w-[10rem] px-4 py-3 text-sm first:pl-5">
+                  <Link
+                    to={`/facilities/${row.facility_id}`}
+                    className="block truncate font-medium text-ink hover:text-brand"
                   >
-                    {item.available} / {item.total_quantity} available
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+                    {row.facility}
+                  </Link>
+                </td>
+                <td className="px-4 py-3 text-sm">
+                  <Link
+                    to={`/reservations/${row.id}`}
+                    className="block truncate text-body hover:text-brand"
+                  >
+                    {row.event_name}
+                  </Link>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-sm tabular-nums text-body">
+                  {format(new Date(row.date), 'MMM d')}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-sm tabular-nums text-body">
+                  {formatTime(row.start_time)} – {formatTime(row.end_time)}
+                </td>
+                <td className="px-4 py-3 text-right last:pr-5">
+                  <StatusBadge status={row.status} />
+                </td>
+              </tr>
+            )}
+            renderMobileCard={(row) => (
+              <div className="px-5 py-3.5">
+                <div className="flex items-center justify-between gap-3">
+                  <Link
+                    to={`/facilities/${row.facility_id}`}
+                    className="min-w-0 truncate text-sm font-medium text-ink"
+                  >
+                    {row.facility}
+                  </Link>
+                  <StatusBadge status={row.status} className="shrink-0" />
+                </div>
+                <Link to={`/reservations/${row.id}`} className="mt-0.5 block truncate text-[13px] text-body">
+                  {row.event_name}
+                </Link>
+                <p className="mt-0.5 text-xs tabular-nums text-muted">
+                  {format(new Date(row.date), 'MMM d, yyyy')} ·{' '}
+                  {formatTime(row.start_time)} – {formatTime(row.end_time)}
+                </p>
+              </div>
+            )}
+            emptyState={
+              <div className="flex flex-col items-center px-6 py-9 text-center">
+                <p className="text-sm font-medium text-ink">No upcoming reservations</p>
+                <p className="mt-0.5 text-[13px] text-body">
+                  Approved events for the next 7 days will appear here.
+                </p>
+              </div>
+            }
+          />
         </Card>
 
-        <Card>
-          <CardHeader title="Reservation activity" description="Most recent requests across the system" />
-          {summaryLoading ? (
-            <Skeleton className="mt-4 h-16" />
-          ) : recentActivity.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">No reservation activity yet.</p>
-          ) : (
-            <ol className="mt-4 space-y-0">
-              {recentActivity.map((reservation, index) => (
-                <li key={reservation.id} className="relative flex gap-4 pb-5 last:pb-0">
-                  {index < recentActivity.length - 1 && (
-                    <span
-                      className="absolute left-[7px] top-5 h-full w-px bg-line"
-                      aria-hidden
-                    />
-                  )}
-                  <span
-                    className={cn(
-                      'relative mt-1.5 size-3.5 shrink-0 rounded-full border-2 border-surface',
-                      STATUS_META[reservation.status].dot,
-                    )}
-                    aria-hidden
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-3">
-                      <Link
-                        to={`/reservations/${reservation.id}`}
-                        className="truncate text-sm font-medium text-ink hover:text-brand"
-                      >
-                        {reservation.event_name}
-                      </Link>
-                      <StatusBadge status={reservation.status} />
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted">
-                      {format(new Date(reservation.date), 'MMM d')} ·{' '}
-                      {formatTime(reservation.start_time)}–{formatTime(reservation.end_time)} ·{' '}
-                      {reservation.facility}
-                    </p>
+        {isStaff && (
+          <Card className="flex flex-col lg:col-span-2">
+            <CardHeader
+              title="Facility Utilization"
+              description="Share of operating hours booked — last 30 days"
+            />
+            {utilizationError ? (
+              <p className="mt-4 flex flex-1 items-center justify-center text-center text-sm text-muted">
+                Usage data is unavailable right now.
+              </p>
+            ) : !utilization ? (
+              <div className="mt-5 space-y-4" aria-busy="true" aria-label="Loading utilization">
+                {[0, 1, 2].map((index) => (
+                  <div key={index}>
+                    <Skeleton className="mb-2 h-3 w-24" />
+                    <Skeleton className="h-1.5 w-full" />
                   </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </Card>
+                ))}
+              </div>
+            ) : utilization.facility.facilities.length === 0 ? (
+              <p className="mt-4 flex flex-1 items-center justify-center text-center text-sm text-muted">
+                No facility usage recorded in this period.
+              </p>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {utilization.facility.facilities
+                  .slice(0, MAX_UTILIZATION_BARS)
+                  .map((facility) => (
+                    <div key={facility.facility_id}>
+                      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                        <p className="truncate text-[13px] font-medium text-ink">{facility.name}</p>
+                        <p className="shrink-0 text-xs tabular-nums text-body">
+                          {facility.utilization}%
+                        </p>
+                      </div>
+                      <div
+                        className="h-1.5 overflow-hidden rounded-full bg-softer"
+                        role="presentation"
+                      >
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-all duration-500',
+                            facility.utilization > 75
+                              ? 'bg-status-pending'
+                              : facility.utilization > 40
+                                ? 'bg-brand'
+                                : 'bg-status-available',
+                          )}
+                          style={{ width: `${Math.min(facility.utilization, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </Card>
+        )}
       </div>
     </div>
   )
@@ -413,106 +380,103 @@ function StatCard({
   label,
   value,
   loading,
-  accent,
-  suffix,
 }: {
   icon: React.ReactNode
   label: string
   value?: number
   loading?: boolean
-  accent?: string
-  suffix?: string
 }) {
   return (
-    <div className="card flex items-start gap-4 p-5">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
-        {icon}
-      </span>
-      <div className="min-w-0">
-        {loading ? (
-          <Skeleton className="h-8 w-14" />
-        ) : (
-          <p className={cn('text-[26px] font-semibold leading-none tabular-nums tracking-tight', accent ?? 'text-ink')}>
-            {value ?? 0}
-          </p>
-        )}
-        <p className="mt-1.5 text-[13px] text-body">
-          {label}
-          {suffix ? ` · ${suffix}` : ''}
-        </p>
+    <div className="card p-4 sm:p-5">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
+          {icon}
+        </span>
+        <p className="truncate text-[13px] font-medium text-body">{label}</p>
       </div>
+      {loading ? (
+        <Skeleton className="mt-3 h-7 w-14" />
+      ) : (
+        <p className="mt-2.5 text-[28px] font-semibold leading-none tabular-nums tracking-tight text-ink">
+          {value ?? 0}
+        </p>
+      )}
     </div>
   )
 }
 
-function TodayRow({ reservation }: { reservation: DashboardReservationRow }) {
+/** Small "View all →" link used in every section header. */
+function SectionLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex shrink-0 items-center gap-1 self-center text-[13px] font-medium text-brand hover:text-brand-dark"
+    >
+      {children}
+      <ArrowRight className="size-3.5" aria-hidden />
+    </Link>
+  )
+}
+
+function MyReservationRow({
+  reservation,
+  showRequester,
+}: {
+  reservation: DashboardReservationRow
+  showRequester: boolean
+}) {
   return (
     <li>
       <Link
         to={`/reservations/${reservation.id}`}
-        className="flex items-center gap-4 rounded-lg px-2 py-3 transition-colors hover:bg-soft"
+        className="-mx-2 flex flex-col gap-0.5 rounded-lg px-2 py-3 transition-colors hover:bg-soft"
       >
-        <span className="flex size-10 shrink-0 flex-col items-center justify-center rounded-xl bg-soft leading-none">
-          <Clock3 className="mb-0.5 size-3.5 text-muted" aria-hidden />
-          <span className="text-[11px] font-semibold tabular-nums text-ink">
-            {formatTime(reservation.start_time).replace(/\s?(AM|PM)/, '')}
-          </span>
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">{reservation.event_name}</p>
-          <p className="truncate text-xs text-muted">
-            {reservation.facility} · {reservation.requester}
-          </p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="truncate text-sm font-semibold text-ink">{reservation.facility}</p>
+          <StatusBadge status={reservation.status} className="shrink-0" />
         </div>
-        <StatusBadge status={reservation.status} />
+        <p className="truncate text-[13px] text-body">
+          {reservation.event_name}
+          {showRequester && reservation.requester ? ` · ${reservation.requester}` : ''}
+        </p>
+        <p className="text-xs tabular-nums text-muted">
+          {format(new Date(reservation.date), 'MMM d, yyyy')} · {formatTime(reservation.start_time)}{' '}
+          – {formatTime(reservation.end_time)}
+        </p>
       </Link>
     </li>
   )
 }
 
-function PendingRow({ reservation }: { reservation: DashboardReservationRow }) {
-  return (
-    <li>
-      <Link
-        to={`/reservations/${reservation.id}`}
-        className="flex items-center gap-3 py-2.5 transition-colors hover:opacity-80"
-      >
-        <CalendarClock className="size-4 shrink-0 text-status-pending" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">{reservation.event_name}</p>
-          <p className="truncate text-xs text-muted">
-            {format(new Date(reservation.date), 'MMM d')} · {reservation.facility} ·{' '}
-            {reservation.requester}
-          </p>
-        </div>
-        <ArrowRight className="size-3.5 shrink-0 text-muted" aria-hidden />
-      </Link>
-    </li>
-  )
+/** Dot + status text for a facility, derived from its schedule/status. */
+function facilityAvailabilityMeta(facility: Facility) {
+  if (facility.status === 'MAINTENANCE') {
+    return { label: 'Maintenance', dot: 'bg-status-maintenance', text: 'text-status-maintenance' }
+  }
+  if (facility.availability.available === false) {
+    return { label: 'Reserved', dot: 'bg-status-rejected', text: 'text-status-rejected' }
+  }
+  return { label: 'Available', dot: 'bg-status-available', text: 'text-status-available' }
 }
 
-function UpcomingRow({ reservation }: { reservation: DashboardReservationRow }) {
+function FacilityRow({ facility }: { facility: Facility }) {
+  const meta = facilityAvailabilityMeta(facility)
+  // Some seeded facilities have no location — never render a dangling "·".
+  const detail = [facility.location.trim(), `Capacity ${facility.capacity}`]
+    .filter(Boolean)
+    .join(' · ')
   return (
     <li>
       <Link
-        to={`/reservations/${reservation.id}`}
-        className="flex items-center gap-3 py-2.5 transition-colors hover:opacity-80"
+        to={`/facilities/${facility.id}`}
+        className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-soft"
       >
-        <span className="flex size-9 shrink-0 flex-col items-center justify-center rounded-lg bg-brand-soft leading-none">
-          <span className="text-[13px] font-bold text-brand">
-            {format(new Date(reservation.date), 'd')}
-          </span>
-          <span className="text-[9px] font-semibold uppercase text-brand/70">
-            {format(new Date(reservation.date), 'MMM')}
-          </span>
-        </span>
+        <span className={cn('size-2 shrink-0 rounded-full', meta.dot)} aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">{reservation.event_name}</p>
-          <p className="truncate text-xs text-muted">
-            {reservation.facility} · {formatTime(reservation.start_time)}–{formatTime(reservation.end_time)}
-          </p>
+          <p className="truncate text-sm font-medium text-ink">{facility.name}</p>
+          <p className="truncate text-xs text-muted">{detail}</p>
         </div>
-        <CheckCircle2 className="size-4 shrink-0 text-status-available" aria-hidden />
+        <span className={cn('shrink-0 text-xs font-medium', meta.text)}>{meta.label}</span>
       </Link>
     </li>
   )

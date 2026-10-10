@@ -20,12 +20,18 @@ export function FacilityImage({
   src,
   className,
   rounded = 'rounded-xl',
+  fit = 'cover',
+  alt,
 }: {
   name: string
   facilityType: FacilityType
   src?: string | null
   className?: string
   rounded?: string
+  /** 'contain' shows the whole picture without cropping (used in the viewer). */
+  fit?: 'cover' | 'contain'
+  /** Overrides the default `<name> facility` alt text. */
+  alt?: string
 }) {
   // A URL that fails to load (moved/deleted file, bad media path) must never
   // show the browser's broken-image icon — fall back to the same placeholder
@@ -40,17 +46,21 @@ export function FacilityImage({
     return (
       <img
         src={src}
-        alt={`${name} facility`}
+        alt={alt ?? `${name} facility`}
         loading="lazy"
         onError={() => setFailed(true)}
-        className={cn('h-full w-full object-cover', rounded, className)}
+        className={cn(
+          fit === 'contain' ? 'object-contain' : 'h-full w-full object-cover',
+          rounded,
+          className,
+        )}
       />
     )
   }
   return (
     <div
       role="img"
-      aria-label={`${name} facility`}
+      aria-label={alt ?? `${name} facility`}
       className={cn(
         'relative flex h-full w-full items-center justify-center overflow-hidden bg-gradient-to-br',
         gradients[facilityType] ?? gradients.OTHER,

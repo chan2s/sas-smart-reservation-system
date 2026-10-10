@@ -110,8 +110,13 @@ export function FacilityImageViewer({
           <div className="min-w-0">
             <h2 className="truncate text-base font-semibold text-ink">{name}</h2>
             {count > 0 && (
-              <p className="mt-0.5 text-xs text-muted" aria-live="polite">
-                Image {safeIndex + 1} of {count}
+              <p className="mt-0.5 text-xs tabular-nums text-muted" aria-live="polite">
+                <span className="sr-only">
+                  Image {safeIndex + 1} of {count}
+                </span>
+                <span aria-hidden>
+                  {safeIndex + 1} / {count}
+                </span>
               </p>
             )}
           </div>
@@ -124,15 +129,20 @@ export function FacilityImageViewer({
           </button>
         </div>
 
-        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-soft/60 p-4">
-          {/* Keep a viewport-bounded frame so portrait and landscape photos
-              both stay fully visible without stretching. */}
-          <div className="aspect-[4/3] max-h-[70vh] w-full max-w-2xl overflow-hidden rounded-xl">
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-soft/60 p-3 sm:p-4">
+          {/* Viewport-bounded frame: the picture is scaled with object-fit:
+              contain, so portrait and landscape photos both stay complete and
+              undistorted, and it can never grow past the viewport (no
+              horizontal scrolling on small screens). */}
+          <div className="aspect-[4/3] max-h-[65vh] w-full max-w-2xl overflow-hidden rounded-xl sm:max-h-[70vh]">
             <FacilityImage
               name={name}
               facilityType={facilityType}
               src={current ?? null}
+              fit="contain"
+              alt={`${name} facility — image ${safeIndex + 1} of ${count}`}
               rounded="rounded-xl"
+              className="h-full w-full"
             />
           </div>
 
