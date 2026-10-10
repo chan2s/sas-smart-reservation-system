@@ -36,12 +36,33 @@ export interface SuggestedResource {
   capped: boolean
   /** False for rows the requester must opt into (unverified seating). */
   checkedByDefault: boolean
-  /** True for seating on a facility with no verified seating type. */
-  unverified: boolean
+  /**
+   * True for seating rows on a facility whose seating metadata has not been
+   * recorded. The equipment itself is a real, available inventory record — it
+   * is the facility's seating that is unverified, which is why the row is
+   * offered opt-in instead of pre-checked.
+   */
+  seatingUnverified: boolean
+}
+
+/**
+ * A backend ("smart") recommendation that could not be matched to this
+ * facility's inventory. The name comes from the recommender and may be
+ * generated — it is NOT proof that the item exists or is available, so an
+ * unmatched suggestion is reported for transparency and is never selectable.
+ */
+export interface UnmatchedRecommendation {
+  /** The name the recommender returned, kept verbatim for the status line. */
+  name: string
+  category: string
+  /** Why the suggestion could not be turned into a selectable row. */
+  reason: string
 }
 
 export interface SuggestedResourcesState {
   suggestions: SuggestedResource[]
+  /** Recommendations that could not be matched to facility inventory. */
+  unmatched: UnmatchedRecommendation[]
   /** Items the facility already provides, labelled — shown read-only. */
   included: string[]
   /** True when the facility has no seating type recorded. */
@@ -184,11 +205,14 @@ export function useSuggestedResources({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey, enabled])
 
-  const suggestions = useMemo(() => {
-    if (!enabled) return []
+  const { suggestions, unmatched } = useMemo(() => {
+    if (!enabled) {
+      return { suggestions: [] as SuggestedResource[], unmatched: [] as UnmatchedRecommendation[] }
+    }
     const used = new Set<number>()
     const claimedRules: ResourceSuggestionRule[] = []
     const rows: SuggestedResource[] = []
+    const unmatched: UnmatchedRecommendation[] = []
 
     for (const rule of suggestionRulesFor(eventType as EventType)) {
       const item = matchResource(rule, equipment, used)
@@ -201,11 +225,11 @@ export function useSuggestedResources({
       // What the facility already provides is subtracted from the need.
       const builtIn = builtInAllowance(rule, facility)
       const suggested = Math.max(0, needed - builtIn)
-      const unverified = isUnverifiedSeating(rule, facility)
+      const seatingUnverified = isUnverifiedSeating(rule, facility)
 
       // A resource the facility already supplies in full is not a suggestion —
       // it is reported as "included" instead (see `included` below).
-      if (suggested <= 0 && !unverified) continue
+      if (suggested <= 0 && !seatingUnverified) continue
 
       const quantity = Math.min(suggested, available)
       rows.push({
@@ -218,20 +242,30 @@ export function useSuggestedResources({
         reason: suggestionReason(rule, eventType as EventType, suggested),
         capped: suggested > available,
         // Unverified seating must be explicitly opted into.
-        checkedByDefault: !unverified && quantity > 0,
-        unverified,
+        checkedByDefault: !seatingUnverified && quantity > 0,
+        seatingUnverified,
       })
     }
 
-    // Backend recommendations for anything the rules did not cover. Equipment
-    // ids that no longer belong to the facility are simply dropped, and a
-    // recommendation for a category a rule already covered (say a second
-    // microphone model) is dropped too, so a rule never double-counts.
+    // Backend recommendations for anything the rules did not cover. An id that
+    // is not part of this facility's inventory is reported as unmatched (never
+    // selectable), and a recommendation for a category a rule already covered
+    // (say a second microphone model) is dropped, so a rule never double-counts.
     const byId = new Map(equipment.map((item) => [item.id, item]))
     for (const recommendation of recommendations ?? []) {
       if (used.has(recommendation.equipment_id)) continue
       const item = byId.get(recommendation.equipment_id)
-      if (!item) continue
+      // The recommender suggests from real records, but its name is never
+      // trusted on its own: an id that is not in THIS facility's inventory
+      // cannot be reserved. Surface it instead of silently dropping it.
+      if (!item) {
+        unmatched.push({
+          name: recommendation.name || `Equipment #${recommendation.equipment_id}`,
+          category: recommendation.category || 'Unmatched',
+          reason: "not part of this facility's inventory",
+        })
+        continue
+      }
       if (matchesAny(claimedRules, item)) continue
       used.add(item.id)
       rows.push({
@@ -244,11 +278,11 @@ export function useSuggestedResources({
         reason: recommendation.reason || 'Suggested for this kind of event',
         capped: Boolean(recommendation.warning),
         checkedByDefault: recommendation.recommended > 0,
-        unverified: false,
+        seatingUnverified: false,
       })
     }
 
-    return rows
+    return { suggestions: rows, unmatched }
   }, [enabled, eventType, participants, equipment, recommendations, facility])
 
   const included = useMemo(
@@ -258,6 +292,7 @@ export function useSuggestedResources({
 
   return {
     suggestions,
+    unmatched,
     included,
     unverifiedSeating: facility.seatingType == null,
     loading: recommendResources.isPending,

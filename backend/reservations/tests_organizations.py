@@ -122,6 +122,7 @@ class ExternalOrganizationReservationTests(TestCase):
         self.assertEqual(body["organization"], "ABC Foundation")
         self.assertEqual(body["organization_code"], "EXT-0001")
         self.assertEqual(body["organization_type"], "NGO")
+        self.assertEqual(body["organization_type_label"], "Non-Governmental Organization")
         # Still enters the normal pending review queue (no special privilege).
         self.assertEqual(body["status"], "PENDING")
 
@@ -465,6 +466,14 @@ class CampusOrganizationDerivationTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(Reservation.objects.get().organization, "Typed Office")
+        # No linked organization and no snapshot → the type stays empty, so the
+        # details page renders a placeholder instead of a fabricated value.
+        body = response.json()
+        self.assertEqual(body["organization_type"], "")
+        self.assertEqual(body["organization_type_label"], "")
+        detail = self.client.get(f"{RESERVATIONS_URL}{body['id']}/")
+        self.assertEqual(detail.status_code, 200, detail.content)
+        self.assertEqual(detail.json()["organization_type_label"], "")
 
     def test_staff_on_behalf_uses_target_users_organization(self):
         self.client.force_authenticate(self.staff)
@@ -548,6 +557,27 @@ class InternalOrganizationReservationTests(TestCase):
         reservation = Reservation.objects.get(pk=body["id"])
         self.assertEqual(reservation.organization_ref, self.organization)
         self.assertEqual(reservation.requester_type, Reservation.RequesterType.CAMPUS)
+
+    def test_internal_organization_type_is_exposed_in_reservation_detail(self):
+        """The linked organization's type is returned, not the blank snapshot.
+
+        Regression: the reservation details page showed "—" because the
+        serializer read the external-only snapshot column directly.
+        """
+        self.client.force_authenticate(self.user)
+        created = self.client.post(RESERVATIONS_URL, self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+        body = created.json()
+        self.assertEqual(body["organization_type"], "INTERNAL")
+        self.assertEqual(body["organization_type_label"], "Internal Organization")
+
+        detail = self.client.get(f"{RESERVATIONS_URL}{body['id']}/")
+        self.assertEqual(detail.status_code, 200, detail.content)
+        detail_body = detail.json()
+        self.assertEqual(detail_body["organization"], "CAS — College of Arts and Sciences")
+        self.assertEqual(detail_body["organization_code"], "CAS")
+        self.assertEqual(detail_body["organization_type"], "INTERNAL")
+        self.assertEqual(detail_body["organization_type_label"], "Internal Organization")
 
     def test_internal_member_cannot_claim_external_requester_type(self):
         """A forged requester_type=EXTERNAL is rejected, not honoured."""

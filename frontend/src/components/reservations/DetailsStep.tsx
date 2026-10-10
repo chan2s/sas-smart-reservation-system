@@ -19,7 +19,7 @@ import {
   type ReservationFieldKey,
 } from '@/lib/reservationDraft'
 import { cn } from '@/lib/utils'
-import type { SuggestedResource } from '@/hooks/useSuggestedResources'
+import type { SuggestedResource, UnmatchedRecommendation } from '@/hooks/useSuggestedResources'
 import type { EventType, ReservableResource } from '@/lib/types'
 
 /**
@@ -45,6 +45,7 @@ export function DetailsStep({
   facilityName,
   suggestions,
   suggestionsLoading,
+  unmatched,
   included,
   items,
   onQuantity,
@@ -67,6 +68,8 @@ export function DetailsStep({
   facilityName: string
   suggestions: SuggestedResource[]
   suggestionsLoading: boolean
+  /** Backend recommendations that could not be matched to facility inventory. */
+  unmatched: UnmatchedRecommendation[]
   /** Items the facility already provides ("Cafeteria already provides Tables, Chairs."). */
   included: string[]
   items: Record<number, number>
@@ -151,8 +154,9 @@ export function DetailsStep({
   // Additional (non-suggested) resources the requester picked — kept visible
   // even while the full picker is collapsed.
   const selectedExtras = equipment.filter((item) => (items[item.id] ?? 0) > 0)
-  const unverifiedSeating = suggestions.some((suggestion) => suggestion.unverified)
-  const showSuggestions = suggestionsLoading || suggestions.length > 0 || included.length > 0
+  const unverifiedSeating = suggestions.some((suggestion) => suggestion.seatingUnverified)
+  const showSuggestions =
+    suggestionsLoading || suggestions.length > 0 || included.length > 0 || unmatched.length > 0
   const contactComplete = Boolean(contact.name.trim()) && isValidPhMobile(contact.phone)
 
   return (
@@ -413,10 +417,38 @@ export function DetailsStep({
             </p>
           )}
 
+          {/* A smart recommendation whose id is not in the facility's inventory
+              is reported, never offered: a generated name is not evidence the
+              item exists or is available. */}
+          {unmatched.length > 0 && (
+            <div
+              role="alert"
+              className="mt-3 rounded-xl border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-[13px] text-status-pending"
+            >
+              <p className="flex items-start gap-1.5 font-medium">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                Some suggestions could not be matched to{' '}
+                {facilityName || 'the facility'}&apos;s inventory
+              </p>
+              <ul className="mt-1.5 space-y-0.5 pl-5">
+                {unmatched.map((item, index) => (
+                  <li key={`${item.name}-${index}`} className="list-disc">
+                    <span className="font-medium">{item.name}</span> — {item.reason}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 pl-5 text-xs">
+                Nothing is selected for these. Add the resource from the equipment list instead.
+              </p>
+            </div>
+          )}
+
           {unverifiedSeating && (
             <p className="mt-3 text-[13px] text-muted">
-              Seating for {facilityName || 'this facility'} has not been verified — Chairs and
-              Tables are unchecked. Add the seating you actually need.
+              Seating for {facilityName || 'this facility'} has not been verified, so SAS cannot
+              tell how many chairs and tables it already provides. The rows below are real
+              inventory records — they are simply left unchecked. Add the seating you actually
+              need.
             </p>
           )}
 
@@ -463,7 +495,14 @@ export function DetailsStep({
                     >
                       <span className="flex flex-wrap items-center gap-1.5">
                         <span className="text-sm font-medium text-ink">{suggestion.name}</span>
-                        {suggestion.unverified && <Badge tone="amber">Unverified</Badge>}
+                        {suggestion.seatingUnverified && (
+                          <Badge
+                            tone="amber"
+                            title="This equipment is a real inventory record; the facility's seating count is what is unverified."
+                          >
+                            Seating unverified
+                          </Badge>
+                        )}
                         {edited ? (
                           <Badge tone="sky">Edited</Badge>
                         ) : suggestion.source === 'RECOMMENDER' ? (

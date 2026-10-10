@@ -573,6 +573,37 @@ class Reservation(models.Model):
         return ""
 
     @property
+    def resolved_organization_type(self) -> str:
+        """Type of the organization this reservation belongs to.
+
+        The structured ``organization_ref`` is authoritative: it is resolved
+        server-side from the requester's own profile and can never be supplied
+        by a client, so its type always reflects the live organization record.
+        The ``organization_type`` column is only a free-text snapshot used by
+        external reservations (campus reservations leave it blank), so it is
+        consulted only when there is no linked organization. Empty when neither
+        exists, letting callers render a placeholder instead of guessing.
+        """
+        if self.organization_ref_id:
+            return self.organization_ref.organization_type
+        return self.organization_type
+
+    @property
+    def organization_type_label(self) -> str:
+        """Human label for :attr:`resolved_organization_type`, or ``""``."""
+        value = self.resolved_organization_type
+        if not value:
+            return ""
+        # External reservations snapshot their type in this model's vocabulary;
+        # internal campus organizations only exist in the accounts vocabulary.
+        label = dict(self.OrganizationType.choices).get(value)
+        if label:
+            return label
+        from accounts.models import Organization as OrganizationModel
+
+        return dict(OrganizationModel.OrganizationType.choices).get(value, value)
+
+    @property
     def is_today(self) -> bool:
         from datetime import date
 

@@ -142,7 +142,12 @@ class ReservationListSerializer(serializers.ModelSerializer):
     requester_type_label = serializers.CharField(read_only=True)
     affiliation = serializers.CharField(read_only=True)
     affiliation_label = serializers.CharField(read_only=True)
-    organization_type = serializers.CharField(read_only=True)
+    # Resolved from the linked organization record (falling back to the
+    # external snapshot) — the raw column is blank for campus reservations, so
+    # reading it directly left the details page showing "—".
+    organization_type = serializers.CharField(
+        source="resolved_organization_type", read_only=True
+    )
     organization_type_label = serializers.CharField(read_only=True)
     organization_code = serializers.CharField(read_only=True)
     contact_email = serializers.CharField(read_only=True)

@@ -318,6 +318,7 @@ export function ReservationWizardPage() {
 
   const {
     suggestions,
+    unmatched,
     included,
     loading: suggestionsLoading,
   } = useSuggestedResources({
@@ -913,6 +914,7 @@ export function ReservationWizardPage() {
             facilityName={facility?.name ?? ''}
             suggestions={suggestions}
             suggestionsLoading={suggestionsLoading}
+            unmatched={unmatched}
             included={included}
             items={items}
             onQuantity={setQuantity}
