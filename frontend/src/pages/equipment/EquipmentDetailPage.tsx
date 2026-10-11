@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { format } from 'date-fns'
 import {
+  useEditEquipmentIssue,
   useEquipmentCategories,
   useEquipmentHistory,
   useEquipmentItem,
@@ -54,6 +55,7 @@ export function EquipmentDetailPage() {
   const { data: history } = useEquipmentHistory(equipmentId)
   const { data: categories } = useEquipmentCategories()
   const reportIssue = useReportEquipmentIssue(equipmentId)
+  const editIssue = useEditEquipmentIssue(equipmentId)
   const updateEquipment = useUpdateEquipment(equipmentId)
   const setMaintenance = useSetEquipmentMaintenance(equipmentId)
   const restoreEquipment = useRestoreEquipment(equipmentId)
@@ -86,6 +88,10 @@ export function EquipmentDetailPage() {
 
   const currentItem = item
   const availability = item.availability
+  // The caller's own open report for this item, supplied by the backend so the
+  // page can switch "Report an issue" to "Edit my report" without any
+  // client-side ownership guessing.
+  const myReport = item.my_open_report ?? null
 
   // Reservation usage only shows completed reservations. The backend already
   // returns rows newest-first, but re-sort defensively by reservation date and
@@ -95,33 +101,66 @@ export function EquipmentDetailPage() {
     .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
     .slice(0, 3)
 
+  /**
+   * Open the issue modal, prefilled with the caller's existing OPEN report when
+   * there is one. With an open report the page edits that record instead of
+   * filing a second one, so the requester's only options are "edit" or "do
+   * nothing" — mirroring the backend's one-open-report-per-item rule.
+   */
+  function openIssueModal() {
+    setIssueType(myReport ? myReport.issue_type : 'DAMAGE')
+    setDescription(myReport ? myReport.description : '')
+    setPhoto(null)
+    setIssueOpen(true)
+  }
+
   function submitIssue() {
     // A fast double-click can fire twice before the loading state disables the
-    // button, so ignore any submit while one is already in flight.
+    // button, so ignore any submit while one is already in flight. The backend
+    // locks the equipment row as a second line of defence.
     if (submittingIssue.current) return
     submittingIssue.current = true
 
     const form = new FormData()
-    form.append('equipment', String(currentItem.id))
     form.append('issue_type', issueType)
-    form.append('quantity', '1')
     form.append('description', description)
     if (photo) form.append('photo', photo)
-    reportIssue.mutate(form, {
-      onSuccess: () => {
-        toast('Issue reported to the maintenance queue.')
-        setIssueOpen(false)
-        setDescription('')
-        setPhoto(null)
-      },
-      // Show the backend's validation message when there is one instead of
-      // masking every failure behind a generic notice.
-      onError: (error) =>
-        toast(apiErrorMessage(error, 'Unable to report the issue.'), 'error'),
-      onSettled: () => {
-        submittingIssue.current = false
-      },
-    })
+
+    const onSuccess = () => {
+      toast(myReport ? 'Report updated.' : 'Issue reported to the maintenance queue.')
+      setIssueOpen(false)
+      setDescription('')
+      setPhoto(null)
+    }
+    // Show the backend's validation message when there is one instead of
+    // masking every failure behind a generic notice. Exactly one toast is shown
+    // per submission, success or failure.
+    const onError = (error: unknown) =>
+      toast(
+        apiErrorMessage(
+          error,
+          myReport ? 'Unable to update the report.' : 'Unable to report the issue.',
+        ),
+        'error',
+      )
+    const onSettled = () => {
+      submittingIssue.current = false
+    }
+
+    if (myReport) {
+      // Update the existing row; no new report record is created.
+      editIssue.mutate(
+        { recordId: myReport.id, payload: form },
+        { onSuccess, onError, onSettled },
+      )
+      return
+    }
+
+    // Creating: the equipment is the one being viewed; the backend still rejects
+    // this if an open report already exists (e.g. a stale page).
+    form.append('equipment', String(currentItem.id))
+    form.append('quantity', '1')
+    reportIssue.mutate(form, { onSuccess, onError, onSettled })
   }
 
   return (
@@ -193,8 +232,13 @@ export function EquipmentDetailPage() {
               )}
             </>
           )}
-          <Button icon={<TriangleAlert className="size-4" />} onClick={() => setIssueOpen(true)}>
-            Report an issue
+          <Button
+            icon={
+              myReport ? <Pencil className="size-4" /> : <TriangleAlert className="size-4" />
+            }
+            onClick={openIssueModal}
+          >
+            {myReport ? 'Edit my report' : 'Report an issue'}
           </Button>
         </div>
       </div>
@@ -220,6 +264,55 @@ export function EquipmentDetailPage() {
             reserved until the maintenance records are resolved.
           </p>
         </div>
+      )}
+
+      {/* Existing open report -------------------------------------------------
+          Shown instead of offering another submission, so the requester can
+          see what they already reported and choose to edit it or leave it be. */}
+      {myReport && (
+        <Card className="mt-6">
+          <CardHeader
+            title="Your open report"
+            description="You have already reported this equipment. Edit this report instead of filing another."
+            action={
+              <Button
+                variant="outline"
+                icon={<Pencil className="size-4" />}
+                onClick={openIssueModal}
+              >
+                Edit my report
+              </Button>
+            }
+          />
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="amber">{myReport.issue_type_label}</Badge>
+              <Badge tone={myReport.status === 'OPEN' ? 'orange' : 'teal'}>
+                {myReport.status_label}
+              </Badge>
+              <span className="text-xs text-muted">
+                Filed {formatDateTime(myReport.created_at)}
+              </span>
+            </div>
+            <p className="text-sm leading-relaxed text-body">
+              {myReport.description || 'No description was provided.'}
+            </p>
+            {myReport.photo && (
+              <a
+                href={myReport.photo}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block text-sm font-medium text-brand hover:underline"
+              >
+                View attached photo
+              </a>
+            )}
+            <p className="text-xs text-muted">
+              Report #{myReport.id} · Submitted by you. Saving changes updates this
+              report — it does not create a new request.
+            </p>
+          </div>
+        </Card>
       )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
@@ -394,15 +487,22 @@ export function EquipmentDetailPage() {
       <Modal
         open={issueOpen}
         onClose={() => setIssueOpen(false)}
-        title="Report equipment issue"
-        description={`Report damage, missing items, or malfunctions for ${item.name}.`}
+        title={myReport ? 'Edit your report' : 'Report equipment issue'}
+        description={
+          myReport
+            ? `Update your open report for ${item.name}. This edits the existing report; it does not create a new request.`
+            : `Report damage, missing items, or malfunctions for ${item.name}.`
+        }
         footer={
           <>
             <Button variant="ghost" onClick={() => setIssueOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={submitIssue} loading={reportIssue.isPending}>
-              Submit report
+            <Button
+              onClick={submitIssue}
+              loading={reportIssue.isPending || editIssue.isPending}
+            >
+              {myReport ? 'Save changes' : 'Submit report'}
             </Button>
           </>
         }
@@ -429,7 +529,24 @@ export function EquipmentDetailPage() {
               placeholder="Describe the issue and when it was noticed…"
             />
           </Field>
-          <Field label="Photo (optional)" htmlFor="equipment-issue-photo">
+          <Field
+            label={myReport ? 'Replace photo (optional)' : 'Photo (optional)'}
+            htmlFor="equipment-issue-photo"
+          >
+            {myReport?.photo && (
+              <p className="mb-2 text-xs text-muted">
+                A photo is already attached —{' '}
+                <a
+                  href={myReport.photo}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-brand hover:underline"
+                >
+                  view the current photo
+                </a>
+                . Choose a file below to replace it, or leave it unchanged.
+              </p>
+            )}
             <input
               id="equipment-issue-photo"
               type="file"

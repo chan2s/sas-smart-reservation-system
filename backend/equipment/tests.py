@@ -1,9 +1,13 @@
 from datetime import date, time
 from io import BytesIO
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
-from django.test import TestCase
+from django.db import IntegrityError, close_old_connections, transaction
+from django.test import TestCase, TransactionTestCase
 from PIL import Image as PilImage
 from rest_framework.test import APIClient
 
@@ -1297,6 +1301,9 @@ class EquipmentIssueReportApiTests(TestCase):
         self.requester = User.objects.create_user(
             username="issue-requester", password="pass12345", role=User.Role.REQUESTER
         )
+        self.other = User.objects.create_user(
+            username="issue-other", password="pass12345", role=User.Role.REQUESTER
+        )
         self.category = EquipmentCategory.objects.create(name="Power")
         self.cord = Equipment.objects.create(
             name="Extension Cord (50 ft)",
@@ -1347,10 +1354,21 @@ class EquipmentIssueReportApiTests(TestCase):
         self.assertTrue(record.photo.name.endswith(".png"), record.photo.name)
 
     def test_every_supported_issue_type_is_accepted(self):
+        # A distinct item per type: the one-open-report rule would otherwise
+        # reject the second report for the same equipment.
         self._auth(self.requester)
-        for issue_type in ("DAMAGE", "MISSING", "MALFUNCTION", "MAINTENANCE"):
+        for index, issue_type in enumerate(
+            ("DAMAGE", "MISSING", "MALFUNCTION", "MAINTENANCE")
+        ):
+            target = Equipment.objects.create(
+                name=f"Item {index}",
+                category=self.category,
+                total_quantity=1,
+            )
             response = self._report(
-                issue_type=issue_type, description=f"Issue {issue_type}"
+                equipment=target,
+                issue_type=issue_type,
+                description=f"Issue {issue_type}",
             )
             self.assertEqual(response.status_code, 201, (issue_type, response.content))
             self.assertEqual(response.json()["issue_type"], issue_type)
@@ -1424,6 +1442,279 @@ class EquipmentIssueReportApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["reported_by"], self.admin.id)
 
+    # ------------------------------------------------------------------
+    # Duplicate prevention
+    # ------------------------------------------------------------------
+
+    def test_second_report_is_rejected_while_the_first_is_open(self):
+        self._auth(self.requester)
+        first = self._report()
+        self.assertEqual(first.status_code, 201, first.content)
+
+        second = self._report(description="A second, duplicate report.")
+        self.assertEqual(second.status_code, 400, second.content)
+        body = second.json()
+        self.assertEqual(body["code"], "duplicate_open_report")
+        self.assertEqual(body["report_id"], first.json()["id"])
+        self.assertIn("Edit that report", body["detail"])
+
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(
+                equipment=self.cord,
+                reported_by=self.requester,
+                status=MaintenanceRecord.Status.OPEN,
+            ).count(),
+            1,
+        )
+
+    def test_repeated_submissions_do_not_create_duplicates(self):
+        """Clicking submit repeatedly must yield exactly one report."""
+        self._auth(self.requester)
+        statuses = [self._report().status_code for _ in range(3)]
+        self.assertEqual(statuses.count(201), 1, statuses)
+        self.assertEqual(statuses.count(400), 2, statuses)
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(
+                equipment=self.cord, reported_by=self.requester
+            ).count(),
+            1,
+        )
+
+    def test_new_report_is_allowed_after_the_previous_one_is_resolved(self):
+        self._auth(self.requester)
+        first = self._report().json()
+        self.assertEqual(self._report().status_code, 400)
+
+        self._auth(self.admin)
+        resolved = self.client.post(
+            f"/api/maintenance/{first['id']}/resolve/", {}, format="json"
+        )
+        self.assertEqual(resolved.status_code, 200, resolved.content)
+
+        self._auth(self.requester)
+        second = self._report(description="It broke again after the repair.")
+        self.assertEqual(second.status_code, 201, second.content)
+        self.assertNotEqual(second.json()["id"], first["id"])
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(equipment=self.cord).count(), 2
+        )
+
+    def test_different_requesters_can_report_the_same_equipment(self):
+        self._auth(self.requester)
+        self.assertEqual(self._report().status_code, 201)
+        self._auth(self.other)
+        response = self._report(description="A different reporter sees the same fault.")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(
+                equipment=self.cord, status=MaintenanceRecord.Status.OPEN
+            ).count(),
+            2,
+        )
+
+    def test_database_rejects_a_duplicate_open_report_but_not_after_resolution(self):
+        """The partial unique constraint is the concurrency backstop."""
+        first = MaintenanceRecord.objects.create(
+            equipment=self.cord,
+            reported_by=self.requester,
+            issue_type=MaintenanceRecord.IssueType.DAMAGE,
+            status=MaintenanceRecord.Status.OPEN,
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                MaintenanceRecord.objects.create(
+                    equipment=self.cord,
+                    reported_by=self.requester,
+                    issue_type=MaintenanceRecord.IssueType.MISSING,
+                    status=MaintenanceRecord.Status.OPEN,
+                )
+
+        # A resolved report no longer blocks a new one (partial constraint).
+        first.status = MaintenanceRecord.Status.RESOLVED
+        first.save(update_fields=["status"])
+        MaintenanceRecord.objects.create(
+            equipment=self.cord,
+            reported_by=self.requester,
+            issue_type=MaintenanceRecord.IssueType.MAINTENANCE,
+            status=MaintenanceRecord.Status.OPEN,
+        )
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(
+                equipment=self.cord,
+                reported_by=self.requester,
+                status=MaintenanceRecord.Status.OPEN,
+            ).count(),
+            1,
+        )
+
+    # ------------------------------------------------------------------
+    # Editing the existing report
+    # ------------------------------------------------------------------
+
+    def _edit(self, record_id, **overrides):
+        payload = {
+            "issue_type": MaintenanceRecord.IssueType.MALFUNCTION,
+            "description": "Updated: the plug now sparks.",
+        }
+        payload.update(overrides)
+        return self.client.patch(
+            f"/api/maintenance/{record_id}/edit/", payload, format="multipart"
+        )
+
+    def test_requester_can_edit_their_open_report(self):
+        self._auth(self.requester)
+        created = self._report(
+            issue_type="DAMAGE", description="Cracked casing."
+        ).json()
+
+        response = self._edit(
+            created["id"], description="Cracked casing, and it now smokes."
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        self.assertEqual(body["id"], created["id"])
+        self.assertEqual(body["description"], "Cracked casing, and it now smokes.")
+        self.assertEqual(body["issue_type"], "MALFUNCTION")
+        self.assertEqual(body["reported_by"], self.requester.id)
+        self.assertEqual(body["equipment"], self.cord.id)
+        self.assertEqual(body["created_at"], created["created_at"])
+
+    def test_editing_keeps_the_same_record_and_does_not_add_one(self):
+        self._auth(self.requester)
+        created = self._report().json()
+        response = self._edit(created["id"])
+        self.assertEqual(response.status_code, 200, response.content)
+
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(
+                equipment=self.cord, reported_by=self.requester
+            ).count(),
+            1,
+        )
+        record = MaintenanceRecord.objects.get(pk=created["id"])
+        self.assertEqual(record.description, "Updated: the plug now sparks.")
+        self.assertEqual(record.status, MaintenanceRecord.Status.OPEN)
+
+    def test_editing_can_replace_the_photo(self):
+        self._auth(self.requester)
+        created = self._report(photo=_png()).json()
+        response = self._edit(created["id"], photo=_png())
+        self.assertEqual(response.status_code, 200, response.content)
+        record = MaintenanceRecord.objects.get(pk=created["id"])
+        self.assertTrue(record.photo.name.endswith(".png"), record.photo.name)
+
+    def test_requester_cannot_edit_another_users_report(self):
+        self._auth(self.requester)
+        created = self._report().json()
+
+        self._auth(self.other)
+        response = self._edit(created["id"], description="Hijacked report.")
+        self.assertEqual(response.status_code, 403, response.content)
+
+        record = MaintenanceRecord.objects.get(pk=created["id"])
+        self.assertEqual(record.description, "Missing item after the event.")
+        self.assertEqual(record.reported_by_id, self.requester.id)
+
+    def test_a_resolved_report_can_no_longer_be_edited(self):
+        self._auth(self.requester)
+        created = self._report().json()
+        self._auth(self.admin)
+        self.client.post(
+            f"/api/maintenance/{created['id']}/resolve/", {}, format="json"
+        )
+
+        self._auth(self.requester)
+        response = self._edit(created["id"], description="Too late.")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("resolved", response.json()["detail"].lower())
+
+    def test_edit_cannot_reassign_equipment_or_reporter(self):
+        """Equipment/reporter come from the record, never from the payload."""
+        self._auth(self.requester)
+        created = self._report().json()
+        target = Equipment.objects.create(
+            name="Other item", category=self.category, total_quantity=1
+        )
+
+        response = self._edit(
+            created["id"], equipment=target.id, reported_by=self.other.id
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        record = MaintenanceRecord.objects.get(pk=created["id"])
+        self.assertEqual(record.equipment_id, self.cord.id)
+        self.assertEqual(record.reported_by_id, self.requester.id)
+        self.assertFalse(
+            MaintenanceRecord.objects.filter(equipment=target).exists()
+        )
+
+    def test_edit_validates_issue_type_and_photo(self):
+        self._auth(self.requester)
+        created = self._report().json()
+
+        bad_type = self._edit(created["id"], issue_type="EXPLODED")
+        self.assertEqual(bad_type.status_code, 400, bad_type.content)
+        self.assertIn("issue_type", bad_type.json())
+
+        gif = ContentFile(b"definitely not a png", name="edit.gif")
+        gif.content_type = "image/gif"
+        bad_photo = self._edit(created["id"], photo=gif)
+        self.assertEqual(bad_photo.status_code, 400, bad_photo.content)
+        self.assertIn("photo", bad_photo.json())
+
+    def test_edit_unknown_report_returns_404(self):
+        self._auth(self.requester)
+        self.assertEqual(self._edit(999999).status_code, 404)
+
+    def test_edit_requires_authentication(self):
+        self._auth(self.requester)
+        created = self._report().json()
+        self.client.force_authenticate(None)
+        self.assertIn(self._edit(created["id"]).status_code, (401, 403))
+
+    # ------------------------------------------------------------------
+    # Detail payload + staff management
+    # ------------------------------------------------------------------
+
+    def test_equipment_detail_exposes_the_callers_own_open_report(self):
+        self._auth(self.requester)
+        created = self._report().json()
+
+        detail = self.client.get(f"/api/equipment/{self.cord.id}/").json()
+        self.assertIsNotNone(detail["my_open_report"])
+        self.assertEqual(detail["my_open_report"]["id"], created["id"])
+        self.assertEqual(detail["my_open_report"]["reported_by"], self.requester.id)
+
+        # Another reporter never receives someone else's report here.
+        self._auth(self.other)
+        other_detail = self.client.get(f"/api/equipment/{self.cord.id}/").json()
+        self.assertIsNone(other_detail["my_open_report"])
+
+    def test_detail_hides_the_report_again_once_resolved(self):
+        self._auth(self.requester)
+        created = self._report().json()
+        self._auth(self.admin)
+        self.client.post(
+            f"/api/maintenance/{created['id']}/resolve/", {}, format="json"
+        )
+        self._auth(self.requester)
+        detail = self.client.get(f"/api/equipment/{self.cord.id}/").json()
+        self.assertIsNone(detail["my_open_report"])
+
+    def test_staff_can_still_review_and_manage_reports(self):
+        self._auth(self.requester)
+        created = self._report().json()
+
+        self._auth(self.admin)
+        listing = self.client.get(f"/api/equipment/{self.cord.id}/maintenance/")
+        self.assertEqual(listing.status_code, 200, listing.content)
+        self.assertIn(created["id"], [row["id"] for row in listing.json()])
+
+        resolved = self.client.post(
+            f"/api/maintenance/{created['id']}/resolve/", {}, format="json"
+        )
+        self.assertEqual(resolved.status_code, 200, resolved.content)
+        self.assertEqual(resolved.json()["status"], "RESOLVED")
+
     def test_report_accepts_a_real_jwt_bearer_token(self):
         """The browser authenticates with a JWT bearer token; the endpoint must
         accept it end to end, not only through ``force_authenticate``."""
@@ -1443,3 +1734,58 @@ class EquipmentIssueReportApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["reported_by"], self.requester.id)
+
+class EquipmentIssueReportConcurrencyTests(TransactionTestCase):
+    """Concurrent submissions must never create two open reports.
+
+    Real parallel requests are used here: whichever request loses the race
+    receives the same 400 as the sequential path, because the partial unique
+    constraint rejects the duplicate INSERT. This is the behaviour the row
+    lock in ``report_issue`` is not sufficient on its own to guarantee on
+    backends without ``SELECT ... FOR UPDATE``.
+    """
+
+    reset_sequences = True
+
+    def setUp(self):
+        self.requester = User.objects.create_user(
+            username="race-requester",
+            password="pass12345",
+            role=User.Role.REQUESTER,
+        )
+        self.category = EquipmentCategory.objects.create(name="Race")
+        self.cord = Equipment.objects.create(
+            name="Race Cord", category=self.category, total_quantity=2
+        )
+
+    def test_parallel_reports_create_exactly_one_open_record(self):
+        barrier = threading.Barrier(4)
+
+        def submit(_index: int) -> int:
+            close_old_connections()
+            client = APIClient()
+            client.force_authenticate(self.requester)
+            barrier.wait()
+            try:
+                response = client.post(
+                    f"/api/equipment/{self.cord.id}/report_issue/",
+                    {"issue_type": "DAMAGE", "description": "race", "quantity": "1"},
+                    format="multipart",
+                )
+                return response.status_code
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            statuses = sorted(pool.map(submit, range(4)))
+
+        self.assertEqual(statuses.count(201), 1, statuses)
+        self.assertEqual(statuses.count(400), 3, statuses)
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(
+                equipment=self.cord,
+                reported_by=self.requester,
+                status=MaintenanceRecord.Status.OPEN,
+            ).count(),
+            1,
+        )

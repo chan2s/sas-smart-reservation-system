@@ -259,6 +259,19 @@ class MaintenanceRecord(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            # A reporter may hold at most one OPEN report per piece of
+            # equipment. Deliberately a PARTIAL constraint (only rows whose
+            # status is OPEN): once a report is resolved it stops blocking, so
+            # a fresh report can be filed for the same item. This is the
+            # database-level backstop that makes concurrent submissions safe
+            # on every backend, not just those with row-level locking.
+            models.UniqueConstraint(
+                fields=["equipment", "reported_by"],
+                condition=models.Q(status="OPEN"),
+                name="unique_open_report_per_equipment_reporter",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.equipment.name} — {self.get_issue_type_display()}"

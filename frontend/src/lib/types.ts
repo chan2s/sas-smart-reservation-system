@@ -307,6 +307,12 @@ export interface Equipment {
   has_history: boolean
   availability: EquipmentAvailability
   open_maintenance?: number
+  /**
+   * The current user's own OPEN maintenance report for this item, or null.
+   * Present on the detail endpoint only. When set, the detail page offers
+   * "Edit my report" instead of a second "Report an issue" submission.
+   */
+  my_open_report?: MaintenanceRecord | null
   created_at: string
   updated_at: string
 }

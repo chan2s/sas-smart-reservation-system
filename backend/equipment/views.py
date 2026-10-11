@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -29,6 +29,7 @@ from .serializers import (
     FacilityResourceSerializer,
     FacilityResourceWriteSerializer,
     MaintenanceRecordSerializer,
+    MaintenanceReportEditSerializer,
     validate_equipment_image,
 )
 from .services import (
@@ -456,6 +457,21 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         records = equipment.maintenance_records.all()
         return Response(MaintenanceRecordSerializer(records, many=True).data)
 
+    @staticmethod
+    def _duplicate_report_response(existing):
+        """The one response for "you already have an open report here"."""
+        return Response(
+            {
+                "detail": (
+                    "You already have an open report for this equipment. "
+                    "Edit that report instead of filing another one."
+                ),
+                "code": "duplicate_open_report",
+                "report_id": existing.id,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def report_issue(self, request, pk=None):
         """Report a problem with one piece of equipment.
@@ -467,15 +483,73 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         make — resolving records or marking units under maintenance stays
         staff-only (``MaintenanceRecordViewSet.resolve`` and the
         ``maintenance`` action).
+
+        Duplicate prevention: a user may hold at most ONE open report per
+        piece of equipment. While that report is OPEN a second submit is
+        rejected (400) and the caller is pointed at the existing report, which
+        they edit through ``PATCH /api/maintenance/{id}/edit/``. Once the
+        report is resolved a fresh one may be filed again, so the rule is not
+        an unconditional uniqueness constraint.
+
+        Concurrency: the report is created inside a transaction that first
+        takes a row lock on the equipment (``select_for_update``). Two nearly
+        simultaneous submits therefore serialize on that row and the second
+        one observes the first report instead of creating a twin — repeated
+        clicks or racing requests cannot slip a duplicate through.
         """
-        equipment = self.get_object()
-        data = request.data.copy()
-        data["equipment"] = equipment.id
-        serializer = MaintenanceRecordSerializer(data=data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        record = serializer.save(reported_by=request.user)
-        reconcile_status(equipment)
-        return Response(MaintenanceRecordSerializer(record).data, status=status.HTTP_201_CREATED)
+        try:
+            with transaction.atomic():
+                equipment = (
+                    Equipment.objects.select_for_update().filter(pk=pk).first()
+                )
+                # Match the previous ``get_object()`` visibility rule: archived
+                # equipment is hidden from requesters but reportable by staff.
+                if equipment is None or (
+                    not equipment.is_active and not request.user.is_sas_staff
+                ):
+                    return Response(
+                        {"detail": "Not found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                existing = (
+                    MaintenanceRecord.objects.filter(
+                        equipment=equipment,
+                        reported_by=request.user,
+                        status=MaintenanceRecord.Status.OPEN,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+                if existing is not None:
+                    return self._duplicate_report_response(existing)
+
+                data = request.data.copy()
+                data["equipment"] = equipment.id
+                serializer = MaintenanceRecordSerializer(
+                    data=data, context={"request": request}
+                )
+                serializer.is_valid(raise_exception=True)
+                record = serializer.save(reported_by=request.user)
+                reconcile_status(equipment)
+        except IntegrityError:
+            # Two requests that truly overlap can both pass the check above
+            # before either commits; the partial unique constraint rejects the
+            # second INSERT. Translate that lost race into the same friendly 400
+            # instead of letting it surface as a server error.
+            existing = MaintenanceRecord.objects.filter(
+                equipment_id=pk,
+                reported_by=request.user,
+                status=MaintenanceRecord.Status.OPEN,
+            ).first()
+            if existing is None:
+                raise
+            return self._duplicate_report_response(existing)
+
+        return Response(
+            MaintenanceRecordSerializer(record).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class FacilityResourceViewSet(viewsets.ModelViewSet):
@@ -589,6 +663,50 @@ class MaintenanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
         record.resolved_at = timezone.now()
         record.save(update_fields=["status", "resolved_at"])
         reconcile_status(record.equipment)
+        return Response(MaintenanceRecordSerializer(record).data)
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        permission_classes=[IsAuthenticated],
+        url_path="edit",
+    )
+    def edit(self, request, pk=None):
+        """Let a reporter revise their OWN open report in place.
+
+        Ownership comes from the authenticated request, never from the payload
+        or URL: a record belonging to another user is refused with 403, so a
+        guessed report id cannot be used to modify someone else's report. Only
+        the issue type, description, and photo are accepted (see
+        ``MaintenanceReportEditSerializer``), the record keeps its id, creator,
+        equipment, and creation timestamp, and no additional record is created.
+        Resolved reports are no longer editable.
+        """
+        record = self.get_object()
+        if record.reported_by_id != request.user.id:
+            return Response(
+                {"detail": "You can only edit your own maintenance report."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if record.status != MaintenanceRecord.Status.OPEN:
+            return Response(
+                {
+                    "detail": (
+                        "This report has already been resolved and can no longer "
+                        "be edited."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = MaintenanceReportEditSerializer(
+            record,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response(MaintenanceRecordSerializer(record).data)
 
 

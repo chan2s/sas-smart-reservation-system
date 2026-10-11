@@ -631,6 +631,13 @@ export const endpoints = {
     api.post<MaintenanceRecord>(`/api/maintenance/${id}/resolve/`),
   reportEquipmentIssue: (id: number, payload: FormData) =>
     api.postForm<MaintenanceRecord>(`/api/equipment/${id}/report_issue/`, payload),
+  /**
+   * Revise the caller's own OPEN report in place. The backend accepts only the
+   * issue type, description, and photo and enforces ownership from the
+   * authenticated request, so no duplicate record is created.
+   */
+  editEquipmentIssue: (recordId: number, payload: FormData) =>
+    api.patchForm<MaintenanceRecord>(`/api/maintenance/${recordId}/edit/`, payload),
 
   reservations: (filters: ReservationFilters = {}) => {
     const qs = new URLSearchParams()

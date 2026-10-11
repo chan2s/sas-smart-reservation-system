@@ -260,12 +260,38 @@ class EquipmentSerializer(serializers.ModelSerializer):
 
 class EquipmentDetailSerializer(EquipmentSerializer):
     open_maintenance = serializers.SerializerMethodField()
+    my_open_report = serializers.SerializerMethodField()
 
     class Meta(EquipmentSerializer.Meta):
-        fields = EquipmentSerializer.Meta.fields + ("open_maintenance",)
+        fields = EquipmentSerializer.Meta.fields + ("open_maintenance", "my_open_report")
 
     def get_open_maintenance(self, obj):
         return obj.maintenance_records.filter(status=MaintenanceRecord.Status.OPEN).count()
+
+    def get_my_open_report(self, obj):
+        """The caller's own OPEN maintenance report for this item, or None.
+
+        Drives the detail page's "Report an issue" → "Edit my report" switch.
+        Only the requesting user's own record is ever exposed (matched by the
+        authenticated ``reported_by``), so ownership is decided server-side and
+        a requester is never handed another user's report through this field.
+        Resolved reports are excluded, which is exactly what re-permits a new
+        report once the previous one has been handled.
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None or not user.is_authenticated:
+            return None
+        record = (
+            obj.maintenance_records.filter(
+                reported_by=user, status=MaintenanceRecord.Status.OPEN
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if record is None:
+            return None
+        return MaintenanceRecordSerializer(record, context=self.context).data
 
 
 class FacilityResourceSerializer(serializers.ModelSerializer):
@@ -489,6 +515,42 @@ class MaintenanceRecordSerializer(serializers.ModelSerializer):
                     pass
 
         return result
+
+
+class MaintenanceReportEditSerializer(MaintenanceRecordSerializer):
+    """Requester-facing edit of their own OPEN issue report.
+
+    Deliberately narrower than the full serializer: only the fields a reporter
+    actually owns are accepted — the issue type, the description, and an
+    optional photo. Equipment, reporter, quantity, and status are read-only, so
+    a report can neither be moved to a different item nor reassigned to another
+    user through the API. ``validate_photo`` and the storage-cleanup ``update``
+    are inherited from the base serializer, so edits follow the same upload
+    rules as the report form.
+    """
+
+    class Meta(MaintenanceRecordSerializer.Meta):
+        fields = (
+            "id",
+            "equipment",
+            "equipment_name",
+            "issue_type",
+            "issue_type_label",
+            "description",
+            "photo",
+            "reported_by",
+            "reported_by_name",
+            "status",
+            "status_label",
+            "created_at",
+            "resolved_at",
+        )
+        read_only_fields = (
+            "equipment",
+            "reported_by",
+            "status",
+            "resolved_at",
+        )
 
 
 class EquipmentStatsSerializer(serializers.Serializer):

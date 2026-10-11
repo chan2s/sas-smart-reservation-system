@@ -254,6 +254,28 @@ export function useReportEquipmentIssue(equipmentId: number) {
   })
 }
 
+/**
+ * Update the caller's own open report for one piece of equipment.
+ *
+ * The same caches as reporting are invalidated so the detail page's
+ * `my_open_report`, the maintenance list, and the stats stay in sync after an
+ * edit — and the report count never changes.
+ */
+export function useEditEquipmentIssue(equipmentId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ recordId, payload }: { recordId: number; payload: FormData }) =>
+      endpoints.editEquipmentIssue(recordId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['equipment-item', equipmentId] })
+      void queryClient.invalidateQueries({ queryKey: ['equipment'] })
+      void queryClient.invalidateQueries({ queryKey: ['equipment-maintenance'] })
+      void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
+    },
+  })
+}
+
 export function useCreateEquipment() {
   const queryClient = useQueryClient()
   return useMutation({
