@@ -55,6 +55,33 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * First human-readable message from an API failure.
+ *
+ * DRF validation errors arrive as `{"field": ["message", …]}` and carry no
+ * `detail`, so the raw `message` is only "Request failed (400)". Surface the
+ * backend's field message (for example "… is not a valid choice.") instead of
+ * a generic fallback whenever one is available.
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    const data = error.data
+    if (data && typeof data === 'object') {
+      const record = data as Record<string, unknown>
+      const detail = record.detail
+      if (typeof detail === 'string' && detail.trim()) return detail
+      for (const value of Object.values(record)) {
+        if (typeof value === 'string' && value.trim()) return value
+        if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim()) {
+          return value[0]
+        }
+      }
+    }
+    if (error.message) return error.message
+  }
+  return fallback
+}
+
 export const tokenStore = {
   get access() {
     return localStorage.getItem(ACCESS_KEY)

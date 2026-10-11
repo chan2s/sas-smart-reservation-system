@@ -15,6 +15,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Select, Textarea } from '@/components/ui/Form'
 import { Modal } from '@/components/ui/Modal'
 import { Skeleton, EmptyState } from '@/components/ui/Misc'
+import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useReportEquipmentIssue } from '@/hooks/queries'
 
@@ -53,6 +54,8 @@ export function CheckOutPage() {
   const [damageDescription, setDamageDescription] = useState('')
   const [damagePhoto, setDamagePhoto] = useState<File | null>(null)
   const reportIssue = useReportEquipmentIssue(damageEquipment ?? 0)
+  /** Blocks a second submit that lands before the button re-renders disabled. */
+  const reportingIssue = useRef(false)
 
   if (isLoading || !reservation) {
     return (
@@ -247,7 +250,8 @@ export function CheckOutPage() {
             </Button>
             <Button
               onClick={() => {
-                if (damageEquipment == null) return
+                if (damageEquipment == null || reportingIssue.current) return
+                reportingIssue.current = true
                 const form = new FormData()
                 form.append('equipment', String(damageEquipment))
                 form.append('issue_type', damageType)
@@ -262,7 +266,14 @@ export function CheckOutPage() {
                     setDamageDescription('')
                     setDamagePhoto(null)
                   },
-                  onError: () => toast('Unable to report the issue.', 'error'),
+                  onError: (error) =>
+                    toast(
+                      apiErrorMessage(error, 'Unable to report the issue.'),
+                      'error',
+                    ),
+                  onSettled: () => {
+                    reportingIssue.current = false
+                  },
                 })
               }}
               loading={reportIssue.isPending}

@@ -441,6 +441,10 @@ class MaintenanceRecordSerializer(serializers.ModelSerializer):
     issue_type_label = serializers.CharField(source="get_issue_type_display", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     reported_by_name = serializers.CharField(source="reported_by.display_name", read_only=True, default="")
+    # Declared as a plain FileField (like Equipment.image) so ``validate_photo``
+    # applies the shared rules below. Django's ImageField would accept ANY
+    # decodable image (GIF included), which is not the app's upload policy.
+    photo = serializers.FileField(required=False, allow_null=True)
 
     class Meta:
         model = MaintenanceRecord
@@ -461,6 +465,15 @@ class MaintenanceRecordSerializer(serializers.ModelSerializer):
             "resolved_at",
         )
         read_only_fields = ("reported_by", "status", "resolved_at")
+
+    def validate_photo(self, value):
+        """Apply the shared upload rules to maintenance photos.
+
+        Issue reports accept an optional photo, so it must go through the same
+        validator as every other upload (JPG/PNG/WEBP, at most 5 MB, real
+        image bytes) instead of accepting any file Django's ImageField allows.
+        """
+        return validate_equipment_image(value)
 
     def update(self, instance, validated_data):
         """Clean up replaced/removed maintenance photos on update."""

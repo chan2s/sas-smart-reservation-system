@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -35,6 +35,7 @@ import { EquipmentFormModal } from '@/components/equipment/EquipmentFormModal'
 import { MaintenanceModal } from '@/components/equipment/MaintenanceModal'
 import { RemoveEquipmentModal } from '@/components/equipment/RemoveEquipmentModal'
 import { ConditionBadge, EquipmentStatusBadge } from '@/components/equipment/EquipmentBadges'
+import { apiErrorMessage } from '@/lib/api'
 import { cn, equipmentImageUrls, formatDateTime } from '@/lib/utils'
 
 const ISSUE_TYPES = [
@@ -62,6 +63,8 @@ export function EquipmentDetailPage() {
   const [issueType, setIssueType] = useState('DAMAGE')
   const [description, setDescription] = useState('')
   const [photo, setPhoto] = useState<File | null>(null)
+  /** Blocks a second submit that lands before the button re-renders disabled. */
+  const submittingIssue = useRef(false)
 
   const [editOpen, setEditOpen] = useState(false)
   const [maintenanceOpen, setMaintenanceOpen] = useState(false)
@@ -93,6 +96,11 @@ export function EquipmentDetailPage() {
     .slice(0, 3)
 
   function submitIssue() {
+    // A fast double-click can fire twice before the loading state disables the
+    // button, so ignore any submit while one is already in flight.
+    if (submittingIssue.current) return
+    submittingIssue.current = true
+
     const form = new FormData()
     form.append('equipment', String(currentItem.id))
     form.append('issue_type', issueType)
@@ -106,7 +114,13 @@ export function EquipmentDetailPage() {
         setDescription('')
         setPhoto(null)
       },
-      onError: () => toast('Unable to report the issue.', 'error'),
+      // Show the backend's validation message when there is one instead of
+      // masking every failure behind a generic notice.
+      onError: (error) =>
+        toast(apiErrorMessage(error, 'Unable to report the issue.'), 'error'),
+      onSettled: () => {
+        submittingIssue.current = false
+      },
     })
   }
 

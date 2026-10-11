@@ -4,6 +4,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from reservations.models import ReservationItem
@@ -455,8 +456,18 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         records = equipment.maintenance_records.all()
         return Response(MaintenanceRecordSerializer(records, many=True).data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def report_issue(self, request, pk=None):
+        """Report a problem with one piece of equipment.
+
+        Any authenticated user may report an issue (requesters include the
+        students and organizations who actually use the equipment); the record
+        is always attributed to the caller through ``reported_by``. Creating a
+        report is deliberately the ONLY maintenance write a requester may
+        make — resolving records or marking units under maintenance stays
+        staff-only (``MaintenanceRecordViewSet.resolve`` and the
+        ``maintenance`` action).
+        """
         equipment = self.get_object()
         data = request.data.copy()
         data["equipment"] = equipment.id

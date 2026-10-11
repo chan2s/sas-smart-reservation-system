@@ -1277,3 +1277,169 @@ class EquipmentUnitApiTests(TestCase):
         response = self.client.get(f"/api/equipment/{item.id}/")
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["unit"], "pcs")
+
+
+class EquipmentIssueReportApiTests(TestCase):
+    """Requesters report equipment issues through
+    ``POST /api/equipment/{id}/report_issue/``.
+
+    Reporting is the ONLY maintenance write a requester may perform: the
+    record is attributed to the caller and drives the same availability
+    reconciliation as a staff-created one, while resolving records and
+    marking units under maintenance stay staff-only.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username="issue-admin", password="pass12345", role=User.Role.ADMIN
+        )
+        self.requester = User.objects.create_user(
+            username="issue-requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.category = EquipmentCategory.objects.create(name="Power")
+        self.cord = Equipment.objects.create(
+            name="Extension Cord (50 ft)",
+            category=self.category,
+            total_quantity=4,
+            asset_code="SAS-PWR-011",
+        )
+
+    def _auth(self, user):
+        self.client.force_authenticate(user)
+
+    def _report(self, equipment=None, **overrides):
+        target = equipment or self.cord
+        payload = dict(
+            equipment=target.id,
+            issue_type=MaintenanceRecord.IssueType.MISSING,
+            description="Missing item after the event.",
+            quantity="1",
+        )
+        payload.update(overrides)
+        return self.client.post(
+            f"/api/equipment/{target.id}/report_issue/", payload, format="multipart"
+        )
+
+    def test_requester_can_report_issue_without_photo(self):
+        self._auth(self.requester)
+        response = self._report()
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        self.assertEqual(body["equipment"], self.cord.id)
+        self.assertEqual(body["issue_type"], "MISSING")
+        self.assertEqual(body["description"], "Missing item after the event.")
+        self.assertEqual(body["reported_by"], self.requester.id)
+        self.assertEqual(body["status"], "OPEN")
+
+        record = MaintenanceRecord.objects.get(pk=body["id"])
+        self.assertEqual(record.equipment_id, self.cord.id)
+        self.assertEqual(record.reported_by_id, self.requester.id)
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(equipment=self.cord).count(), 1
+        )
+
+    def test_requester_can_report_issue_with_photo(self):
+        self._auth(self.requester)
+        response = self._report(photo=_png())
+        self.assertEqual(response.status_code, 201, response.content)
+        record = MaintenanceRecord.objects.get(pk=response.json()["id"])
+        self.assertTrue(record.photo.name.endswith(".png"), record.photo.name)
+
+    def test_every_supported_issue_type_is_accepted(self):
+        self._auth(self.requester)
+        for issue_type in ("DAMAGE", "MISSING", "MALFUNCTION", "MAINTENANCE"):
+            response = self._report(
+                issue_type=issue_type, description=f"Issue {issue_type}"
+            )
+            self.assertEqual(response.status_code, 201, (issue_type, response.content))
+            self.assertEqual(response.json()["issue_type"], issue_type)
+
+    def test_empty_description_is_allowed(self):
+        self._auth(self.requester)
+        response = self._report(description="")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["description"], "")
+
+    def test_invalid_issue_type_is_rejected(self):
+        self._auth(self.requester)
+        response = self._report(issue_type="EXPLODED")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("issue_type", response.json())
+        self.assertFalse(MaintenanceRecord.objects.filter(equipment=self.cord).exists())
+
+    def test_unsupported_photo_type_is_rejected(self):
+        self._auth(self.requester)
+        gif = ContentFile(b"definitely not a png", name="issue.gif")
+        gif.content_type = "image/gif"
+        response = self._report(photo=gif)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("photo", response.json())
+        self.assertIn("JPG, PNG, or WEBP", response.json()["photo"][0])
+        self.assertFalse(MaintenanceRecord.objects.filter(equipment=self.cord).exists())
+
+    def test_unauthenticated_report_is_rejected(self):
+        response = self._report()
+        self.assertIn(response.status_code, (401, 403), response.content)
+        self.assertFalse(MaintenanceRecord.objects.filter(equipment=self.cord).exists())
+
+    def test_report_for_unknown_equipment_returns_404(self):
+        self._auth(self.requester)
+        response = self.client.post(
+            "/api/equipment/999999/report_issue/",
+            {"issue_type": "DAMAGE", "description": "x", "quantity": "1"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 404, response.content)
+
+    def test_report_is_stored_once(self):
+        self._auth(self.requester)
+        self._report()
+        self.assertEqual(
+            MaintenanceRecord.objects.filter(equipment=self.cord).count(), 1
+        )
+
+    def test_requester_cannot_resolve_or_mark_maintenance(self):
+        """Reporting is allowed; the administrative maintenance actions are not."""
+        self._auth(self.requester)
+        created = self._report().json()
+        self.assertEqual(
+            self.client.post(
+                f"/api/maintenance/{created['id']}/resolve/", {}, format="json"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/api/equipment/{self.cord.id}/maintenance/",
+                {"quantity": 1},
+                format="json",
+            ).status_code,
+            403,
+        )
+
+    def test_staff_can_still_report(self):
+        self._auth(self.admin)
+        response = self._report()
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["reported_by"], self.admin.id)
+
+    def test_report_accepts_a_real_jwt_bearer_token(self):
+        """The browser authenticates with a JWT bearer token; the endpoint must
+        accept it end to end, not only through ``force_authenticate``."""
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        client = APIClient()
+        token = RefreshToken.for_user(self.requester).access_token
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        response = client.post(
+            f"/api/equipment/{self.cord.id}/report_issue/",
+            {
+                "issue_type": "MISSING",
+                "description": "Reported from the app.",
+                "quantity": "1",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["reported_by"], self.requester.id)
