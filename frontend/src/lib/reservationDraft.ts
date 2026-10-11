@@ -1,5 +1,8 @@
-import type { CreateReservationPayload } from '@/lib/api'
-import type { CampusUserOption, EventType, ReservationDetail } from '@/lib/types'
+import type {
+  CreateReservationPayload,
+  ResubmitReservationPayload,
+} from '@/lib/api'
+import type { CampusUserOption, EventType, RequesterType, ReservationDetail } from '@/lib/types'
 
 /**
  * Draft state + wire adapter for the "New reservation" wizard.
@@ -66,6 +69,18 @@ export interface WizardDraft {
   rebookedFromId?: number | null
   /** Requester to preselect when rebooking (staff-created reservations). */
   rebooker?: RebookRequesterSeed | null
+  /**
+   * Set when this wizard revises an EXISTING reservation that is awaiting
+   * review (the edit/resubmit flow). Distinct from rebookedFromId: an edit
+   * modifies the reservation in place, a rebook creates a new one.
+   */
+  editingReservationId?: number | null
+  /** The administrator's outstanding change request, shown at the top. */
+  changeRequest?: { message: string; by: string; at: string } | null
+  /** Requester context of the reservation being edited (display/pricing only). */
+  editRequesterType?: RequesterType
+  /** Organization snapshot of the reservation being edited (display only). */
+  editOrganization?: string
 }
 
 export const EVENT_NAME_MAX = 80
@@ -167,6 +182,71 @@ export function draftFromReservation(
     stepKey: 'facility',
     rebookedFromId: reservation.id,
     rebooker: requester,
+  }
+}
+
+/**
+ * Build the wizard draft for EDITING a reservation that is awaiting review
+ * (the "administrator requested changes" flow).
+ *
+ * Unlike a rebook, the schedule IS carried over — the requester adjusts the
+ * existing booking in place (e.g. move the end time from 6:00 PM to 5:00 PM)
+ * rather than choosing a fresh slot. Every existing value is preserved:
+ * resources and quantities (marked user-edited so suggestions never
+ * overwrite them), contact details, and the organization snapshot. The
+ * administrator's change request message travels with the draft so the edit
+ * form can display it at the top.
+ */
+export function draftForReservationEdit(
+  reservation: ReservationDetail,
+): WizardDraft {
+  const items: Record<number, number> = {}
+  const operatorSelections: Record<number, boolean> = {}
+  for (const item of reservation.items) {
+    items[item.equipment_id] = item.quantity
+    if (item.operator_requested != null) {
+      operatorSelections[item.equipment_id] = item.operator_requested
+    }
+  }
+
+  // The outstanding change request — the latest CHANGES_REQUESTED event
+  // (the timeline is append-only, so the last match wins).
+  const changeRequest = [...reservation.events]
+    .reverse()
+    .find((event) => event.event_type === 'CHANGES_REQUESTED')
+
+  return {
+    facilityId: reservation.facility_id,
+    dateISO: reservation.date,
+    startTime: reservation.start_time.slice(0, 5),
+    endTime: reservation.end_time.slice(0, 5),
+    details: {
+      eventName: reservation.event_name,
+      eventType: reservation.event_type,
+      expectedParticipants: String(reservation.expected_participants || ''),
+      purpose: reservation.purpose || '',
+      staffNotes: reservation.notes || '',
+    },
+    contact: {
+      name: reservation.contact_person || reservation.requester || '',
+      phone: reservation.contact_phone || '',
+    },
+    items,
+    operatorSelections,
+    userEditedItems: Object.keys(items).map(Number),
+    stepKey: 'facility',
+    rebookedFromId: null,
+    rebooker: null,
+    editingReservationId: reservation.id,
+    changeRequest: changeRequest
+      ? {
+          message: changeRequest.message,
+          by: changeRequest.actor_name,
+          at: changeRequest.created_at,
+        }
+      : null,
+    editRequesterType: reservation.requester_type,
+    editOrganization: reservation.organization || '',
   }
 }
 
@@ -419,5 +499,35 @@ export function toCreateReservationPayload(
     contact_phone: normalizePhone(draft.contact.phone) || null,
     ...(requesterId ? { requester_id: requesterId } : {}),
     ...rebook,
+  }
+}
+
+/**
+ * Maps the wizard draft onto the RESUBMIT payload (POST
+ * /api/reservations/{id}/resubmit/). Narrower than the create payload by
+ * design: no organization/requester/status fields — the backend resolves
+ * identity from the stored reservation and never lets a resubmission move it
+ * to another person, change its pricing context, or set a status. The
+ * status stays PENDING server-side, so the reservation simply re-enters the
+ * review queue.
+ */
+export function toResubmitPayload(
+  draft: WizardDraft,
+  { items }: { items: SubmitItems[] },
+): ResubmitReservationPayload {
+  return {
+    facility_id: draft.facilityId as number,
+    date: draft.dateISO,
+    start_time: draft.startTime,
+    end_time: draft.endTime,
+    event_name: draft.details.eventName.trim(),
+    // Non-empty by the time Continue/Submit is enabled (see reservationFieldErrors).
+    event_type: draft.details.eventType as EventType,
+    purpose: draft.details.purpose.trim(),
+    expected_participants: Number(draft.details.expectedParticipants) || 0,
+    notes: draft.details.staffNotes.trim(),
+    contact_person: draft.contact.name.trim(),
+    contact_phone: normalizePhone(draft.contact.phone) || null,
+    items,
   }
 }

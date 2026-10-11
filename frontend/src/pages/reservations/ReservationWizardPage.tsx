@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Search, Users } from 'lucide-react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Building2,
+  CheckCircle2,
+  MessageSquareWarning,
+  Search,
+  Users,
+} from 'lucide-react'
 import { format } from 'date-fns'
 import {
   useAvailabilityCheck,
@@ -10,6 +18,7 @@ import {
   useFacilities,
   useFacilityResources,
   useReservations,
+  useResubmitReservation,
 } from '@/hooks/queries'
 import { useSuggestedResources } from '@/hooks/useSuggestedResources'
 import { useToast } from '@/components/ui/Toast'
@@ -39,6 +48,7 @@ import {
   reservationFieldErrors,
   saveDraft,
   toCreateReservationPayload,
+  toResubmitPayload,
   type ContactDraft,
   type EventDetailsDraft,
   type SubmitItems,
@@ -46,7 +56,7 @@ import {
 } from '@/lib/reservationDraft'
 import { useAuth } from '@/hooks/useAuth'
 import { OrganizationStatusNotice } from '@/components/organizations/OrganizationStatusNotice'
-import { cn, formatTime } from '@/lib/utils'
+import { cn, formatDateTime, formatTime } from '@/lib/utils'
 import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import type {
   AlternativeSlot,
@@ -83,6 +93,7 @@ const EMPTY_EXTERNAL = {
 
 export function ReservationWizardPage() {
   const navigate = useNavigate()
+  const { id: routeId } = useParams()
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
   const { user, isStaff, loading: authLoading } = useAuth()
@@ -92,23 +103,43 @@ export function ReservationWizardPage() {
   // sessionStorage on mount and written back on every change below.
   // A `?facility=` link from a facility page wins over the draft — but only
   // its facility-scoped selections are then dropped (they belong elsewhere).
+  //
+  // On the EDIT route (/reservations/:id/edit) the draft is only valid when
+  // it was seeded for THIS reservation by the detail page; anything else
+  // redirects back to the reservation. Conversely, an edit draft must never
+  // leak onto the /new route as a fresh booking.
   const initial = useMemo(() => {
+    const routeEditId = routeId != null && routeId !== '' ? Number(routeId) : null
     const draft = loadDraft()
     const param = searchParams.get('facility')
     const paramFacilityId = param ? Number(param) : null
-    if (!draft) return { draft: null, facilityId: paramFacilityId }
-    if (paramFacilityId == null || draft.facilityId === paramFacilityId) {
-      return { draft, facilityId: draft.facilityId ?? paramFacilityId }
+    if (routeEditId != null) {
+      if (draft && draft.editingReservationId === routeEditId) {
+        return { draft, facilityId: draft.facilityId, editId: routeEditId, invalidEdit: false }
+      }
+      return { draft: null, facilityId: null, editId: routeEditId, invalidEdit: true }
+    }
+    const fresh = draft && draft.editingReservationId == null ? draft : null
+    if (!fresh) return { draft: null, facilityId: paramFacilityId, editId: null, invalidEdit: false }
+    if (paramFacilityId == null || fresh.facilityId === paramFacilityId) {
+      return {
+        draft: fresh,
+        facilityId: fresh.facilityId ?? paramFacilityId,
+        editId: null,
+        invalidEdit: false,
+      }
     }
     return {
       draft: {
-        ...draft,
+        ...fresh,
         facilityId: paramFacilityId,
         items: {},
         operatorSelections: {},
         userEditedItems: [],
       },
       facilityId: paramFacilityId,
+      editId: null,
+      invalidEdit: false,
     }
     // Read once on entry: the ?facility= param and the stored draft are the
     // wizard's starting point, not something to re-evaluate on every render.
@@ -121,6 +152,22 @@ export function ReservationWizardPage() {
   // slot must be chosen); everything else is prefilled by the draft.
   const rebookedFromId = restored?.rebookedFromId ?? null
   const isRebook = rebookedFromId != null
+
+  // EDIT MODE: revising an existing reservation that is awaiting review (the
+  // "administrator requested changes" flow). The schedule is prefilled — the
+  // requester adjusts the booking in place and resubmits it.
+  const editingId = initial.editId
+  const isEditing = editingId != null
+  const changeRequest = restored?.changeRequest ?? null
+
+  // Direct entry to the edit route without a matching draft (stale or absent
+  // sessionStorage): repair by returning to the reservation's detail page.
+  useEffect(() => {
+    if (initial.invalidEdit && editingId != null) {
+      navigate(`/reservations/${editingId}`, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [step, setStep] = useState(0)
   const [facilityId, setFacilityId] = useState<number | null>(() => initial.facilityId)
@@ -153,9 +200,13 @@ export function ReservationWizardPage() {
 
   // Requester identification — administrators choose who the reservation is
   // FOR (campus user or external organization). Non-admins are always their
-  // own requester, so the whole step is skipped for them.
+  // own requester, so the whole step is skipped for them — and in edit mode
+  // the requester is fixed by the stored reservation (the backend refuses to
+  // change identity on resubmission), so the step never appears either.
   const [requesterType, setRequesterType] = useState<'CAMPUS' | 'EXTERNAL'>(
-    () => restored?.rebooker?.type ?? 'CAMPUS',
+    () =>
+      restored?.rebooker?.type ??
+      (restored?.editRequesterType === 'EXTERNAL' ? 'EXTERNAL' : 'CAMPUS'),
   )
   const [selectedUser, setSelectedUser] = useState<CampusUserOption | null>(null)
   const [userSearch, setUserSearch] = useState('')
@@ -172,7 +223,9 @@ export function ReservationWizardPage() {
     if (!selectedUser && seededRequester.data) setSelectedUser(seededRequester.data)
   }, [selectedUser, seededRequester.data])
 
-  const steps = isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
+  // In edit mode the requester step never renders, so the step list is the
+  // campus one for everyone.
+  const steps = isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
   const stepKey: StepKey = steps[Math.min(step, steps.length - 1)].key
 
   const { data: facilities } = useFacilities()
@@ -231,6 +284,7 @@ export function ReservationWizardPage() {
 
   const availabilityCheck = useAvailabilityCheck()
   const createReservation = useCreateReservation()
+  const resubmitReservation = useResubmitReservation(editingId)
 
   const today = manilaCalendarDate()
   // Only past dates are invalid. Today IS bookable, but dates within the
@@ -242,7 +296,10 @@ export function ReservationWizardPage() {
   const scheduleComplete = Boolean(facilityId && date && startTime && endTime)
   // A member of an organization that is not Approved cannot continue or
   // submit at all — the backend enforces this regardless, but say so up front.
+  // An EDIT always proceeds: the reservation was already accepted, and the
+  // backend does not gate resubmission on organization status.
   const canCreateReservations = user?.can_create_reservations ?? true
+  const canProceed = isEditing || canCreateReservations
 
   const facility = facilities?.find((item) => item.id === facilityId)
 
@@ -260,11 +317,14 @@ export function ReservationWizardPage() {
       user?.organization_ref?.organization_name?.trim()
     return linked || user?.organization?.trim() || ''
   }, [user])
-  const reservingAs = isAdmin
-    ? requesterType === 'CAMPUS'
-      ? selectedUser?.organization?.trim() || ''
-      : external.organization.trim()
-    : accountOrganization
+  const reservingAs = isEditing
+    ? // The stored organization snapshot — identity is not editable on resubmit.
+      restored?.editOrganization ?? ''
+    : isAdmin
+      ? requesterType === 'CAMPUS'
+        ? selectedUser?.organization?.trim() || ''
+        : external.organization.trim()
+      : accountOrganization
 
   // The requester's own most recent reservation carries the last phone number
   // they used — the only place a phone number is stored (there is no phone
@@ -278,7 +338,7 @@ export function ReservationWizardPage() {
     )
   }, [user])
   useEffect(() => {
-    if (!user || contactPrefilled.current) return
+    if (!user || contactPrefilled.current || isEditing) return
     if (!myReservations.isSuccess && !myReservations.isError) return
     contactPrefilled.current = true
     const lastPhone = (myReservations.data?.results ?? []).find(
@@ -286,7 +346,7 @@ export function ReservationWizardPage() {
     )?.contact_phone
     if (!lastPhone) return
     setContact((current) => (current.phone ? current : { ...current, phone: lastPhone }))
-  }, [user, myReservations.isSuccess, myReservations.isError, myReservations.data])
+  }, [user, isEditing, myReservations.isSuccess, myReservations.isError, myReservations.data])
 
   // ------------------------------------------------------------------
   // Details validation (single source of truth for the Continue gate)
@@ -341,11 +401,14 @@ export function ReservationWizardPage() {
 
   // Suggestions are checked by default: seed the quantities, but never touch a
   // resource the requester has edited by hand (including one they unchecked).
+  // In edit mode the seeding is skipped entirely — the reservation's existing
+  // resources and quantities must be preserved unless the requester changes
+  // them; suggestions remain visible as manual opt-ins.
   const suggestionFingerprint = suggestions
     .map((suggestion) => `${suggestion.equipmentId}:${suggestion.quantity}`)
     .join(',')
   useEffect(() => {
-    if (!suggestionFingerprint) return
+    if (isEditing || !suggestionFingerprint) return
     setItems((current) => {
       let changed = false
       const next = { ...current }
@@ -417,6 +480,10 @@ export function ReservationWizardPage() {
       items: itemsList,
       // Trusted server-side: only staff can actually enable external fees.
       requester_type: requesterType,
+      // Edit mode: the reservation's own current slot moves with it, so it
+      // must not count as a conflict against itself (owner/staff honoured
+      // server-side; dropped from the request when not editing).
+      exclude_id: editingId ?? undefined,
     }
   }, [
     scheduleComplete,
@@ -427,6 +494,7 @@ export function ReservationWizardPage() {
     endTime,
     itemsList,
     requesterType,
+    editingId,
   ])
 
   const availabilityKey = useMemo(
@@ -494,6 +562,11 @@ export function ReservationWizardPage() {
       // Preserve the rebook lineage across a refresh mid-wizard.
       rebookedFromId,
       rebooker: restored?.rebooker ?? null,
+      // ...and the edit session (id + change-request banner) likewise.
+      editingReservationId: editingId,
+      changeRequest: restored?.changeRequest ?? null,
+      editRequesterType: restored?.editRequesterType ?? null,
+      editOrganization: restored?.editOrganization ?? '',
     })
   }, [
     facilityId,
@@ -566,7 +639,7 @@ export function ReservationWizardPage() {
   // Final submission additionally re-validates on the backend (HTTP 409 on
   // conflict), but the button stays disabled until a check for the CURRENT
   // configuration has actually succeeded.
-  const canSubmit = scheduleComplete && !dateInvalid && canCreateReservations && availabilityOk
+  const canSubmit = scheduleComplete && !dateInvalid && canProceed && availabilityOk
 
   // Per-step Continue gate. Required fields must be valid AND, on the steps
   // where availability matters, the check must have succeeded for the current
@@ -589,10 +662,10 @@ export function ReservationWizardPage() {
             : true
   const availabilityRequired = stepKey === 'schedule' || stepKey === 'details'
   const canContinue =
-    canCreateReservations && stepFieldsValid && (!availabilityRequired || availabilityOk)
+    canProceed && stepFieldsValid && (!availabilityRequired || availabilityOk)
 
   // Always keep a human-readable reason for a disabled Continue available.
-  const continueBlockedReason = !canCreateReservations
+  const continueBlockedReason = !canProceed
     ? user?.reservation_block_reason ||
       'Your organization must be approved before you can reserve a facility.'
     : availabilityRequired && !availabilityOk
@@ -616,7 +689,7 @@ export function ReservationWizardPage() {
     // External organizations must be APPROVED before any step can proceed.
     // The Continue button is disabled, but guard here too so the rule holds
     // even if the disabled state is bypassed with dev tools.
-    if (!canCreateReservations) {
+    if (!canProceed) {
       setStepError(
         user?.reservation_block_reason ||
           'Your organization must be approved by an administrator before you can reserve a facility.',
@@ -668,8 +741,11 @@ export function ReservationWizardPage() {
 
   function goBack() {
     setStepError(null)
-    if (step === 0) navigate('/reservations')
-    else setStep(step - 1)
+    if (step === 0) {
+      navigate(isEditing && editingId != null ? `/reservations/${editingId}` : '/reservations')
+    } else {
+      setStep(step - 1)
+    }
   }
 
   /** Jump to the step that owns a read-only value shown on Review. */
@@ -682,35 +758,63 @@ export function ReservationWizardPage() {
   }
 
   async function submit() {
-    // Defence in depth: the backend re-validates availability on create and
+    // Defence in depth: the backend re-validates availability on submit and
     // returns 409, but never send a request for a configuration that has not
     // passed the current availability check.
     if (!canSubmit || facilityId == null || missingDetails.length > 0) return
+    const draft: WizardDraft = {
+      facilityId,
+      dateISO,
+      startTime,
+      endTime,
+      details,
+      contact,
+      items,
+      operatorSelections,
+      userEditedItems: [...userEditedItems],
+      stepKey,
+    }
+
+    // EDIT: revise the existing reservation in place. The status never
+    // changes here — the backend keeps it PENDING and re-enters the review
+    // queue — so there is no confirmation screen; the requester returns to
+    // the updated detail page.
+    if (isEditing) {
+      resubmitReservation.mutate(toResubmitPayload(draft, { items: itemsList }), {
+        onSuccess: (reservation) => {
+          clearDraft()
+          toast('Reservation updated and resubmitted for approval.')
+          navigate(`/reservations/${reservation.id}`)
+        },
+        onError: (error) => {
+          // The backend refused the revision because the facility/resources
+          // are no longer available (someone else booked first). Surface that
+          // report and send the requester back to the schedule step.
+          if (error instanceof ApiError && error.status === 409 && error.data) {
+            const data = error.data as { availability?: AvailabilityCheckResult }
+            if (data.availability) {
+              setAvailabilityReport(data.availability)
+              setAvailabilityStatus(data.availability.overall.ok ? 'AVAILABLE' : 'UNAVAILABLE')
+              if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
+            }
+          }
+          toast(validationMessage(error, 'Unable to resubmit the reservation. Please review it.'), 'error')
+        },
+      })
+      return
+    }
+
     const isExternalRequester = isAdmin && requesterType === 'EXTERNAL'
-    const payload = toCreateReservationPayload(
-      {
-        facilityId,
-        dateISO,
-        startTime,
-        endTime,
-        details,
-        contact,
-        items,
-        operatorSelections,
-        userEditedItems: [...userEditedItems],
-        stepKey,
-      } satisfies WizardDraft,
-      {
-        items: itemsList,
-        // The backend resolves the same value from the authenticated user;
-        // sending it only keeps the payload self-describing.
-        organization: isExternalRequester ? external.organization : reservingAs,
-        ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
-          ? { requesterId: selectedUser.id }
-          : {}),
-        ...(isExternalRequester ? { external } : {}),
-      },
-    )
+    const payload = toCreateReservationPayload(draft, {
+      items: itemsList,
+      // The backend resolves the same value from the authenticated user;
+      // sending it only keeps the payload self-describing.
+      organization: isExternalRequester ? external.organization : reservingAs,
+      ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
+        ? { requesterId: selectedUser.id }
+        : {}),
+      ...(isExternalRequester ? { external } : {}),
+    })
 
     createReservation.mutate(payload, {
       onSuccess: (reservation) => {
@@ -800,28 +904,56 @@ export function ReservationWizardPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <Link
-        to="/reservations"
+        to={isEditing && editingId != null ? `/reservations/${editingId}` : '/reservations'}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-body transition-colors hover:text-ink"
       >
-        <ArrowLeft className="size-4" /> Back to reservations
+        <ArrowLeft className="size-4" />
+        {isEditing ? 'Back to reservation' : 'Back to reservations'}
       </Link>
 
       <div className="mt-4">
         <h1 className="text-[32px] font-semibold tracking-tight text-ink">
-          {isRebook
-            ? isStaff
-              ? 'Rebook reservation'
-              : 'Request new schedule'
-            : 'New reservation'}
+          {isEditing
+            ? 'Edit reservation'
+            : isRebook
+              ? isStaff
+                ? 'Rebook reservation'
+                : 'Request new schedule'
+              : 'New reservation'}
         </h1>
         <p className="mt-1.5 text-[15px] text-body">
-          {isRebook
-            ? 'This creates a new reservation that still needs approval. Choose a new date and time — the expired reservation is kept unchanged for history.'
-            : 'Reserve a facility and the resources you need for your event.'}
+          {isEditing
+            ? 'Adjust the details below and resubmit — the reservation returns to the SAS review queue for approval.'
+            : isRebook
+              ? 'This creates a new reservation that still needs approval. Choose a new date and time — the expired reservation is kept unchanged for history.'
+              : 'Reserve a facility and the resources you need for your event.'}
         </p>
       </div>
 
-      {!canCreateReservations && (
+      {/* The administrator's outstanding change request — what the requester
+          is expected to fix before resubmitting. Preserved in the timeline;
+          shown here so the correction is unmistakable. */}
+      {isEditing && changeRequest && (
+        <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-status-pending/25 bg-status-pending-bg px-4 py-3.5">
+          <MessageSquareWarning
+            className="mt-0.5 size-4.5 shrink-0 text-status-pending"
+            aria-hidden
+          />
+          <div>
+            <p className="font-semibold text-status-pending">
+              Administrator requested changes
+            </p>
+            <p className="mt-0.5 text-sm leading-relaxed text-status-pending">
+              “{changeRequest.message}”
+            </p>
+            <p className="mt-1 text-xs text-status-pending/80">
+              {changeRequest.by} · {formatDateTime(changeRequest.at)}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!isEditing && !canCreateReservations && (
         <div className="mt-6">
           {user?.organization_verification_status ? (
             <OrganizationStatusNotice
@@ -987,7 +1119,7 @@ export function ReservationWizardPage() {
         )}
       </div>
 
-      {isAdmin && (stepKey === 'details' || stepKey === 'review') && (
+      {!isEditing && isAdmin && (stepKey === 'details' || stepKey === 'review') && (
         <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-brand/20 bg-brand-soft/50 px-4 py-3 text-sm text-brand">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
           <p>
@@ -1015,7 +1147,11 @@ export function ReservationWizardPage() {
             </p>
           )}
           <div className="flex items-center justify-between gap-3">
-            <Button variant="outline" onClick={goBack} disabled={createReservation.isPending}>
+            <Button
+              variant="outline"
+              onClick={goBack}
+              disabled={createReservation.isPending || resubmitReservation.isPending}
+            >
               <ArrowLeft className="size-4" /> Back
             </Button>
             {step < steps.length - 1 ? (
@@ -1037,17 +1173,25 @@ export function ReservationWizardPage() {
             ) : (
               <Button
                 onClick={submit}
-                loading={createReservation.isPending}
-                disabled={!canSubmit || createReservation.isPending}
+                loading={createReservation.isPending || resubmitReservation.isPending}
+                disabled={
+                  canSubmit === false ||
+                  createReservation.isPending ||
+                  resubmitReservation.isPending
+                }
                 title={
-                  !canCreateReservations
+                  !canProceed
                     ? user?.reservation_block_reason
                     : !availabilityOk
                       ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
                       : undefined
                 }
               >
-                {isAdmin ? 'Create approved reservation' : 'Submit reservation'}{' '}
+                {isEditing
+                  ? 'Resubmit reservation'
+                  : isAdmin
+                    ? 'Create approved reservation'
+                    : 'Submit reservation'}{' '}
                 <ArrowRight className="size-4" />
               </Button>
             )}
@@ -1056,6 +1200,29 @@ export function ReservationWizardPage() {
       </div>
     </div>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * First human-readable message from a DRF validation error body
+ * ({"field": ["message", …]}), falling back to the ApiError detail or the
+ * given default. Keeps backend validation visible to the requester even when
+ * it is not the availability conflict the wizard handles specially.
+ */
+function validationMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError && error.data && typeof error.data === 'object') {
+    for (const value of Object.values(error.data as Record<string, unknown>)) {
+      if (typeof value === 'string' && value.trim()) return value
+      if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim()) {
+        return value[0]
+      }
+    }
+    if (error.message) return error.message
+  }
+  return fallback
 }
 
 // ---------------------------------------------------------------------------

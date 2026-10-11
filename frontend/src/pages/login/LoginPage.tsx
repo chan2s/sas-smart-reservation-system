@@ -6,45 +6,9 @@ import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
-
-const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
-  not_configured:
-    'Google sign-in is not available right now. Please use your username and password.',
-  invalid_state:
-    'The sign-in request expired or was tampered with. Please try again.',
-  cancelled: 'Google sign-in was cancelled.',
-  missing_code: 'Google did not return an authorization code. Please try again.',
-  token_exchange_failed: 'We could not verify your Google sign-in. Please try again.',
-  identity_failed: 'We could not read your Google profile. Please try again.',
-  email_unverified:
-    'Your Google account email is not verified. Use a verified account or sign in with your password.',
-  twofa_required:
-    'This account uses two-factor authentication. Sign in with your password to complete verification.',
-}
-
-function GoogleIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden>
-      <path
-        fill="#4285F4"
-        d="M23.5 12.27c0-.85-.08-1.66-.22-2.45H12v4.64h6.45a5.52 5.52 0 0 1-2.4 3.62v3h3.87c2.26-2.09 3.58-5.16 3.58-8.81Z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.87-3c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.29v3.1A12 12 0 0 0 12 24Z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.27 14.28a7.2 7.2 0 0 1 0-4.56v-3.1H1.29a12 12 0 0 0 0 10.76l3.98-3.1Z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.76c1.76 0 3.34.6 4.58 1.8l3.44-3.44A11.97 11.97 0 0 0 12 0 12 12 0 0 0 1.29 6.62l3.98 3.1C6.22 6.87 8.87 4.76 12 4.76Z"
-      />
-    </svg>
-  )
-}
+import { GOOGLE_ERROR_MESSAGES, GOOGLE_LOGIN_REDIRECT_CODES } from '@/lib/googleAuth'
 
 export function LoginPage() {
   const { user, login, verifyTwoFactorLogin } = useAuth()
@@ -54,6 +18,12 @@ export function LoginPage() {
   // Set after an external-organization sign-up redirects here instead of
   // auto-authenticating the new account.
   const registeredExternal = searchParams.get('registered') === 'external'
+
+  // "Continue with Google" that found an existing account redirects here with
+  // ?google_error=account_exists (or email_registered). These get a dedicated
+  // notice with a direct link to the login form instead of an inline error.
+  const googleErrorCode = searchParams.get('google_error') ?? ''
+  const accountNoticeCode = GOOGLE_LOGIN_REDIRECT_CODES.has(googleErrorCode)
 
   const [step, setStep] = useState<'credentials' | 'twofa'>('credentials')
   const [mfaToken, setMfaToken] = useState('')
@@ -70,6 +40,8 @@ export function LoginPage() {
     const googleError = searchParams.get('google_error')
     if (googleError) {
       setError(GOOGLE_ERROR_MESSAGES[googleError] ?? 'Google sign-in failed. Please try again.')
+    } else {
+      setError('')
     }
     if (searchParams.get('social') === '2fa') {
       setError(
@@ -170,17 +142,23 @@ export function LoginPage() {
                 </div>
               )}
 
-              {step === 'credentials' ? (
-                <>
+              {step === 'credentials' && accountNoticeCode ? (
+                <div
+                  role="alert"
+                  className="rounded-xl border border-status-pending/25 bg-status-pending-bg px-4 py-4"
+                >
+                  <p className="text-sm leading-relaxed text-status-pending">{error}</p>
                   <button
                     type="button"
-                    onClick={handleGoogle}
-                    disabled={googleLoading}
-                    className="flex w-full items-center justify-center gap-2.5 rounded-full border border-line bg-surface px-4 py-3 text-sm font-medium text-ink shadow-sm transition-colors duration-150 hover:bg-soft disabled:opacity-60"
+                    onClick={() => navigate('/login')}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-brand-dark"
                   >
-                    <GoogleIcon />
-                    {googleLoading ? 'Redirecting to Google…' : 'Continue with Google'}
+                    Go to Login
                   </button>
+                </div>
+              ) : step === 'credentials' ? (
+                <>
+                  <GoogleAuthButton onClick={handleGoogle} loading={googleLoading} />
 
                   <div className="my-6 flex items-center gap-3" aria-hidden>
                     <span className="h-px flex-1 bg-line" />

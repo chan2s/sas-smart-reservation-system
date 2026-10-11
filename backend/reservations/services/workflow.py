@@ -313,6 +313,54 @@ def reject_reservation(reservation, actor, reason):
     return reservation
 
 
+def resubmit_reservation(reservation, actor, message=""):
+    """Record the requester's revision of a reservation awaiting review.
+
+    Called after the updated details (and resources) have been saved and
+    revalidated. The status does NOT change: a resubmitted reservation is
+    still PENDING, so it simply re-enters the administrators' review queue —
+    it is never auto-approved. The administrator's original change request
+    stays untouched in the timeline (events are append-only); this appends
+    the revision entry and notifies staff so somebody picks it up.
+    """
+    if reservation.status != Reservation.Status.PENDING:
+        raise ValueError(
+            "Only a reservation that is awaiting review can be resubmitted."
+        )
+    default_message = (
+        "Reservation updated and resubmitted."
+        if actor.is_sas_staff
+        else "Reservation updated and resubmitted by requester."
+    )
+    record_event(
+        reservation,
+        ReservationEvent.EventType.UPDATED,
+        actor=actor,
+        from_status=Reservation.Status.PENDING,
+        to_status=Reservation.Status.PENDING,
+        message=message or default_message,
+    )
+    AuditLog.record(
+        actor,
+        AuditLog.Action.RESERVATION_EDITED,
+        object_type="reservation",
+        object_id=reservation.reservation_id,
+        object_repr=reservation.event_name,
+        detail=message or default_message,
+    )
+    notify_staff(
+        Notification.Type.RESERVATION,
+        "Reservation resubmitted",
+        (
+            f"{reservation.event_name} on {reservation.date} "
+            f"({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) was "
+            "revised and is awaiting approval again."
+        ),
+        _reservation_link(reservation),
+    )
+    return reservation
+
+
 def request_changes(reservation, actor, message):
     # Requesting changes puts a reservation back to PENDING; doing that to an
     # expired reservation would silently reopen it. Those must be rebooked.

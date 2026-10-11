@@ -9,6 +9,7 @@ import {
   type GalleryImageRef,
   type EquipmentPayload,
   type ReservationFilters,
+  type ResubmitReservationPayload,
 } from '@/lib/api'
 import type { FacilityPayload, FacilityResourcePayload, RequesterType } from '@/lib/types'
 import type {
@@ -459,6 +460,26 @@ export function useCreateReservation() {
       void queryClient.invalidateQueries({ queryKey: ['reservations'] })
       void queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
       void queryClient.invalidateQueries({ queryKey: ['summary'] })
+    },
+  })
+}
+
+/**
+ * Revise + resubmit a reservation that is awaiting review (the edit flow for
+ * "administrator requested changes"). The reservation stays PENDING — this
+ * only saves the revised details and re-enters the staff review queue.
+ */
+export function useResubmitReservation(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: ResubmitReservationPayload) =>
+      endpoints.resubmitReservation(id as number, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reservation', id] })
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      void queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },
   })
 }

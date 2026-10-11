@@ -323,12 +323,17 @@ def find_alternatives(
     days=14,
     limit=3,
     buffer_minutes=30,
+    exclude_id=None,
 ):
     """Propose up to ``limit`` fully-available time slots.
 
     Candidates are generated from the facility's opening time and from just
     after each existing reservation ends, which yields realistic adjacent
-    slots. A buffer is applied between consecutive reservations.
+    slots. A buffer is applied between consecutive reservations. When
+    ``exclude_id`` is given (the owner revising their own pending
+    reservation), that reservation is skipped both as a candidate source and
+    during each candidate's availability check, so the reservation's own
+    current slot never blocks the proposals.
     """
     facility = Facility.objects.get(pk=facility_id)
     duration = datetime.combine(target_date, end) - datetime.combine(target_date, start)
@@ -347,7 +352,9 @@ def find_alternatives(
                 facility=facility,
                 date=day,
                 status__in=Reservation.ACTIVE_STATUSES,
-            ).order_by("start_time")
+            )
+            .exclude(pk=exclude_id)
+            .order_by("start_time")
         )
         for r in existing:
             candidate = (
@@ -373,7 +380,7 @@ def find_alternatives(
                 continue
 
             report = check_availability(
-                facility_id, day, candidate, candidate_end, items
+                facility_id, day, candidate, candidate_end, items, exclude_id=exclude_id
             )
             if report["overall"]["ok"]:
                 results.append(

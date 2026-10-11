@@ -20,7 +20,12 @@ from .models import User
 
 def _oauth_callback(client, email: str):
     """Drive the real callback through a mocked Google identity exchange."""
-    userinfo = {"email": email, "email_verified": True, "given_name": "Juan"}
+    userinfo = {
+        "sub": f"google-sub-{email}",
+        "email": email,
+        "email_verified": True,
+        "given_name": "Juan",
+    }
     with override_settings(GOOGLE_CLIENT_ID="test-id", GOOGLE_CLIENT_SECRET="test-secret"):
         with mock.patch("accounts.oauth_views.requests.post") as mock_post, mock.patch(
             "accounts.oauth_views.requests.get"

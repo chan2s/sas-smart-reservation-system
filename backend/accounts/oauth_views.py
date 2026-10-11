@@ -42,7 +42,23 @@ logger = logging.getLogger(__name__)
 # Identity-only scopes — no Gmail, Drive, Contacts, or Calendar.
 GOOGLE_SCOPES = ["openid", "email", "profile"]
 
+#: django-allauth provider id for Google. SocialAccount rows key on
+#: ``(provider, uid)`` where ``uid`` is Google's stable ``sub`` claim — the
+#: trusted identity used to decide whether an account already exists.
+GOOGLE_PROVIDER_ID = "google"
+
 STATE_MAX_AGE_SECONDS = 600
+
+#: Where the flow was started from. Only these two fixed SPA paths are ever
+#: used for error redirects, so a client-supplied value can never cause an
+#: open redirect. The login page and the registration page share the same
+#: OAuth implementation; "intent" only decides which page receives errors.
+_ALLOWED_INTENTS = ("login", "register")
+
+
+def _error_redirect_path(intent: str) -> str:
+    """Fixed SPA path for OAuth errors — never built from raw input."""
+    return "/register" if intent == "register" else "/login"
 
 
 def _frontend_url(path: str, request=None, state_origin: str | None = None) -> str:
@@ -87,6 +103,34 @@ def _client_config() -> tuple[str, str]:
     from django.conf import settings
 
     return settings.GOOGLE_CLIENT_ID, settings.GOOGLE_CLIENT_SECRET
+
+
+def _link_google_identity(user, sub: str, userinfo: dict):
+    """Associate a verified Google identity with a local account.
+
+    Uses django-allauth's ``SocialAccount`` table so the ``(provider, uid)``
+    pair — Google's stable ``sub`` claim — is the single source of truth for
+    "which SAS RESERVE account is this Google identity?". Only non-sensitive
+    identity metadata is stored; no Google tokens are persisted.
+    """
+    from allauth.socialaccount.models import SocialAccount
+    from django.utils import timezone
+
+    account, _ = SocialAccount.objects.update_or_create(
+        provider=GOOGLE_PROVIDER_ID,
+        uid=sub,
+        defaults={
+            "user": user,
+            "last_login": timezone.now(),
+            "extra_data": {
+                "email": (userinfo.get("email") or "").lower(),
+                "name": userinfo.get("name") or "",
+                "given_name": userinfo.get("given_name") or "",
+                "family_name": userinfo.get("family_name") or "",
+            },
+        },
+    )
+    return account
 
 
 @api_view(["GET"])
@@ -139,13 +183,23 @@ def google_start(request):
             browser_origin = header_origin
     state_origin = browser_origin or None
 
+    # Which SPA page started the flow? "register" keeps OAuth errors on the
+    # registration page instead of always bouncing to /login. Unknown or
+    # tampered values fall back to "login" — the callback re-validates this
+    # against the same allowlist before using it.
+    intent = (request.query_params.get("intent") or "login").strip().lower()
+    if intent not in _ALLOWED_INTENTS:
+        intent = "login"
+
     redirect_uri = _oauth_redirect_uri(request, state_origin)
     nonce = secrets.token_urlsafe(16)
 
     # Bind the browser origin into the signed, short-lived state so the
     # callback returns the browser to the same environment (localhost /
     # 127.0.0.1 / current Dev Tunnel) it started from. Re-validated there.
-    state = TimestampSigner().sign_object({"n": nonce, "o": state_origin})
+    state = TimestampSigner().sign_object(
+        {"n": nonce, "o": state_origin, "i": intent}
+    )
 
     params = {
         "client_id": client_id,
@@ -170,10 +224,17 @@ def google_callback(request):
     # signed state is validated below; error redirects before that fall back
     # to the request origin (see config/frontend.py).
     state_origin = None
+    # Defaults to the login page; a valid signed state may carry "register".
+    # Never inherited from the raw request — only from the verified state.
+    intent = "login"
 
-    def frontend_error(code: str):
+    def frontend_error(code: str, path: str | None = None):
+        # ``path`` is only ever one of the fixed SPA paths supplied in code
+        # below — never derived from request input, so it cannot be turned
+        # into an open redirect.
+        target = path or _error_redirect_path(intent)
         return redirect(
-            f"{_frontend_url('/login', request, state_origin)}?google_error={code}"
+            f"{_frontend_url(target, request, state_origin)}?google_error={code}"
         )
 
     # 1. Validate OAuth state (CSRF protection) and recover the frontend
@@ -195,6 +256,9 @@ def google_callback(request):
         )
         return frontend_error("invalid_state")
     state_origin = (state_data or {}).get("o") or None
+    state_intent = (state_data or {}).get("i")
+    if state_intent in _ALLOWED_INTENTS:
+        intent = state_intent
 
     client_id, client_secret = _client_config()
     if not client_id or not client_secret:
@@ -290,16 +354,77 @@ def google_callback(request):
         )
         return frontend_error("email_unverified")
 
-    # 5. Resolve the local account — link, never duplicate.
+    # 5. Resolve the local account from the verified Google identity.
+    #
+    # Security model:
+    #   * The account is matched by Google's stable subject id ("sub") via the
+    #     django-allauth SocialAccount row — never by an email address the
+    #     client could have supplied.
+    #   * An email/password account is NEVER auto-linked just because a Google
+    #     email matches. The user is directed to the login page instead, so a
+    #     password-protected account cannot be taken over and no duplicate is
+    #     created.
+    #   * A password-less account (one originally created through Google) may
+    #     adopt the identity on sign-in: the Google-verified email is the only
+    #     credential it ever had, so its owner keeps access.
     from django.contrib.auth import get_user_model
-    from django_otp.plugins.otp_totp.models import TOTPDevice
+    from django.utils import timezone
+    from allauth.socialaccount.models import SocialAccount
 
     User = get_user_model()
-    user = User.objects.filter(email__iexact=email).first()
-    created = False
+    sub = (userinfo.get("sub") or "").strip()
+    if not sub:
+        # Google's userinfo endpoint always returns `sub`; without it we
+        # cannot tell whether this identity is already registered.
+        logger.warning("Google OAuth: verified identity has no subject id.")
+        return frontend_error("identity_failed")
+
+    social_account = (
+        SocialAccount.objects.select_related("user")
+        .filter(provider=GOOGLE_PROVIDER_ID, uid=sub)
+        .first()
+    )
+    user = social_account.user if social_account else None
 
     if user is None:
-        # New user: plain REQUESTER, never privileged.
+        existing = User.objects.filter(email__iexact=email).first()
+        if existing is not None:
+            # Only a plain, password-less REQUESTER (i.e. an account that was
+            # itself created through Google) may adopt the identity — and only
+            # on sign-in. This keeps legacy Google users from being locked out
+            # without ever linking a privileged or password-protected account.
+            adoptable = (
+                not existing.has_usable_password()
+                and not existing.is_staff
+                and not existing.is_superuser
+                and existing.role == User.Role.REQUESTER
+            )
+            if adoptable and intent != "register":
+                user = existing
+            elif adoptable:
+                # The registration page must not create a duplicate of an
+                # account that already exists: send the user to log in.
+                return frontend_error("account_exists", "/login")
+            else:
+                # The email belongs to an email/password (or privileged)
+                # account. Never link it automatically — the user must sign in
+                # with it instead.
+                return frontend_error("email_registered", "/login")
+
+    if user is not None:
+        # Existing account: associate (or refresh) the Google identity.
+        if social_account is None:
+            social_account = _link_google_identity(user, sub, userinfo)
+        else:
+            social_account.last_login = timezone.now()
+            social_account.save(update_fields=["last_login"])
+        if intent == "register":
+            # "Continue with Google" on the registration page for an account
+            # that already exists: do NOT sign in and do NOT duplicate — the
+            # SPA shows the account-exists notice with a link to log in.
+            return frontend_error("account_exists", "/login")
+    else:
+        # New account: plain REQUESTER, never privileged.
         username_base = email.split("@")[0].replace(".", "_")[:140] or "google_user"
         username = username_base
         suffix = 1
@@ -309,12 +434,12 @@ def google_callback(request):
         user = User.objects.create_user(
             username=username,
             email=email,
-            first_name=userinfo.get("given_name", "")[:150],
-            last_name=userinfo.get("family_name", "")[:150],
+            first_name=(userinfo.get("given_name") or "")[:150],
+            last_name=(userinfo.get("family_name") or "")[:150],
         )
         user.role = "REQUESTER"
         user.save(update_fields=["role"])
-        created = True
+        _link_google_identity(user, sub, userinfo)
         AuditLog.record(
             user,
             AuditLog.Action.GOOGLE_FIRST_ACCOUNT,
@@ -322,17 +447,21 @@ def google_callback(request):
             object_repr="Account created via first-time Google sign-in",
             request=request,
         )
-    elif TOTPDevice.objects.filter(user=user, confirmed=True).exists():
-        # Account has 2FA: do not let social sign-in bypass TOTP.
+
+    # 6. Two-factor gate: social sign-in must never bypass TOTP. A brand-new
+    #    account has no device, so this only affects an existing account.
+    from django_otp.plugins.otp_totp.models import TOTPDevice
+
+    if TOTPDevice.objects.filter(user=user, confirmed=True).exists():
         logger.info(
             "Google OAuth: 2FA-gated account sign-in refused (user_id=%s).",
             user.pk,
         )
         return frontend_error("twofa_required")
 
-    # 6. Audit and issue first-party JWTs — no Google tokens reach the
-    #    browser. There is no email-verification gate: every Google account
-    #    with a Google-verified email authenticates directly.
+    # 7. Audit and issue first-party JWTs — no Google tokens reach the
+    #    browser. A new account continues to onboarding (affiliation) via the
+    #    SPA callback page.
     AuditLog.record(
         user,
         AuditLog.Action.LOGIN,
@@ -343,7 +472,7 @@ def google_callback(request):
 
     refresh = RefreshToken.for_user(user)
 
-    # 7. Hand off to the SPA with the JWT pair in the URL fragment
+    # 8. Hand off to the SPA with the JWT pair in the URL fragment
     #    (fragments are not sent to servers and not kept in history).
     fragment = f"access={quote(str(refresh.access_token))}&refresh={quote(str(refresh))}"
     return redirect(

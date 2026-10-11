@@ -172,6 +172,14 @@ class ReservationListSerializer(serializers.ModelSerializer):
     # result; it never decides the policy and its value is never trusted.
     can_cancel = serializers.SerializerMethodField()
     cancellation_reason = serializers.SerializerMethodField()
+    # Edit/resubmit eligibility, decided on the backend with the SAME rule the
+    # ``resubmit`` endpoint enforces (owner or SAS staff, status PENDING). The
+    # frontend only uses it to show or hide the edit affordance.
+    can_edit = serializers.SerializerMethodField()
+    # True when the reservation is awaiting review AND an administrator has
+    # requested changes that have not been superseded by a decision — the
+    # state in which the requester is expected to edit and resubmit.
+    changes_requested = serializers.SerializerMethodField()
     approval_email_status = serializers.CharField(read_only=True)
     approval_email_status_label = serializers.CharField(
         source="get_approval_email_status_display", read_only=True
@@ -216,6 +224,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "check_in_window_open",
             "can_cancel",
             "cancellation_reason",
+            "can_edit",
+            "changes_requested",
             "checked_in_at",
             "checked_out_at",
             "resources",
@@ -264,6 +274,32 @@ class ReservationListSerializer(serializers.ModelSerializer):
         # ``None`` when cancellable — lets the UI show a reason only when the
         # action is actually blocked.
         return self._cancellation_eligibility(obj)[2] or None
+
+    def _edit_eligibility(self, obj):
+        """Mirror of the ``resubmit`` endpoint's authorization + status policy.
+
+        The endpoint remains the enforcement point; this only drives whether
+        the UI offers the edit affordance, so the two can never disagree.
+        """
+        user = getattr(self.context.get("request"), "user", None)
+        authenticated = bool(user is not None and user.is_authenticated)
+        is_owner = authenticated and obj.requester_id == user.id
+        is_staff = authenticated and user.is_sas_staff
+        return (is_owner or is_staff) and obj.status == Reservation.Status.PENDING
+
+    def get_can_edit(self, obj):
+        return self._edit_eligibility(obj)
+
+    def get_changes_requested(self, obj):
+        # Only meaningful while the reservation is still awaiting review: an
+        # approve/reject/cancel decision supersedes the outstanding request.
+        # Events are prefetched by the viewsets, so this reads the cache.
+        if obj.status != Reservation.Status.PENDING:
+            return False
+        return any(
+            event.event_type == ReservationEvent.EventType.CHANGES_REQUESTED
+            for event in obj.events.all()
+        )
 
     def to_representation(self, instance):
         """Drop contact details for non-staff viewers of campus reservations.
@@ -468,7 +504,14 @@ class _ReservationCreateMixin:
             )
 
         report = check_availability(
-            facility_id, target_date, start, end, attrs.get("items", [])
+            facility_id,
+            target_date,
+            start,
+            end,
+            attrs.get("items", []),
+            # When updating (resubmit), the reservation holds its own slot, so
+            # it must not count as a conflict against itself.
+            exclude_id=self.instance.pk if self.instance is not None else None,
         )
         self._availability_report = report
         attrs["_availability_report"] = report
@@ -807,6 +850,89 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         # own fields. Any client-supplied total is ignored by construction.
         snapshot_reservation_fees(reservation)
         return reservation
+
+
+class ReservationResubmitSerializer(
+    _ReservationCreateMixin, serializers.ModelSerializer
+):
+    """Requester-side revision of a reservation that is awaiting review.
+
+    Drives the ``resubmit`` action: the owner (or SAS staff) edits the event
+    details, schedule, and resources of a PENDING reservation — the state a
+    reservation is in after an administrator requested changes — and it is
+    revalidated exactly like a fresh submission (required fields, time rules,
+    facility-resource assignments, and a full availability check that
+    excludes the reservation's own current slot, 409 on conflict).
+
+    Identity is never writable here: requester, organization, organization
+    reference, requester type, and contact email are absent from the field
+    list, so a resubmission can neither move the reservation to another
+    person nor switch its pricing context. A client-supplied status is
+    likewise ignored — the status transition (none) is decided by the view.
+    """
+
+    items = serializers.ListField(
+        child=serializers.DictField(), write_only=True, required=False
+    )
+    facility_id = serializers.IntegerField(write_only=True)
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+    contact_phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20,
+        default=None,
+    )
+
+    class Meta:
+        model = Reservation
+        fields = (
+            "facility_id",
+            "date",
+            "start_time",
+            "end_time",
+            "event_name",
+            "event_type",
+            "purpose",
+            "description",
+            "expected_participants",
+            "notes",
+            "contact_person",
+            "contact_phone",
+            "items",
+        )
+        # ``special_requirements`` is deliberately NOT writable here: the form
+        # no longer collects it separately (it merged into "notes"), and an
+        # omitted default would silently wipe the value stored on legacy rows.
+        # Leaving it out of the field list preserves it untouched on update.
+
+    def update(self, instance, validated_data):
+        items = validated_data.pop("items", None)
+        facility_id = validated_data.pop("facility_id", None)
+        validated_data.pop("_availability_report", None)  # validation artifact
+
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        if facility_id is not None:
+            instance.facility_id = facility_id
+        instance.save()
+
+        # The payload always carries the complete resource list, so replacing
+        # the rows preserves every untouched item byte-for-byte. Safe to
+        # delete: a reservation awaiting review has never been checked out,
+        # so no item carries return state.
+        if items is not None:
+            instance.items.all().delete()
+            for item in items:
+                ReservationItem.objects.create(
+                    reservation=instance,
+                    equipment_id=item["equipment_id"],
+                    quantity=item.get("quantity", 1),
+                    operator_requested=item.get("operator"),
+                )
+        # Fees are recomputed from the updated fields — never from the client.
+        snapshot_reservation_fees(instance)
+        return instance
 
 
 class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSerializer):

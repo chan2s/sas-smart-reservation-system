@@ -675,6 +675,10 @@ class ReservationEvent(models.Model):
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
         CHANGES_REQUESTED = "CHANGES_REQUESTED", "Changes requested"
+        # The requester revised a reservation that is awaiting review (usually
+        # after an administrator requested changes) and resubmitted it. The
+        # status stays PENDING — this event only records the revision.
+        UPDATED = "UPDATED", "Updated"
         CANCELLED = "CANCELLED", "Cancelled"
         CHECKED_IN = "CHECKED_IN", "Checked in"
         CHECKED_OUT = "CHECKED_OUT", "Checked out"

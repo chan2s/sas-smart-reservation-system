@@ -222,15 +222,17 @@ export const api = {
   // The origin hint lets the backend bind the OAuth flow to the environment
   // the browser is actually in (localhost, 127.0.0.1, or the current Dev
   // Tunnel). The backend validates it against its allowlist, so a spoofed
-  // value changes nothing.
-  googleStart: (frontendOrigin?: string) =>
-    api.get<{ authorize_url: string }>(
-      `/api/auth/google/start/${
-        frontendOrigin
-          ? `?frontend_origin=${encodeURIComponent(frontendOrigin)}`
-          : ''
-      }`,
-    ),
+  // value changes nothing. `intent` only chooses which page the callback
+  // returns OAuth errors to (register vs. login) — both share one flow.
+  googleStart: (frontendOrigin?: string, intent?: 'login' | 'register') => {
+    const params = new URLSearchParams()
+    if (frontendOrigin) params.set('frontend_origin', frontendOrigin)
+    if (intent) params.set('intent', intent)
+    const qs = params.toString()
+    return api.get<{ authorize_url: string }>(
+      `/api/auth/google/start/${qs ? `?${qs}` : ''}`,
+    )
+  },
   twoFactorStatus: () =>
     api.get<{ enabled: boolean; backup_codes_remaining: number }>(
       '/api/auth/2fa/status/',
@@ -435,6 +437,30 @@ export interface CreateReservationPayload {
   rebooked_from_id?: number
 }
 
+/**
+ * Payload for POST /api/reservations/{id}/resubmit/ — a requester's revision
+ * of a reservation that is awaiting review (usually after an administrator
+ * requested changes). Deliberately narrower than CreateReservationPayload:
+ * requester identity, organization, and status are decided by the backend and
+ * never accepted from the client. Description/special-requirements are
+ * intentionally omitted so untouched legacy values are preserved server-side.
+ */
+export interface ResubmitReservationPayload {
+  facility_id: number
+  date: string
+  start_time: string
+  end_time: string
+  event_name: string
+  event_type: EventType
+  purpose: string
+  expected_participants: number
+  notes: string
+  contact_person: string
+  /** Optional contact mobile number; null keeps the stored (empty) value. */
+  contact_phone?: string | null
+  items: { equipment_id: number; quantity: number; operator?: boolean }[]
+}
+
 export interface GuestReservationPayload {
   facility_id: number
   date: string
@@ -597,6 +623,12 @@ export const endpoints = {
   reservation: (id: number) => api.get<ReservationDetail>(`/api/reservations/${id}/`),
   createReservation: (payload: CreateReservationPayload) =>
     api.post<ReservationDetail>('/api/reservations/', payload),
+  /**
+   * Revise + resubmit a reservation that is awaiting review (owner/staff
+   * only, PENDING only). Returns the updated reservation with its timeline.
+   */
+  resubmitReservation: (id: number, payload: ResubmitReservationPayload) =>
+    api.post<ReservationDetail>(`/api/reservations/${id}/resubmit/`, payload),
   reservationAction: (id: number, action: string, body: Record<string, unknown> = {}) =>
     api.post<ReservationDetail>(`/api/reservations/${id}/${action}/`, body),
   reservationActionForm: (id: number, action: string, form: FormData) =>
@@ -612,6 +644,12 @@ export const endpoints = {
     items: { equipment_id: number; quantity: number; operator?: boolean }[]
     /** Staff only: EXTERNAL enables the external-organization fee estimate. */
     requester_type?: RequesterType
+    /**
+     * Edit mode only: the reservation being revised. Its own current slot
+     * moves with the reservation, so it must not count as a conflict against
+     * itself. Honoured server-side for the owner or staff only.
+     */
+    exclude_id?: number
   }) => api.post<AvailabilityCheck>('/api/availability/check/', payload),
   recommendResources: (payload: {
     event_type: string

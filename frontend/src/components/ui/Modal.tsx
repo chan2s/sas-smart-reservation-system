@@ -22,6 +22,16 @@ export function Modal({
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
 
+  // Parents typically pass an inline onClose closure, so its identity changes
+  // on every parent render (e.g. each keystroke in a modal input). Keep the
+  // latest onClose in a ref so the focus-trap effect below depends only on
+  // `open` — re-running it would restore focus to the trigger element and
+  // re-focus the close button while the user is typing.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
+
   useEffect(() => {
     if (!open) return
     const panel = panelRef.current
@@ -39,7 +49,7 @@ export function Modal({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose()
+        onCloseRef.current()
         return
       }
       if (event.key !== 'Tab') return
@@ -68,7 +78,7 @@ export function Modal({
       document.body.style.overflow = ''
       previouslyFocused?.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 
@@ -101,6 +111,7 @@ export function Modal({
             {description && <p className="mt-0.5 text-sm text-body">{description}</p>}
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="rounded-lg p-1.5 text-muted transition-colors hover:bg-soft hover:text-ink"
             aria-label="Close dialog"

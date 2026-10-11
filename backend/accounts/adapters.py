@@ -1,22 +1,20 @@
-"""django-allauth adapters: role safety + automatic account linking.
+"""django-allauth adapters: role safety + identity-based account linking.
 
 Security rules enforced here:
 * Google login NEVER grants Admin or SAS Staff. New social accounts always
   land as plain REQUESTER users.
-* Signing in with Google using the email of an existing account links the
-  identity to that account instead of creating a duplicate (email addresses
-  are treated as verified because Google verifies them) — but only when the
-  existing account has no TOTP device requiring verification. If 2FA is
-  enabled on the target account, Google sign-in is refused and the user is
-  redirected to the normal login so they can complete TOTP verification.
+* A Google identity is associated with a SAS RESERVE account only by the
+  first-party callback (accounts.oauth_views), which binds Google's stable
+  ``sub`` claim via the SocialAccount table. Email addresses are NOT a
+  credential: matching an existing account by email never silently links the
+  two — the user is sent to the login page instead so no password-protected
+  account can be taken over.
 * Secrets are never logged here or anywhere in the OAuth flow.
 """
 
 from allauth.account.adapter import DefaultAccountAdapter
-from allauth.account.models import EmailAddress
 from allauth.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
-from django.contrib import messages
 from django.shortcuts import redirect
 
 
@@ -52,12 +50,14 @@ class SasSocialAccountAdapter(DefaultSocialAccountAdapter):
         return user
 
     def pre_social_login(self, request, sociallogin):
-        """Link Google identities to existing local accounts (no duplicates).
+        """Never auto-link a social identity to an existing local account.
 
-        Fires before allauth decides to sign up. When the verified Google
-        email matches an existing account we connect the social account to
-        that user and authenticate them — unless 2FA is enabled, in which
-        case we bounce to the standard login so the TOTP challenge runs.
+        Email addresses are not a credential. A Google identity is associated
+        with a SAS RESERVE account only by the first-party callback
+        (accounts.oauth_views), which binds Google's stable ``sub`` claim and
+        refuses to link email/password accounts. If allauth's own social-login
+        entry point is ever used, matching an existing account sends the user
+        to the login page instead of silently connecting the two.
         """
         if sociallogin.is_existing:
             return
@@ -66,35 +66,9 @@ class SasSocialAccountAdapter(DefaultSocialAccountAdapter):
         if not email:
             return
 
-        email_address = EmailAddress.objects.filter(email__iexact=email).first()
-        user = email_address.user if email_address else None
-        if user is None:
-            # Fall back to the auth user table (allauth only mirrors
-            # verified addresses into EmailAddress on first use).
-            from django.contrib.auth import get_user_model
+        from django.contrib.auth import get_user_model
 
-            User = get_user_model()
-            user = User.objects.filter(email__iexact=email).first()
-
-        if user is None:
-            return  # genuinely new user → normal signup flow
-
-        from django_otp.plugins.otp_totp.models import TOTPDevice
-
-        has_2fa = (
-            user.is_authenticated
-            and TOTPDevice.objects.filter(user=user, confirmed=True).exists()
-        )
-        if has_2fa:
-            # Refuse silent social bypass of TOTP; send them through the
-            # password + 2FA login flow instead.
-            messages.add_message(
-                request,
-                messages.INFO,
-                "This account uses two-factor authentication. Sign in with "
-                "your password to complete verification.",
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise ImmediateHttpResponse(
+                redirect("/login?google_error=email_registered")
             )
-            raise ImmediateHttpResponse(redirect("/login?social=2fa"))
-
-        # Link identity to the existing account and continue sign-in.
-        sociallogin.connect(request, user)

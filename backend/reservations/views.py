@@ -1,5 +1,6 @@
 import datetime
 
+from django.db import transaction
 from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -17,6 +18,7 @@ from .serializers import (
     ReservationCreateSerializer,
     ReservationDetailSerializer,
     ReservationListSerializer,
+    ReservationResubmitSerializer,
 )
 from .services import expiration, workflow
 from .services.availability import check_availability, find_alternatives
@@ -277,24 +279,23 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return Response(result)
 
     def update(self, request, *args, **kwargs):
-        """Refuse any edit of an expired reservation.
+        """Reservations are never edited through the generic write endpoint.
 
-        An expired reservation is a historical record: it can never be edited
-        back into an active one (or have its status changed), by a requester or
-        by staff. Rebook it / request a new schedule instead.
+        PUT/PATCH here would run through the list serializer, which was never
+        designed for writes — it would even accept a client-supplied status,
+        letting the owner approve their own reservation. The only edit path
+        is the validated ``resubmit`` action: owner/staff only, PENDING only,
+        with the full availability revalidation.
         """
-        reservation = self.get_object()
-        if reservation.status == Reservation.Status.EXPIRED:
-            return Response(
-                {
-                    "detail": (
-                        "This reservation has expired and can no longer be "
-                        "edited. Rebook it or request a new schedule instead."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return super().update(request, *args, **kwargs)
+        return Response(
+            {
+                "detail": (
+                    "Reservations cannot be edited with this endpoint. "
+                    "Use POST /api/reservations/{id}/resubmit/ instead."
+                )
+            },
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def partial_update(self, request, *args, **kwargs):
         return self.update(request, *args, **kwargs)
@@ -377,6 +378,75 @@ class ReservationViewSet(viewsets.ModelViewSet):
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            ReservationDetailSerializer(
+                reservation, context={"request": request}
+            ).data
+        )
+
+    @action(detail=True, methods=["post"])
+    def resubmit(self, request, pk=None):
+        """Revise and resubmit a reservation that is awaiting review.
+
+        Authorization: the reservation owner or SAS staff — enforced here, on
+        top of the queryset (a non-staff user can never even resolve another
+        requester's reservation). Status policy: only a PENDING reservation —
+        the state an administrator's "request changes" leaves it in — can be
+        resubmitted; approved, active, completed, cancelled, rejected, and
+        expired reservations are refused. The payload is revalidated exactly
+        like a fresh submission (HTTP 409 with the structured report on an
+        availability conflict), and the resubmission itself never changes the
+        status: it stays in the review queue with an UPDATED timeline entry.
+
+        The status re-check, the write, and the timeline entry run in one
+        transaction under a row lock, so an administrator approving (or
+        rejecting) the reservation at the same instant cannot race the
+        requester's revision: exactly one of the two wins.
+        """
+        with transaction.atomic():
+            reservation = Reservation.objects.select_for_update().get(
+                pk=self.get_object().pk
+            )
+            is_owner = reservation.requester_id == request.user.id
+            if not (is_owner or request.user.is_sas_staff):
+                return Response(
+                    {"detail": "You do not have permission to edit this reservation."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if reservation.status != Reservation.Status.PENDING:
+                return Response(
+                    {
+                        "detail": (
+                            "Only a reservation that is awaiting review can be "
+                            "edited and resubmitted."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            serializer = ReservationResubmitSerializer(
+                reservation, data=request.data, context={"request": request}
+            )
+            try:
+                serializer.is_valid(raise_exception=True)
+            except ValidationError as exc:
+                if exc.get_codes().get("availability"):
+                    # Surface the structured availability report for conflict UI.
+                    report = getattr(serializer, "_availability_report", {})
+                    return Response(
+                        {
+                            "detail": "Resource conflict detected",
+                            "availability": report,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                raise
+            reservation = serializer.save()
+            try:
+                workflow.resubmit_reservation(reservation, request.user)
+            except ValueError as exc:
+                return Response(
+                    {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+                )
         return Response(
             ReservationDetailSerializer(
                 reservation, context={"request": request}
@@ -490,6 +560,38 @@ def reservation_by_checkin_code(request, code):
 def availability_check(request):
     """Conflict analysis + alternative schedules for a proposed window."""
     data = request.data
+    # Optional: a reservation to exclude from the conflict analysis. Used when
+    # the OWNER edits a reservation that is awaiting review — its own current
+    # slot moves with the reservation, so it must not count against itself.
+    # Honoured only for the owner or staff, and never trusted at submit time:
+    # the resubmit endpoint re-checks availability excluding only itself.
+    exclude_id = data.get("exclude_id")
+    if exclude_id:
+        try:
+            exclude_id = int(exclude_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Invalid exclude_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        target = Reservation.objects.filter(pk=exclude_id).first()
+        if target is None:
+            return Response(
+                {"detail": "The reservation to exclude was not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not (
+            target.requester_id == request.user.id or request.user.is_sas_staff
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "You can only exclude your own reservation from the "
+                        "availability check."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
     try:
         report = check_availability(
             data["facility_id"],
@@ -497,6 +599,7 @@ def availability_check(request):
             datetime.time.fromisoformat(data["start_time"]),
             datetime.time.fromisoformat(data["end_time"]),
             data.get("items", []),
+            exclude_id=exclude_id or None,
         )
     except (KeyError, ValueError) as exc:
         return Response(
@@ -534,6 +637,7 @@ def availability_check(request):
         datetime.time.fromisoformat(data["start_time"]),
         datetime.time.fromisoformat(data["end_time"]),
         data.get("items", []),
+        exclude_id=exclude_id or None,
     )
     # ...and a fresh estimate for every proposed alternative, so a rescheduled
     # slot never displays a stale total.

@@ -534,6 +534,7 @@ export interface ReservationEvent {
     | 'APPROVED'
     | 'REJECTED'
     | 'CHANGES_REQUESTED'
+    | 'UPDATED'
     | 'CANCELLED'
     | 'CHECKED_IN'
     | 'CHECKED_OUT'
@@ -607,6 +608,17 @@ export interface ReservationSummary {
   can_cancel: boolean
   /** Server-computed reason when cancellation is blocked; null when allowed. */
   cancellation_reason: string | null
+  /**
+   * Server-computed: may the current user edit and resubmit this reservation?
+   * (Owner or SAS staff, and the reservation is still awaiting review — the
+   * same rule the resubmit endpoint enforces.)
+   */
+  can_edit: boolean
+  /**
+   * Server-computed: an administrator has requested changes and the
+   * reservation is still awaiting review — the requester is expected to edit.
+   */
+  changes_requested: boolean
   checked_in_at: string | null
   checked_out_at: string | null
   resources: string[]

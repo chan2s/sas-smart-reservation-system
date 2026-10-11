@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Lock, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError } from '@/lib/api'
@@ -7,7 +7,9 @@ import { useInternalOrganizations } from '@/hooks/queries'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
+import { GOOGLE_ERROR_MESSAGES, GOOGLE_LOGIN_REDIRECT_CODES } from '@/lib/googleAuth'
 import {
   INTERNAL_AFFILIATIONS,
   type ExternalOrganizationType,
@@ -58,8 +60,29 @@ export function RegisterPage() {
   const [external, setExternal] = useState(EMPTY_EXTERNAL)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [searchParams] = useSearchParams()
 
   const { data: internalOrganizations } = useInternalOrganizations()
+
+  // OAuth failures from the registration flow come back as
+  // /register?google_error=… (see the backend callback). The login page
+  // handles the same codes for its own flow, so the copy stays in sync via
+  // the shared GOOGLE_ERROR_MESSAGES map.
+  useEffect(() => {
+    const googleError = searchParams.get('google_error')
+    if (googleError) {
+      setError(
+        GOOGLE_ERROR_MESSAGES[googleError] ?? 'Google sign-up failed. Please try again.',
+      )
+    }
+  }, [searchParams])
+
+  // "Continue with Google" that found an existing account reports back as
+  // ?google_error=account_exists (or email_registered). Those get a direct
+  // link to the login page instead of a plain inline error.
+  const googleErrorCode = searchParams.get('google_error') ?? ''
+  const accountNoticeCode = GOOGLE_LOGIN_REDIRECT_CODES.has(googleErrorCode)
 
   const isExternal = affiliation === 'EXTERNAL_ORGANIZATION'
   const isInternalAffiliation =
@@ -155,6 +178,24 @@ export function RegisterPage() {
     }
   }
 
+  async function handleGoogle() {
+    setError('')
+    setGoogleLoading(true)
+    try {
+      // The exact same backend OAuth flow the login page uses — there is only
+      // one Google implementation. The `register` intent only keeps OAuth
+      // errors on this page. A brand-new Google account is created as a plain
+      // REQUESTER with no affiliation, then completes the affiliation step
+      // (where external organizations still require SAS approval) before it
+      // can reserve. Existing accounts are linked by email, never duplicated.
+      const { authorize_url } = await api.googleStart(window.location.origin, 'register')
+      window.location.href = authorize_url
+    } catch {
+      setError('Google sign-up is unavailable. Please use the form below.')
+      setGoogleLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-soft lg:grid lg:grid-cols-2">
       {/* Left — dark editorial brand panel (desktop) */}
@@ -181,7 +222,17 @@ export function RegisterPage() {
               Register to access the reservation system and manage campus facilities and resources.
             </p>
 
-            <form onSubmit={handleSubmit} className="mt-9 space-y-5">
+            <div className="mt-9">
+              <GoogleAuthButton onClick={handleGoogle} loading={googleLoading} />
+
+              <div className="my-6 flex items-center gap-3" aria-hidden>
+                <span className="h-px flex-1 bg-line" />
+                <span className="text-xs text-muted">or</span>
+                <span className="h-px flex-1 bg-line" />
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="grid grid-cols-2 gap-4">
                 <Field label="First name" htmlFor="first_name">
                   <Input
@@ -425,12 +476,20 @@ export function RegisterPage() {
               )}
 
               {error && (
-                <p
+                <div
                   role="alert"
                   className="rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected"
                 >
-                  {error}
-                </p>
+                  <p>{error}</p>
+                  {accountNoticeCode && (
+                    <Link
+                      to="/login"
+                      className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-surface px-3.5 py-1.5 text-xs font-semibold text-ink shadow-sm transition-colors duration-150 hover:bg-soft"
+                    >
+                      Go to Login
+                    </Link>
+                  )}
+                </div>
               )}
 
               <Button type="submit" loading={submitting} className="w-full" size="lg">
