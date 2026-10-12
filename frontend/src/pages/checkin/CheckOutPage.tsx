@@ -6,6 +6,7 @@ import {
   ImagePlus,
   PackageCheck,
   TriangleAlert,
+  WifiOff,
   X,
 } from 'lucide-react'
 import { useReservation, useReservationAction } from '@/hooks/queries'
@@ -16,6 +17,8 @@ import { Field, Select, Textarea } from '@/components/ui/Form'
 import { Modal } from '@/components/ui/Modal'
 import { Skeleton, EmptyState } from '@/components/ui/Misc'
 import { apiErrorMessage } from '@/lib/api'
+import { useOffline } from '@/hooks/useOffline'
+import { isMutationAllowed } from '@/lib/offline/connectivity'
 import { cn } from '@/lib/utils'
 import { useReportEquipmentIssue } from '@/hooks/queries'
 
@@ -41,6 +44,8 @@ export function CheckOutPage() {
   const { toast } = useToast()
   const { data: reservation, isLoading } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
+  // Check-out is a server-side state change: it is always unavailable offline.
+  const { online } = useOffline()
 
   const [facilityCondition, setFacilityCondition] = useState('GOOD')
   const [equipmentReturned, setEquipmentReturned] = useState(true)
@@ -69,6 +74,13 @@ export function CheckOutPage() {
   const currentReservation = reservation
 
   async function submitCheckout() {
+    if (!online) {
+      toast(
+        "You're offline — check-out can only be completed with a connection.",
+        'error',
+      )
+      return
+    }
     const payload = {
       facility_condition: facilityCondition,
       equipment_returned: equipmentReturned,
@@ -110,6 +122,18 @@ export function CheckOutPage() {
       </div>
 
       <div className="mt-8 space-y-6">
+        {!online && (
+          <p
+            role="status"
+            className="flex items-start gap-2 rounded-lg border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-body"
+          >
+            <WifiOff className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              You&apos;re offline. This form is not submitted until you reconnect — no check-out
+              has been recorded.
+            </span>
+          </p>
+        )}
         {/* Equipment checklist */}
         <Card>
           <CardHeader
@@ -225,6 +249,7 @@ export function CheckOutPage() {
           <Button
             onClick={() => void submitCheckout()}
             loading={action.isPending}
+            disabled={!online}
             icon={<ClipboardCheck className="size-4" />}
           >
             Complete check-out
@@ -313,6 +338,9 @@ export function CheckOutPage() {
 
 // Kept tiny and local to avoid an import cycle with the api client.
 async function endpointsReservationActionForm(id: number, action: string, form: FormData) {
+  // Same rule as the API client: a check-out must never leave the device while
+  // the backend is unreachable.
+  if (!isMutationAllowed()) throw new Error("You're offline — check-out needs a connection.")
   const token = localStorage.getItem('sas_access')
   const response = await fetch(`/api/reservations/${id}/${action}/`, {
     method: 'POST',

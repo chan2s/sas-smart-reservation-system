@@ -3,8 +3,12 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from .health import health
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # Unauthenticated reachability probe for the PWA offline layer.
+    path("api/health/", health, name="health"),
     path("api/auth/", include("accounts.urls")),
     path("api/", include("facilities.urls")),
     path("api/", include("equipment.urls")),

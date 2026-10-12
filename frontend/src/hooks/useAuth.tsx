@@ -7,7 +7,15 @@ import {
   type ReactNode,
 } from 'react'
 import { api, consumeOAuthFragment, tokenStore } from '@/lib/api'
+import { clearBackup } from '@/lib/offline/db'
 import type { User } from '@/lib/types'
+
+/** Remove any cached backup; never let a storage failure escape. */
+function wipeOfflineBackup(): void {
+  void clearBackup().catch(() => {
+    /* storage unavailable — nothing to clear */
+  })
+}
 
 interface AuthContextValue {
   user: User | null
@@ -41,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setUser(me)
       } catch {
         tokenStore.clear()
+        wipeOfflineBackup()
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -57,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onExpired = () => {
       tokenStore.clear()
+      // Expired/cleared session: the cached backup must not outlive the user.
+      wipeOfflineBackup()
       setUser(null)
     }
     window.addEventListener('sas:auth-expired', onExpired)
@@ -77,6 +88,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     tokenStore.clear()
+    // Security boundary: never leave one account's cached data on a shared
+    // device after sign-out (covers account switching too).
+    wipeOfflineBackup()
     setUser(null)
   }, [])
 

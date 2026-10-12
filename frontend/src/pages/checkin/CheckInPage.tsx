@@ -10,10 +10,12 @@ import {
   ClipboardCheck,
   ScanLine,
   UserRound,
+  WifiOff,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { useReservation } from '@/hooks/queries'
 import { useAuth } from '@/hooks/useAuth'
+import { useOffline } from '@/hooks/useOffline'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge } from '@/components/ui/Badge'
@@ -128,6 +130,9 @@ function StaffScanner() {
   const [scanning, setScanning] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const navigate = useNavigate()
+  // Verification is a server-side lookup: it must never run (or report "not
+  // found") while the Django API is unreachable.
+  const { online } = useOffline()
 
   async function startCamera() {
     setError('')
@@ -177,6 +182,13 @@ function StaffScanner() {
   function lookup(codeToLookup: string) {
     const trimmed = codeToLookup.trim()
     if (!trimmed) return
+    if (!online) {
+      setResult(null)
+      setError(
+        "You're offline — a check-in code can only be verified by the SAS RESERVE server.",
+      )
+      return
+    }
     setResult(null)
     setError('')
     // The QR value is a UUID; keep the page simple by routing through the API.
@@ -200,6 +212,19 @@ function StaffScanner() {
       />
 
       <div className="mt-5 space-y-4">
+        {!online && (
+          <p
+            role="status"
+            className="flex items-start gap-2 rounded-lg border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-body"
+          >
+            <WifiOff className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              You&apos;re offline. Check-in and check-out always require a live connection to the
+              SAS RESERVE server.
+            </span>
+          </p>
+        )}
+
         {scanning && (
           <div className="relative overflow-hidden rounded-xl border border-line bg-ink">
             <video ref={videoRef} muted playsInline className="aspect-video w-full object-cover" />
@@ -224,7 +249,11 @@ function StaffScanner() {
             />
           </Field>
           <div className="flex items-end">
-            <Button onClick={() => lookup(code)} icon={<ScanLine className="size-4" />}>
+            <Button
+              onClick={() => lookup(code)}
+              disabled={!online}
+              icon={<ScanLine className="size-4" />}
+            >
               Verify
             </Button>
           </div>

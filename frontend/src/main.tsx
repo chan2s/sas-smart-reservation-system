@@ -6,6 +6,8 @@ import './index.css'
 import App from './App'
 import { AuthProvider } from './hooks/useAuth'
 import { ToastProvider } from './components/ui/Toast'
+import { PwaProvider } from './hooks/usePwa'
+import { OfflineProvider } from './hooks/useOffline'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,7 +25,11 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <AuthProvider>
           <ToastProvider>
-            <App />
+            <PwaProvider>
+              <OfflineProvider>
+                <App />
+              </OfflineProvider>
+            </PwaProvider>
           </ToastProvider>
         </AuthProvider>
       </BrowserRouter>

@@ -11,6 +11,8 @@ from .views import (
 )
 
 router = DefaultRouter()
+# See facilities/urls.py — the DRF API root at "/api/" is not published.
+router.include_root_view = False
 router.register("reservations", ReservationViewSet, basename="reservation")
 
 urlpatterns = router.urls + [

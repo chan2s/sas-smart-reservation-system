@@ -8,6 +8,7 @@ import {
   MessageSquareWarning,
   Search,
   Users,
+  WifiOff,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import {
@@ -55,6 +56,7 @@ import {
   type WizardDraft,
 } from '@/lib/reservationDraft'
 import { useAuth } from '@/hooks/useAuth'
+import { useOffline } from '@/hooks/useOffline'
 import { OrganizationStatusNotice } from '@/components/organizations/OrganizationStatusNotice'
 import { cn, formatDateTime, formatTime } from '@/lib/utils'
 import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
@@ -283,6 +285,10 @@ export function ReservationWizardPage() {
   }, [resources])
 
   const availabilityCheck = useAvailabilityCheck()
+  // Availability, conflicts and submission are computed by Django: none of
+  // them can be answered from the local backup. While the backend is
+  // unreachable the wizard refuses to continue or submit.
+  const { online } = useOffline()
   const createReservation = useCreateReservation()
   const resubmitReservation = useResubmitReservation(editingId)
 
@@ -626,6 +632,17 @@ export function ReservationWizardPage() {
   }
 
   const availabilityOk = availabilityStatus === 'AVAILABLE'
+
+  /**
+   * Availability wording. The backend is the only authority for availability,
+   * so an unreachable API is reported as such instead of the generic retry
+   * message — the user must not read a failed check as "nothing is holding
+   * these slots".
+   */
+  const availabilityMessage =
+    availabilityStatus === 'ERROR' && !online
+      ? "You're offline — availability must be checked online. Nothing was changed."
+      : AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
   const scheduleStepIndex = steps.findIndex((item) => item.key === 'schedule')
 
   // Once the step is valid again, an old "complete these fields" banner is
@@ -669,7 +686,7 @@ export function ReservationWizardPage() {
     ? user?.reservation_block_reason ||
       'Your organization must be approved before you can reserve a facility.'
     : availabilityRequired && !availabilityOk
-      ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
+      ? availabilityMessage
       : stepKey === 'details' && missingDetails.length > 0
         ? `Complete these fields: ${missingDetails.join(', ')}.`
         : stepKey === 'facility' && facilityId == null
@@ -722,7 +739,7 @@ export function ReservationWizardPage() {
       return
     }
     if (stepKey === 'schedule' && !availabilityOk) {
-      setStepError(AVAILABILITY_STATUS_MESSAGE[availabilityStatus])
+      setStepError(availabilityMessage)
       return
     }
     if (stepKey === 'details' && missingDetails.length > 0) {
@@ -732,7 +749,7 @@ export function ReservationWizardPage() {
       return
     }
     if (stepKey === 'details' && !availabilityOk) {
-      setStepError(AVAILABILITY_STATUS_MESSAGE[availabilityStatus])
+      setStepError(availabilityMessage)
       return
     }
     setStepError(null)
@@ -762,6 +779,14 @@ export function ReservationWizardPage() {
     // returns 409, but never send a request for a configuration that has not
     // passed the current availability check.
     if (!canSubmit || facilityId == null || missingDetails.length > 0) return
+    // Never attempt a submission without a reachable backend: a queued request
+    // could be replayed later and appear to succeed out of context.
+    if (!online) {
+      setStepError(
+        "You're offline — a reservation cannot be submitted without a connection. Nothing was sent.",
+      )
+      return
+    }
     const draft: WizardDraft = {
       facilityId,
       dateISO,
@@ -1138,6 +1163,18 @@ export function ReservationWizardPage() {
        */}
       <div className="sticky bottom-[calc(4rem_+_env(safe-area-inset-bottom))] z-10 -mx-4 mt-6 border-t border-line bg-soft px-4 py-4 sm:-mx-6 sm:px-6 lg:bottom-0 lg:-mx-10 lg:px-10">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
+          {!online && (
+            <p
+              role="status"
+              className="flex items-start gap-2 rounded-lg border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-body"
+            >
+              <WifiOff className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span>
+                You&apos;re offline. Availability and submission require the SAS RESERVE
+                server — nothing you do here is sent, and no reservation is created.
+              </span>
+            </p>
+          )}
           {stepError && (
             <p
               role="alert"
@@ -1176,15 +1213,18 @@ export function ReservationWizardPage() {
                 loading={createReservation.isPending || resubmitReservation.isPending}
                 disabled={
                   canSubmit === false ||
+                  !online ||
                   createReservation.isPending ||
                   resubmitReservation.isPending
                 }
                 title={
-                  !canProceed
-                    ? user?.reservation_block_reason
-                    : !availabilityOk
-                      ? AVAILABILITY_STATUS_MESSAGE[availabilityStatus]
-                      : undefined
+                  !online
+                    ? "You're offline — a reservation cannot be submitted without a connection."
+                    : !canProceed
+                      ? user?.reservation_block_reason
+                      : !availabilityOk
+                        ? availabilityMessage
+                        : undefined
                 }
               >
                 {isEditing

@@ -1,6 +1,8 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import { OfflineBanner } from '@/components/offline/OfflineBanner'
+import { PwaNotices } from '@/components/pwa/PwaNotices'
 import { useAuth } from '@/hooks/useAuth'
 import { Spinner } from '@/components/ui/Misc'
 
@@ -87,6 +89,9 @@ const AffiliationPage = lazy(() =>
     default: module.AffiliationPage,
   })),
 )
+const OfflinePage = lazy(() =>
+  import('@/pages/offline/OfflinePage').then((module) => ({ default: module.OfflinePage })),
+)
 
 function PageLoader() {
   return (
@@ -127,6 +132,15 @@ function RequireStaff({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <Suspense fallback={<PageLoader />}>
+      {/*
+       * Connectivity banner and the install/update notices are rendered ONCE
+       * here, for every route — including the public landing/login pages, which
+       * are exactly where a visitor notices an outage (they cannot sign in) and
+       * where a first-time install happens. Rendering them per-shell instead
+       * would duplicate them across route changes and miss those pages.
+       */}
+      <OfflineBanner />
+      <PwaNotices />
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
@@ -134,6 +148,8 @@ export default function App() {
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          {/* Read-only local backup view — reachable offline. */}
+          <Route path="/offline" element={<OfflinePage />} />
           {/* Affiliation completion — reachable at any time from the profile. */}
           <Route path="/onboarding/affiliation" element={<AffiliationPage />} />
           <Route path="/facilities" element={<FacilitiesPage />} />

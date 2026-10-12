@@ -78,7 +78,7 @@ export interface WizardDraft {
   /** The administrator's outstanding change request, shown at the top. */
   changeRequest?: { message: string; by: string; at: string } | null
   /** Requester context of the reservation being edited (display/pricing only). */
-  editRequesterType?: RequesterType
+  editRequesterType?: RequesterType | null
   /** Organization snapshot of the reservation being edited (display only). */
   editOrganization?: string
 }

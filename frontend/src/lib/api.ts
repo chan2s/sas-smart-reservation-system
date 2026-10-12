@@ -41,6 +41,8 @@ import type {
   VerificationStatus,
 } from './types'
 
+import { OfflineError, isMutationAllowed } from './offline/connectivity'
+
 const ACCESS_KEY = 'sas_access'
 const REFRESH_KEY = 'sas_refresh'
 
@@ -79,6 +81,9 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
     }
     if (error.message) return error.message
   }
+  // Surface transport/offline errors (OfflineError, fetch failures) instead of
+  // a generic fallback, so the user understands why an action did not run.
+  if (error instanceof Error && error.message) return error.message
   return fallback
 }
 
@@ -131,6 +136,14 @@ async function request<T>(
   }
   const access = tokenStore.access
   if (access) headers.set('Authorization', `Bearer ${access}`)
+
+  // Offline safety: a write must never be attempted (and definitely never
+  // queued for silent replay) while the backend is unreachable. Django stays
+  // the only authority for reservations, approvals, availability and check-in.
+  const method = (options.method ?? 'GET').toUpperCase()
+  if (method !== 'GET' && method !== 'HEAD' && !isMutationAllowed()) {
+    throw new OfflineError()
+  }
 
   const response = await fetch(path, { ...options, headers })
 
