@@ -23,10 +23,10 @@ export const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   // It is never auto-linked; the user must sign in with their own credentials.
   email_registered:
     'An account with this email already exists. Please log in with your existing credentials instead.',
-  // The account was deactivated by an administrator. Signing in never
-  // reactivates it, so the user must ask the SAS office to restore access.
-  account_deactivated:
-    'This account has been deactivated. Please contact the SAS Office to restore access.',
+  // NOTE: `account_deactivated` is deliberately absent. The login page turns
+  // that OAuth code (and the password login 403) into the dedicated
+  // DeactivatedAccountModal, so the message is rendered as a modal from a
+  // single source — never as inline copy here, and never duplicated.
 }
 
 /**

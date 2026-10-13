@@ -2,10 +2,11 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, isDeactivatedAccountError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Form'
 import { AuthVisualPanel, BackHomeLink, BrandMark } from '@/components/auth/AuthPanel'
+import { DeactivatedAccountModal } from '@/components/auth/DeactivatedAccountModal'
 import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import { GOOGLE_ERROR_MESSAGES, GOOGLE_LOGIN_REDIRECT_CODES } from '@/lib/googleAuth'
@@ -31,16 +32,32 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
+  // A refused sign-in because an administrator deactivated the account. This
+  // is an account-status condition, not a credentials mistake, so it gets a
+  // dedicated modal and never the inline credential error.
+  const [deactivated, setDeactivated] = useState(false)
 
   // OAuth failures come back as /login?google_error=… (see backend callback).
+  // The deactivated-account code opens the modal instead; every other code
+  // keeps its existing inline notice.
   useEffect(() => {
     const googleError = searchParams.get('google_error')
-    if (googleError) {
+    if (googleError === 'account_deactivated') {
+      setDeactivated(true)
+      setError('')
+    } else if (googleError) {
+      setDeactivated(false)
       setError(GOOGLE_ERROR_MESSAGES[googleError] ?? 'Google sign-in failed. Please try again.')
     } else {
       setError('')
     }
   }, [searchParams])
+
+  /** Dismiss the modal; scrub the OAuth error param so a retry starts clean. */
+  function dismissDeactivated() {
+    setDeactivated(false)
+    if (searchParams.get('google_error')) navigate('/login', { replace: true })
+  }
 
   if (user) return <Navigate to="/dashboard" replace />
 
@@ -52,6 +69,12 @@ export function LoginPage() {
       await login(username.trim(), password)
       navigate('/dashboard', { replace: true })
     } catch (err) {
+      // The backend only returns this condition when the submitted
+      // credentials were actually correct, so the modal leaks nothing.
+      if (isDeactivatedAccountError(err)) {
+        setDeactivated(true)
+        return
+      }
       setError(
         err instanceof ApiError
           ? err.message
@@ -201,6 +224,10 @@ export function LoginPage() {
           </div>
         </div>
       </main>
+
+      {/* Deactivated account — shown for the password 403 and for the
+          OAuth callback redirect (?google_error=account_deactivated). */}
+      <DeactivatedAccountModal open={deactivated} onClose={dismissDeactivated} />
 
       {/* Public assistant — public knowledge only until the visitor signs in. */}
       <ChatWidget />

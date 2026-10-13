@@ -240,12 +240,41 @@ class DeactivatedAccountAccessTests(_BaseManagementTest):
         self.requester.is_active = False
         self.requester.save(update_fields=["is_active"])
         response = APIClient().post(
-            LOGIN_URL, {"username": "req", "password": PASSWORD}
+            LOGIN_URL, {"username": "req", "password": PASSWORD}, format="json"
         )
-        self.assertIn(response.status_code, (400, 401))
+        # Correct credentials + deactivated account: a distinct 403 so the SPA
+        # can show the dedicated deactivated-account modal.
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "account_deactivated")
+        self.assertEqual(
+            response.data["detail"],
+            "This account has been deactivated. Please contact the SAS Office "
+            "to restore access.",
+        )
         self.assertNotIn("access", response.data)
         # No session artifact is written for a refused sign-in.
         self.assertEqual(LoginActivity.objects.filter(user=self.requester).count(), 0)
+
+    def test_wrong_password_for_deactivated_account_stays_generic(self):
+        # The deactivated response must not become a username oracle: a wrong
+        # password is indistinguishable from any other bad credential.
+        self.requester.is_active = False
+        self.requester.save(update_fields=["is_active"])
+        response = APIClient().post(
+            LOGIN_URL, {"username": "req", "password": "wrong-pass!"}, format="json"
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("code", response.data)
+        self.assertNotIn("access", response.data)
+
+    def test_unknown_username_stays_generic(self):
+        self.requester.is_active = False
+        self.requester.save(update_fields=["is_active"])
+        response = APIClient().post(
+            LOGIN_URL, {"username": "who-is-this", "password": PASSWORD}, format="json"
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("code", response.data)
 
     def test_existing_access_token_stops_working_after_deactivation(self):
         login = APIClient().post(LOGIN_URL, {"username": "req", "password": PASSWORD})
@@ -273,8 +302,10 @@ class DeactivatedAccountAccessTests(_BaseManagementTest):
 
         _set_status(self.admin_client, self.requester, False)
         self.assertEqual(
-            APIClient().post(LOGIN_URL, {"username": "req", "password": PASSWORD}).status_code,
-            401,
+            APIClient()
+            .post(LOGIN_URL, {"username": "req", "password": PASSWORD}, format="json")
+            .status_code,
+            403,
         )
 
         _set_status(self.admin_client, self.requester, True)

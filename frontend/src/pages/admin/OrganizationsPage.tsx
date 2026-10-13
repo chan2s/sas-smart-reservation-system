@@ -20,6 +20,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Input, Textarea } from '@/components/ui/Form'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import {
   VERIFICATION_LABEL,
@@ -63,6 +64,10 @@ export function OrganizationsPage() {
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
+  // Verification decision awaiting confirmation (reject / suspend). Approve
+  // and reactivate grant access, so they run directly without a dialog.
+  const [pendingAction, setPendingAction] =
+    useState<OrganizationVerificationAction | null>(null)
 
   const isInternalScope = scope === 'INTERNAL'
   const filters: OrganizationFilters = {
@@ -92,6 +97,18 @@ export function OrganizationsPage() {
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Unable to update the organization.', 'error')
     }
+  }
+
+  /**
+   * Confirmed reject/suspend. Unlike `decide`, errors are rethrown so the
+   * confirmation dialog keeps its context and shows the failure inline.
+   */
+  async function confirmPendingAction() {
+    if (pendingAction == null || selectedId == null) return
+    const action = pendingAction
+    await verify.mutateAsync({ id: selectedId, action, notes: notes.trim() })
+    toast(`Organization ${ACTION_PAST[action]}.`)
+    setNotes('')
   }
 
   const organization = detail.data ?? null
@@ -420,7 +437,7 @@ export function OrganizationsPage() {
                         size="sm"
                         variant="secondary"
                         loading={verify.isPending}
-                        onClick={() => decide('suspend')}
+                        onClick={() => setPendingAction('suspend')}
                         icon={<ShieldOff className="size-4" />}
                       >
                         Deactivate
@@ -455,7 +472,7 @@ export function OrganizationsPage() {
                         size="sm"
                         variant="secondary"
                         loading={verify.isPending}
-                        onClick={() => decide('reject')}
+                        onClick={() => setPendingAction('reject')}
                         icon={<X className="size-4" />}
                       >
                         Reject
@@ -466,7 +483,7 @@ export function OrganizationsPage() {
                         size="sm"
                         variant="secondary"
                         loading={verify.isPending}
-                        onClick={() => decide('suspend')}
+                        onClick={() => setPendingAction('suspend')}
                         icon={<ShieldOff className="size-4" />}
                       >
                         Suspend
@@ -479,6 +496,47 @@ export function OrganizationsPage() {
           )}
         </div>
       </div>
+
+      {/* Reject / suspend require an explicit confirmation; the dialog shows
+          the decision's consequences and keeps any review notes intact. */}
+      <ConfirmDialog
+        open={pendingAction !== null}
+        onClose={() => setPendingAction(null)}
+        title={
+          pendingAction === 'suspend'
+            ? isInternalScope
+              ? 'Deactivate organization?'
+              : 'Suspend organization?'
+            : 'Reject registration?'
+        }
+        description={
+          pendingAction === 'suspend'
+            ? isInternalScope
+              ? 'The organization is hidden from registration and its members can no longer submit reservations. Its record, members, and history are kept, and it can be reactivated at any time.'
+              : 'Members cannot submit facility reservations while it is suspended. The organization record, its members, and its history are kept, and it can be reactivated at any time.'
+            : 'The organization will be marked Rejected and its members cannot submit facility reservations. Its record and review notes are kept, and it can still be approved later if the decision changes.'
+        }
+        recordName={
+          organization
+            ? organization.display_name ?? organization.organization_name
+            : undefined
+        }
+        tone={pendingAction === 'suspend' ? 'warning' : 'danger'}
+        confirmLabel={
+          pendingAction === 'suspend'
+            ? isInternalScope
+              ? 'Deactivate organization'
+              : 'Suspend organization'
+            : 'Reject registration'
+        }
+        onConfirm={confirmPendingAction}
+      >
+        {notes.trim() && (
+          <p className="text-[13px] text-muted">
+            Your review notes will be recorded in the audit log.
+          </p>
+        )}
+      </ConfirmDialog>
     </div>
   )
 }

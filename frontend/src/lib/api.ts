@@ -91,6 +91,23 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+/**
+ * True when the login endpoint refused the request because the account is
+ * deactivated — correct credentials, but an administrator cleared
+ * `is_active` (the 403 body carries `code: "account_deactivated"`, see
+ * `LoginSerializer`). Bad credentials return a generic 401 and never match,
+ * so the SPA can safely show the dedicated modal for this condition alone.
+ */
+export function isDeactivatedAccountError(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 403) return false
+  const data = error.data
+  return (
+    !!data &&
+    typeof data === 'object' &&
+    (data as Record<string, unknown>).code === 'account_deactivated'
+  )
+}
+
 export const tokenStore = {
   get access() {
     return localStorage.getItem(ACCESS_KEY)

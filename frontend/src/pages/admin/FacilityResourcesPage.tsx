@@ -23,6 +23,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Input, Select } from '@/components/ui/Form'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { Backdrop } from '@/components/decor/Backdrop'
 import { formatCurrency } from '@/lib/utils'
@@ -62,6 +63,9 @@ export function FacilityResourcesPage() {
   const removeAssignment = useDeleteFacilityResource()
 
   const [editingId, setEditingId] = useState<number | null>(null)
+  // Assignment awaiting removal confirmation — nothing is deleted until the
+  // dialog's confirm button resolves the request.
+  const [pendingRemove, setPendingRemove] = useState<FacilityResource | null>(null)
 
   const assignedByEquipment = useMemo(() => {
     const map = new Map<number, FacilityResource>()
@@ -95,13 +99,10 @@ export function FacilityResourcesPage() {
   }
 
   async function remove(resource: FacilityResource) {
-    try {
-      await removeAssignment.mutateAsync(resource.id)
-      if (editingId === resource.id) setEditingId(null)
-      toast(`${resource.name} removed from this facility.`)
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not remove the resource.', 'error')
-    }
+    // Called only by the confirmation dialog's confirm button.
+    await removeAssignment.mutateAsync(resource.id)
+    if (editingId === resource.id) setEditingId(null)
+    toast(`${resource.name} removed from this facility.`)
   }
 
   const loading = facility.isLoading || assignments.isLoading || equipment.isLoading
@@ -198,7 +199,7 @@ export function FacilityResourcesPage() {
                         variant="ghost"
                         size="sm"
                         icon={<Trash2 className="size-3.5" />}
-                        onClick={() => remove(resource)}
+                        onClick={() => setPendingRemove(resource)}
                       >
                         Remove
                       </Button>
@@ -277,6 +278,20 @@ export function FacilityResourcesPage() {
           )}
         </Card>
       </div>
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        onClose={() => setPendingRemove(null)}
+        title="Remove resource?"
+        description="This unassigns the equipment from this facility, so requesters can no longer select it here. The equipment record itself is not deleted, and it can be assigned back to this facility at any time."
+        recordName={pendingRemove?.name}
+        tone="warning"
+        confirmLabel="Remove resource"
+        onConfirm={async () => {
+          if (!pendingRemove) return
+          await remove(pendingRemove)
+        }}
+      />
     </div>
   )
 }

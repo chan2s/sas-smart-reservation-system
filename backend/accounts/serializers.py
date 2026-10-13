@@ -1,11 +1,38 @@
 from django.contrib.auth import get_user_model
-from rest_framework import serializers
+from rest_framework import exceptions, serializers, status
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .login_activity import record_password_login
 from .models import AuditLog, LoginActivity, Organization
 
 User = get_user_model()
+
+
+#: Shown to a person whose credentials were *correct* but whose account an
+#: administrator has deactivated. The exact copy is part of the API contract:
+#: the SPA's deactivated-account modal (DeactivatedAccountModal) renders the
+#: same sentence, so the two must stay in sync.
+DEACTIVATED_LOGIN_MESSAGE = (
+    "This account has been deactivated. Please contact the SAS Office to "
+    "restore access."
+)
+
+
+class DeactivatedAccountAuthenticationFailed(exceptions.AuthenticationFailed):
+    """403 refusal for a correct password on a deactivated account.
+
+    The body is a dict on purpose: DRF renders a dict ``detail`` verbatim, so
+    the response carries both the human message and a machine-readable
+    ``code: "account_deactivated"`` the SPA can key the modal on. Bad
+    credentials never raise this — they keep simplejwt's generic 401, so the
+    endpoint still never reveals which usernames exist.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = {
+        "detail": DEACTIVATED_LOGIN_MESSAGE,
+        "code": "account_deactivated",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -416,10 +443,26 @@ class LoginSerializer(TokenObtainPairSerializer):
     A valid username/password authenticates the account immediately — the
     token pair is issued in this single step, with no second verification
     factor and no ``mfa_required`` challenge.
+
+    A *deactivated* account is refused distinctly: because the credential
+    check itself succeeded, the response is a 403 whose body carries
+    ``code: "account_deactivated"`` so the SPA can show the dedicated
+    deactivated-account modal. Wrong usernames/passwords keep simplejwt's
+    generic "no active account" 401 — the endpoint must never confirm which
+    usernames exist.
     """
 
     def validate(self, attrs):
-        data = super().validate(attrs)
+        try:
+            data = super().validate(attrs)
+        except exceptions.AuthenticationFailed:
+            # ModelBackend folds "inactive" into the same None it returns for
+            # bad credentials, so simplejwt raised its generic error. Re-check
+            # the credentials quietly: only a correct password for an existing
+            # inactive account is upgraded to the explicit deactivation
+            # refusal; everything else re-raises it untouched.
+            self._raise_if_deactivated_account(attrs)
+            raise
         request = self.context.get("request") if self.context else None
         # Successful credential sign-in — recorded server-side.
         record_password_login(self.user, request)
@@ -432,6 +475,23 @@ class LoginSerializer(TokenObtainPairSerializer):
         )
         data["user"] = UserSerializer(self.user).data
         return data
+
+    def _raise_if_deactivated_account(self, attrs):
+        username = (attrs.get(self.username_field) or "").strip()
+        password = attrs.get("password") or ""
+        if not username or not password:
+            return
+        # Same case-insensitive natural-key lookup ModelBackend performs, so
+        # the upgrade triggers exactly when its credential check passed.
+        candidate = User.objects.filter(
+            **{f"{self.username_field}__iexact": username}
+        ).first()
+        if (
+            candidate is not None
+            and not candidate.is_active
+            and candidate.check_password(password)
+        ):
+            raise DeactivatedAccountAuthenticationFailed()
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
