@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
@@ -11,7 +11,7 @@ import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import { GOOGLE_ERROR_MESSAGES, GOOGLE_LOGIN_REDIRECT_CODES } from '@/lib/googleAuth'
 
 export function LoginPage() {
-  const { user, login, verifyTwoFactorLogin } = useAuth()
+  const { user, login } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -25,11 +25,8 @@ export function LoginPage() {
   const googleErrorCode = searchParams.get('google_error') ?? ''
   const accountNoticeCode = GOOGLE_LOGIN_REDIRECT_CODES.has(googleErrorCode)
 
-  const [step, setStep] = useState<'credentials' | 'twofa'>('credentials')
-  const [mfaToken, setMfaToken] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [totpCode, setTotpCode] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -43,11 +40,6 @@ export function LoginPage() {
     } else {
       setError('')
     }
-    if (searchParams.get('social') === '2fa') {
-      setError(
-        'This account uses two-factor authentication. Sign in with your password to continue.',
-      )
-    }
   }, [searchParams])
 
   if (user) return <Navigate to="/dashboard" replace />
@@ -57,24 +49,9 @@ export function LoginPage() {
     setError('')
     setSubmitting(true)
     try {
-      if (step === 'twofa') {
-        await verifyTwoFactorLogin(mfaToken, totpCode.trim())
-        navigate('/dashboard', { replace: true })
-        return
-      }
       await login(username.trim(), password)
       navigate('/dashboard', { replace: true })
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        const mfaToken = (err as ApiError & { mfaToken?: string }).mfaToken
-        if (mfaToken) {
-          // Credentials were valid — the account requires a TOTP code.
-          setMfaToken(mfaToken)
-          setStep('twofa')
-          setTotpCode('')
-          return
-        }
-      }
       setError(
         err instanceof ApiError
           ? err.message
@@ -118,16 +95,14 @@ export function LoginPage() {
         <div className="flex flex-1 items-center justify-center py-10">
           <div className="w-full max-w-[420px]">
             <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
-              {step === 'credentials' ? 'Welcome back' : 'Two-factor verification'}
+              Welcome back
             </h1>
             <p className="mt-2.5 text-[15px] leading-relaxed text-body">
-              {step === 'credentials'
-                ? 'Sign in to manage your reservations, facilities, and resources.'
-                : 'Enter the 6-digit verification code from your authenticator app.'}
+              Sign in to manage your reservations, facilities, and resources.
             </p>
 
             <div className="mt-9">
-              {registeredExternal && step === 'credentials' && (
+              {registeredExternal && (
                 <div
                   role="status"
                   className="mb-6 flex items-start gap-2.5 rounded-xl border border-status-available/30 bg-status-available-bg px-3.5 py-3 text-[13px] text-status-available"
@@ -142,7 +117,7 @@ export function LoginPage() {
                 </div>
               )}
 
-              {step === 'credentials' && accountNoticeCode ? (
+              {accountNoticeCode ? (
                 <div
                   role="alert"
                   className="rounded-xl border border-status-pending/25 bg-status-pending-bg px-4 py-4"
@@ -156,7 +131,7 @@ export function LoginPage() {
                     Go to Login
                   </button>
                 </div>
-              ) : step === 'credentials' ? (
+              ) : (
                 <>
                   <GoogleAuthButton onClick={handleGoogle} loading={googleLoading} />
 
@@ -214,67 +189,6 @@ export function LoginPage() {
                     <Button type="submit" loading={submitting} className="w-full" size="lg">
                       Sign in
                     </Button>
-                  </form>
-                </>
-              ) : (
-                <>
-                  <div className="flex size-11 items-center justify-center rounded-xl bg-brand-soft text-brand">
-                    <KeyRound className="size-5" aria-hidden />
-                  </div>
-
-                  <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-                    <Field label="Verification code" htmlFor="totp">
-                      <Input
-                        id="totp"
-                        name="totp"
-                        inputMode="text"
-                        autoComplete="one-time-code"
-                        placeholder="000000"
-                        maxLength={11}
-                        value={totpCode}
-                        onChange={(event) => setTotpCode(event.target.value.toUpperCase())}
-                        required
-                        autoFocus
-                        className="text-center text-lg tracking-[0.4em]"
-                      />
-                    </Field>
-
-                    {error && (
-                      <p
-                        role="alert"
-                        className="rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected"
-                      >
-                        {error}
-                      </p>
-                    )}
-
-                    <Button type="submit" loading={submitting} className="w-full" size="lg">
-                      Verify
-                    </Button>
-
-                    <button
-                      type="button"
-                      className="w-full text-center text-xs font-medium text-muted transition-colors hover:text-ink"
-                      onClick={() => {
-                        // The same field accepts single-use backup codes.
-                        setError('')
-                        setTotpCode('')
-                      }}
-                    >
-                      Tip: you can enter a backup code here
-                    </button>
-
-                    <button
-                      type="button"
-                      className="w-full text-center text-xs font-medium text-brand transition-colors hover:text-brand-dark"
-                      onClick={() => {
-                        setStep('credentials')
-                        setTotpCode('')
-                        setError('')
-                      }}
-                    >
-                      Back to sign in
-                    </button>
                   </form>
                 </>
               )}

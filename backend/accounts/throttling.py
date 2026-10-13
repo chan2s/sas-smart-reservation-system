@@ -9,7 +9,6 @@ Stricter, endpoint-specific scopes protect abuse-prone operations:
 * ``auth_register``   — 5/minute per IP
 * ``auth_refresh``    — 30/minute per IP
 * ``google_start``    — 10/minute per IP (OAuth entry)
-* ``2fa_verify``      — 5 per 10 minutes per IP (2FA login challenges)
 
 Implementation notes:
 * DRF's cache-based throttles use the configured Django cache. Set
@@ -23,7 +22,7 @@ Implementation notes:
 * Throttled responses are uniform JSON (429) and never expose internals.
 """
 
-from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle, UserRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 
 def throttled_exception_handler(exc, context):
@@ -69,30 +68,5 @@ class GoogleStartThrottle(AnonRateThrottle):
     """OAuth consent entry — 10/minute per IP."""
 
     scope = "google_start"
-
-
-class TwoFactorVerifyThrottle(SimpleRateThrottle):
-    """2FA login-code attempts — 5 per 10 minutes per IP."""
-
-    scope = "2fa_verify"
-    rate = "5/600s"  # set directly; DRF only parses single-char periods
-    duration = 600
-    num_requests = 5
-
-    def __init__(self):
-        # Bypass parse_rate entirely — fixed duration/num_requests above.
-        super().__init__()
-
-    def get_rate(self):
-        return self.rate
-
-    def parse_rate(self, rate):
-        return self.num_requests, self.duration
-
-    def get_cache_key(self, request, view):
-        return self.cache_format % {
-            "scope": self.scope,
-            "ident": self.get_ident(request),
-        }
 
 

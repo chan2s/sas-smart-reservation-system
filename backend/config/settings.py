@@ -68,8 +68,6 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
-    "django_otp",
-    "django_otp.plugins.otp_totp",
 
     # Local apps
     "accounts",
@@ -228,8 +226,6 @@ REST_FRAMEWORK = {
         "auth_register": "5/min",
         "auth_refresh": "30/min",
         "google_start": "10/min",
-        # DRF periods are single-char: s/m/h/d — 10 min = 600 s.
-        "2fa_verify": "5/600s",
         # Chatbot Q&A — modest per-user limit; visitors are IP-limited
         # because the endpoint also serves the public landing/login pages.
         "chatbot": "30/min",
@@ -311,13 +307,6 @@ ACCOUNT_RATE_LIMITS = {
 SOCIALACCOUNT_EMAIL_REQUIRED = True
 
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
-
-
-# ---------------------------------------------------------------------------
-# django-otp
-# ---------------------------------------------------------------------------
-
-OTP_TOTP_ISSUER = "SAS RESERVE"
 
 
 # ---------------------------------------------------------------------------

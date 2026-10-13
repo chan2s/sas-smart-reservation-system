@@ -844,6 +844,64 @@ export interface CampusUserOption {
 }
 
 // ---------------------------------------------------------------------------
+// Administrator user management + login activity
+// ---------------------------------------------------------------------------
+
+/** One registered account, as listed in the administrator user table. */
+export interface AdminUser {
+  id: number
+  username: string
+  first_name: string
+  last_name: string
+  display_name: string
+  email: string
+  role: Role
+  role_label: string
+  affiliation: Affiliation | ''
+  affiliation_label: string
+  organization_ref: Organization | null
+  is_active: boolean
+  is_staff: boolean
+  is_superuser: boolean
+  date_joined: string
+  last_login: string | null
+  /** True when the backend refuses deletion (superuser or the current admin). */
+  is_protected: boolean
+}
+
+/**
+ * Result of an administrator deactivating or reactivating an account.
+ * `user` is the updated row, so the caller never has to guess the new status.
+ */
+export interface AdminUserStatusResult {
+  detail: string
+  user: AdminUser
+}
+
+/** How an account authenticated. */
+export type LoginMethod = 'PASSWORD' | 'GOOGLE'
+
+/** Outcome of the recorded sign-in (only successes are stored). */
+export type LoginStatus = 'SUCCESS' | 'FAILED'
+
+/** One login event in the administrator login-activity table. */
+export interface LoginActivity {
+  id: number
+  /** Null once the account has been deleted; identity fields are snapshotted. */
+  user: number | null
+  user_name: string
+  email: string
+  role: Role | ''
+  role_label: string
+  method: LoginMethod
+  method_label: string
+  status: LoginStatus
+  status_label: string
+  ip_address: string | null
+  created_at: string
+}
+
+// ---------------------------------------------------------------------------
 // Public (unauthenticated) API types
 // ---------------------------------------------------------------------------
 

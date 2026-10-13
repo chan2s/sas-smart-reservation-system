@@ -25,6 +25,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from accounts.login_activity import record_google_login
 from accounts.models import AuditLog
 from accounts.serializers import UserSerializer
 
@@ -367,6 +368,9 @@ def google_callback(request):
     #   * A password-less account (one originally created through Google) may
     #     adopt the identity on sign-in: the Google-verified email is the only
     #     credential it ever had, so its owner keeps access.
+    #   * A deactivated account (is_active=False) is refused with no state
+    #     change: Google sign-in never reactivates an account, and the refusal
+    #     happens before any identity is re-linked or last-login updated.
     from django.contrib.auth import get_user_model
     from django.utils import timezone
     from allauth.socialaccount.models import SocialAccount
@@ -412,6 +416,18 @@ def google_callback(request):
                 return frontend_error("email_registered", "/login")
 
     if user is not None:
+        # A deactivated account cannot sign in through Google — and signing in
+        # must NEVER bring it back to life. Reactivating is an explicit
+        # administrator action (accounts.management_views.AdminUserStatusView);
+        # role, password, reservations, and the social link all stay exactly
+        # as they are, so the sign-in is refused before anything is touched.
+        if not user.is_active:
+            logger.warning(
+                "Google OAuth: deactivated account attempted sign-in (user_id=%s).",
+                user.pk,
+            )
+            return frontend_error("account_deactivated", "/login")
+
         # Existing account: associate (or refresh) the Google identity.
         if social_account is None:
             social_account = _link_google_identity(user, sub, userinfo)
@@ -448,20 +464,9 @@ def google_callback(request):
             request=request,
         )
 
-    # 6. Two-factor gate: social sign-in must never bypass TOTP. A brand-new
-    #    account has no device, so this only affects an existing account.
-    from django_otp.plugins.otp_totp.models import TOTPDevice
-
-    if TOTPDevice.objects.filter(user=user, confirmed=True).exists():
-        logger.info(
-            "Google OAuth: 2FA-gated account sign-in refused (user_id=%s).",
-            user.pk,
-        )
-        return frontend_error("twofa_required")
-
-    # 7. Audit and issue first-party JWTs — no Google tokens reach the
-    #    browser. A new account continues to onboarding (affiliation) via the
-    #    SPA callback page.
+    # 6. Audit, record the login activity, and issue first-party JWTs — no
+    #    Google tokens reach the browser. A new account continues to
+    #    onboarding (affiliation) via the SPA callback page.
     AuditLog.record(
         user,
         AuditLog.Action.LOGIN,
@@ -469,6 +474,7 @@ def google_callback(request):
         object_repr="Google sign-in",
         request=request,
     )
+    record_google_login(user, request)
 
     refresh = RefreshToken.for_user(user)
 

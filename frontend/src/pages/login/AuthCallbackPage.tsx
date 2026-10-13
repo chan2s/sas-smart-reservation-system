@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { CalendarDays } from 'lucide-react'
 import { Spinner } from '@/components/ui/Misc'
 import { useAuth } from '@/hooks/useAuth'
+import { needsAffiliationOnboarding } from '@/lib/utils'
 
 /**
  * Landing point of the Google OAuth flow. The backend redirects here with
@@ -15,7 +16,9 @@ import { useAuth } from '@/hooks/useAuth'
  * Authentication is unchanged: this page only decides WHERE to send an
  * already-authenticated user. Accounts that have never chosen an affiliation
  * are sent to the affiliation step first — signing in still works exactly as
- * before for everyone else.
+ * before for everyone else. Administrator accounts are exempt from that
+ * requirement (see `needsAffiliationOnboarding`), so they always land on the
+ * dashboard.
  */
 export function AuthCallbackPage() {
   const navigate = useNavigate()
@@ -26,10 +29,12 @@ export function AuthCallbackPage() {
     if (!loading && user) {
       // Both roles use /dashboard; the dashboard renders role-scoped content.
       // Staff see additional Analytics nav (see components/layout/navigation.ts).
-      // A first-time Google account has no affiliation yet — ask for it once.
-      navigate(user.has_affiliation ? '/dashboard' : '/onboarding/affiliation', {
-        replace: true,
-      })
+      // A first-time Google account has no affiliation yet — ask for it once,
+      // unless it is an administrator, who is never required to complete it.
+      navigate(
+        needsAffiliationOnboarding(user) ? '/onboarding/affiliation' : '/dashboard',
+        { replace: true },
+      )
     }
   }, [loading, user, navigate])
 

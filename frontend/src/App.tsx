@@ -79,6 +79,16 @@ const OrganizationsPage = lazy(() =>
     default: module.OrganizationsPage,
   })),
 )
+const UserManagementPage = lazy(() =>
+  import('@/pages/admin/UserManagementPage').then((module) => ({
+    default: module.UserManagementPage,
+  })),
+)
+const LoginActivityPage = lazy(() =>
+  import('@/pages/admin/LoginActivityPage').then((module) => ({
+    default: module.LoginActivityPage,
+  })),
+)
 const FacilityResourcesPage = lazy(() =>
   import('@/pages/admin/FacilityResourcesPage').then((module) => ({
     default: module.FacilityResourcesPage,
@@ -126,6 +136,25 @@ function RequireStaff({ children }: { children: ReactNode }) {
   }
   if (!user) return <Navigate to="/login" replace />
   if (!isStaff) return <Navigate to="/dashboard" replace />
+  return children
+}
+
+/**
+ * Administrator-only guard for user management and login activity. Mirrors the
+ * backend's ``IsAdmin`` permission — SAS staff are redirected just like any
+ * other non-administrator, so hiding the nav is never the only protection.
+ */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-soft">
+        <Spinner />
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'ADMIN') return <Navigate to="/dashboard" replace />
   return children
 }
 
@@ -182,6 +211,23 @@ export default function App() {
               <RequireStaff>
                 <OrganizationsPage />
               </RequireStaff>
+            }
+          />
+          {/* Administrator-only user management + login activity. */}
+          <Route
+            path="/admin/users"
+            element={
+              <RequireAdmin>
+                <UserManagementPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/admin/login-activity"
+            element={
+              <RequireAdmin>
+                <LoginActivityPage />
+              </RequireAdmin>
             }
           />
         </Route>

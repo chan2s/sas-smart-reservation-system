@@ -1,4 +1,6 @@
 import type {
+  AdminUser,
+  AdminUserStatusResult,
   Affiliation,
   AvailabilityCheck,
   CalendarEvent,
@@ -20,6 +22,7 @@ import type {
   FacilityResourcePayload,
   Insights,
   InternalOrganization,
+  LoginActivity,
   MaintenanceRecord,
   MyAffiliation,
   Notification,
@@ -35,6 +38,7 @@ import type {
   ReservationDetail,
   ReservationStatus,
   ReservationSummary,
+  Role,
   TrendPoint,
   User,
   Utilization,
@@ -224,28 +228,11 @@ export const api = {
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 
   // Auth ---------------------------------------------------------------
+  /** Email/username + password sign-in: authenticates in a single step. */
   login: async (username: string, password: string) => {
-    const data = await request<
-      | { access: string; refresh: string; user: User }
-      | { mfa_required: true; mfa_token: string }
-    >('/api/auth/login/', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }, false)
-    if ('mfa_required' in data && data.mfa_required) {
-      const error = new ApiError(401, 'Two-factor authentication required.', data)
-      // Attach the challenge so callers can continue the login.
-      ;(error as ApiError & { mfaToken?: string }).mfaToken = data.mfa_token
-      throw error
-    }
-    const tokens = data as { access: string; refresh: string; user: User }
-    tokenStore.set(tokens.access, tokens.refresh)
-    return tokens.user
-  },
-  verifyTwoFactorLogin: async (mfaToken: string, code: string) => {
     const data = await request<{ access: string; refresh: string; user: User }>(
-      '/api/auth/2fa/verify-login/',
-      { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) },
+      '/api/auth/login/',
+      { method: 'POST', body: JSON.stringify({ username, password }) },
       false,
     )
     tokenStore.set(data.access, data.refresh)
@@ -273,27 +260,6 @@ export const api = {
       `/api/auth/google/start/${qs ? `?${qs}` : ''}`,
     )
   },
-  twoFactorStatus: () =>
-    api.get<{ enabled: boolean; backup_codes_remaining: number }>(
-      '/api/auth/2fa/status/',
-    ),
-  twoFactorSetup: () =>
-    api.post<{
-      secret: string
-      otpauth_url: string
-      qr_png_data_url: string
-    }>('/api/auth/2fa/setup/'),
-  twoFactorVerify: (code: string) =>
-    api.post<{ enabled: boolean; backup_codes: string[] }>('/api/auth/2fa/verify/', {
-      code,
-    }),
-  twoFactorDisable: (password: string, code?: string) =>
-    api.post<{ enabled: boolean }>('/api/auth/2fa/disable/', {
-      password,
-      code: code ?? '',
-    }),
-  twoFactorBackupCodes: (code: string) =>
-    api.post<{ backup_codes: string[] }>('/api/auth/2fa/backup-codes/', { code }),
   auditLog: (params: { action?: string; search?: string; page?: number } = {}) => {
     const qs = new URLSearchParams()
     if (params.action) qs.set('action', params.action)
@@ -305,6 +271,48 @@ export const api = {
       num_pages: number
       results: AuditLogEntry[]
     }>(`/api/auth/audit-log/${suffix}`)
+  },
+  /** Administrator user management (list + delete). */
+  adminUsers: (
+    params: { search?: string; role?: Role; is_active?: string; page?: number } = {},
+  ) => {
+    const qs = new URLSearchParams()
+    if (params.search) qs.set('search', params.search)
+    if (params.role) qs.set('role', params.role)
+    if (params.is_active) qs.set('is_active', params.is_active)
+    if (params.page) qs.set('page', String(params.page))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return api.get<Paginated<AdminUser>>(`/api/auth/users/${suffix}`)
+  },
+  deleteUser: (id: number) => api.delete<void>(`/api/auth/users/${id}/`),
+  /**
+   * Activate or deactivate an account. Deactivation only clears the backend's
+   * `is_active` flag — nothing is deleted and the change is reversible.
+   */
+  setUserStatus: (id: number, isActive: boolean) =>
+    api.post<AdminUserStatusResult>(`/api/auth/users/${id}/status/`, {
+      is_active: isActive,
+    }),
+  /** Administrator login activity (successful sign-ins, newest first). */
+  loginActivity: (
+    params: {
+      search?: string
+      user?: number
+      method?: string
+      date_from?: string
+      date_to?: string
+      page?: number
+    } = {},
+  ) => {
+    const qs = new URLSearchParams()
+    if (params.search) qs.set('search', params.search)
+    if (params.user) qs.set('user', String(params.user))
+    if (params.method) qs.set('method', params.method)
+    if (params.date_from) qs.set('date_from', params.date_from)
+    if (params.date_to) qs.set('date_to', params.date_to)
+    if (params.page) qs.set('page', String(params.page))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return api.get<Paginated<LoginActivity>>(`/api/auth/login-activity/${suffix}`)
   },
   register: (payload: Record<string, unknown>) =>
     api.post<User>('/api/auth/register/', payload),

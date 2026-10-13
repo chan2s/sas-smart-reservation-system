@@ -45,7 +45,7 @@ describe('API rule', () => {
       '/api/',
       '/api/auth/login/',
       '/api/auth/refresh/',
-      '/api/auth/2fa/verify-login/',
+      '/api/auth/login-activity/',
       '/api/reservations/',
       '/api/reservations/12/approve/',
       '/api/reservations/checkin/abc/',

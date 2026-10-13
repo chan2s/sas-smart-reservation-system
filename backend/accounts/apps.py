@@ -35,3 +35,6 @@ class AccountsConfig(AppConfig):
     def ready(self):
         # Register the security check on app initialization.
         from . import apps as _apps  # noqa: F401 — decorator runs at import
+        # Import the login-activity module so its ``user_logged_in`` receiver
+        # is connected. The JWT sign-in paths call the recorder explicitly.
+        from . import login_activity  # noqa: F401 — connects the signal

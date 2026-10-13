@@ -10,8 +10,8 @@ and adds two behaviors:
 These tests drive the real start + callback endpoints with Google mocked,
 covering: signed-intent handling, new-account creation, existing-account
 redirect to login, no duplicate accounts, no insecure email-based linking,
-denied consent / provider errors, unverified email, the 2FA no-bypass rule,
-and external-organization approval (which Google never bypasses).
+denied consent / provider errors, unverified email, and
+external-organization approval (which Google never bypasses).
 """
 
 from unittest import mock
@@ -21,7 +21,6 @@ from allauth.socialaccount.models import SocialAccount
 from django.core.signing import TimestampSigner
 from django.test import override_settings
 from django.urls import reverse
-from django_otp.plugins.otp_totp.models import TOTPDevice
 from rest_framework.test import APIClient, APITestCase
 
 from .models import Organization, User
@@ -288,18 +287,6 @@ class GoogleRegistrationFlowTests(APITestCase):
         )
         self.assertIn("google_error=identity_failed", response.url)
         self.assertFalse(User.objects.filter(email=EMAIL).exists())
-
-    def test_2fa_account_cannot_bypass_totp(self):
-        # A Google-associated account with 2FA enabled must not be signed in
-        # by social login.
-        _callback(self.client, _start(self.client))  # create + associate
-        user = User.objects.get(email=EMAIL)
-        TOTPDevice.objects.create(user=user, name="Authenticator", confirmed=True)
-
-        response = _callback(self.client, _start(self.client))
-        self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
-        self.assertIn("google_error=twofa_required", response.url)
-        self.assertNotIn("access=", response.url)
 
 
 class GoogleRegistrationApprovalTests(APITestCase):

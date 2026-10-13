@@ -6,18 +6,18 @@ from rest_framework.views import APIView
 from accounts.permissions import IsSasStaff
 
 from . import oauth_views, organization_views
+from .management_views import (
+    AdminUserDeleteView,
+    AdminUserListView,
+    AdminUserStatusView,
+    LoginActivityListView,
+)
 from .models import AuditLog
 from .views import (
     LoginView,
     MeView,
     RefreshView,
     RegisterView,
-    TwoFactorBackupCodesView,
-    TwoFactorDisableView,
-    TwoFactorSetupView,
-    TwoFactorStatusView,
-    TwoFactorVerifyLoginView,
-    TwoFactorVerifyView,
 )
 
 app_name = "accounts"
@@ -93,14 +93,6 @@ urlpatterns = [
     path("google/start/", oauth_views.google_start, name="google-start"),
     path("google/callback/", oauth_views.google_callback, name="google-callback"),
 
-    # Two-factor authentication (TOTP).
-    path("2fa/status/", TwoFactorStatusView.as_view(), name="twofa-status"),
-    path("2fa/setup/", TwoFactorSetupView.as_view(), name="twofa-setup"),
-    path("2fa/verify/", TwoFactorVerifyView.as_view(), name="twofa-verify"),
-    path("2fa/disable/", TwoFactorDisableView.as_view(), name="twofa-disable"),
-    path("2fa/verify-login/", TwoFactorVerifyLoginView.as_view(), name="twofa-verify-login"),
-    path("2fa/backup-codes/", TwoFactorBackupCodesView.as_view(), name="twofa-backup-codes"),
-
     # Affiliation + external organizations (layered on top of the existing
     # authentication — never a replacement for it).
     path(
@@ -130,4 +122,20 @@ urlpatterns = [
     ),
 
     path("audit-log/", AuditLogView.as_view(), name="audit-log"),
+
+    # Administrator user management (view / deactivate / reactivate / delete).
+    path("users/", AdminUserListView.as_view(), name="user-list"),
+    path("users/<int:pk>/", AdminUserDeleteView.as_view(), name="user-detail"),
+    path(
+        "users/<int:pk>/status/",
+        AdminUserStatusView.as_view(),
+        name="user-status",
+    ),
+
+    # Administrator login activity (successful sign-ins, newest first).
+    path(
+        "login-activity/",
+        LoginActivityListView.as_view(),
+        name="login-activity",
+    ),
 ]

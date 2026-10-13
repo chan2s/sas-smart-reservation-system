@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ArrowRight, IdCard, X } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { needsAffiliationOnboarding } from '@/lib/utils'
 
 /**
  * A dismissible nudge for accounts that have never chosen an affiliation.
@@ -9,13 +10,18 @@ import { useAuth } from '@/hooks/useAuth'
  * Deliberately non-blocking: existing NORSU users keep working exactly as
  * before (a blank affiliation is treated as a campus user everywhere), so
  * this only invites them to complete the profile — it never gates access.
+ *
+ * Administrators are exempt (they administer the system rather than reserve
+ * under a campus identity), and nothing is shown while the session is still
+ * loading — see `needsAffiliationOnboarding`.
  */
 export function AffiliationPrompt() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const location = useLocation()
   const [dismissed, setDismissed] = useState(false)
 
-  if (!user || user.has_affiliation || dismissed) return null
+  // Never prompt before the role/profile is known, or for administrators.
+  if (loading || !needsAffiliationOnboarding(user) || dismissed) return null
   // The affiliation page itself has the full form — don't nag on top of it.
   if (location.pathname.startsWith('/onboarding/affiliation')) return null
 

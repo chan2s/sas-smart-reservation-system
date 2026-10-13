@@ -17,8 +17,10 @@ const ACTION_GROUPS: { label: string; actions: { value: string; label: string }[
     label: 'Authentication',
     actions: [
       { value: 'LOGIN', label: 'Logins' },
-      { value: 'LOGIN_2FA', label: '2FA logins' },
       { value: 'REGISTER', label: 'Registrations' },
+      { value: 'USER_DELETED', label: 'User deletions' },
+      { value: 'USER_DEACTIVATED', label: 'User deactivations' },
+      { value: 'USER_REACTIVATED', label: 'User reactivations' },
     ],
   },
   {
@@ -51,8 +53,10 @@ const ACTION_GROUPS: { label: string; actions: { value: string; label: string }[
 
 const TONE_BY_ACTION: Record<string, string> = {
   LOGIN: 'bg-status-available-bg text-status-available',
-  LOGIN_2FA: 'bg-status-available-bg text-status-available',
   REGISTER: 'bg-brand-soft text-brand',
+  USER_DELETED: 'bg-status-rejected-bg text-status-rejected',
+  USER_DEACTIVATED: 'bg-status-pending-bg text-status-pending',
+  USER_REACTIVATED: 'bg-status-available-bg text-status-available',
   RESERVATION_APPROVED: 'bg-status-available-bg text-status-available',
   RESERVATION_REJECTED: 'bg-status-rejected-bg text-status-rejected',
   RESERVATION_CANCELLED: 'bg-softer text-muted',

@@ -2,8 +2,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import AuditLog, Organization
-from . import twofa
+from .login_activity import record_password_login
+from .models import AuditLog, LoginActivity, Organization
 
 User = get_user_model()
 
@@ -413,24 +413,104 @@ class RegisterSerializer(serializers.ModelSerializer):
 class LoginSerializer(TokenObtainPairSerializer):
     """JWT login that also returns the authenticated user profile.
 
-    Two-factor handling: when the account has a confirmed TOTP device the
-    response contains ``mfa_required`` + a short-lived ``mfa_token`` and NO
-    tokens — the SPA must complete ``/api/auth/2fa/verify-login/`` before it
-    is authenticated.
+    A valid username/password authenticates the account immediately — the
+    token pair is issued in this single step, with no second verification
+    factor and no ``mfa_required`` challenge.
     """
 
     def validate(self, attrs):
         data = super().validate(attrs)
-        if twofa.has_2fa(self.user):
-            return {
-                "mfa_required": True,
-                "mfa_token": twofa.issue_challenge(self.user),
-            }
+        request = self.context.get("request") if self.context else None
+        # Successful credential sign-in — recorded server-side.
+        record_password_login(self.user, request)
         AuditLog.record(
             self.user,
             AuditLog.Action.LOGIN,
             object_type="auth",
             object_repr="Password sign-in",
+            request=request,
         )
         data["user"] = UserSerializer(self.user).data
         return data
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """Row shape for the administrator user-management table.
+
+    Exposes only what the management screen needs; never credentials or
+    authentication secrets. ``is_protected`` marks accounts the API refuses to
+    delete (superusers and the caller's own account) so the UI can disable the
+    action instead of relying on a failed request.
+    """
+
+    display_name = serializers.CharField(read_only=True)
+    role_label = serializers.CharField(source="get_role_display", read_only=True)
+    affiliation_label = serializers.CharField(
+        source="get_affiliation_display", read_only=True
+    )
+    organization_ref = OrganizationBriefSerializer(read_only=True)
+    is_protected = serializers.SerializerMethodField()
+    last_login = serializers.DateTimeField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "display_name",
+            "email",
+            "role",
+            "role_label",
+            "affiliation",
+            "affiliation_label",
+            "organization_ref",
+            "is_active",
+            "is_staff",
+            "is_superuser",
+            "date_joined",
+            "last_login",
+            "is_protected",
+        )
+
+    def get_is_protected(self, obj) -> bool:
+        """True when deletion is blocked: a superuser, or the caller itself."""
+        request = self.context.get("request") if self.context else None
+        caller = getattr(request, "user", None)
+        if caller is not None and caller.pk == obj.pk:
+            return True
+        return bool(obj.is_superuser)
+
+
+class LoginActivitySerializer(serializers.ModelSerializer):
+    """Administrator-facing login activity row.
+
+    Denormalized identity fields are returned as stored (they survive account
+    deletion). No token, password, or OTP data exists on the model, so none
+    can leak here.
+    """
+
+    method_label = serializers.CharField(source="get_method_display", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    role_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LoginActivity
+        fields = (
+            "id",
+            "user",
+            "user_name",
+            "email",
+            "role",
+            "role_label",
+            "method",
+            "method_label",
+            "status",
+            "status_label",
+            "ip_address",
+            "created_at",
+        )
+
+    def get_role_label(self, obj) -> str:
+        return dict(User.Role.choices).get(obj.role, obj.role)

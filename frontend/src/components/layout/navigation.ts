@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import {
+  Activity,
   BadgeCheck,
   BarChart3,
   Building2,
@@ -10,6 +11,7 @@ import {
   LifeBuoy,
   Package,
   Settings,
+  Users,
 } from 'lucide-react'
 
 /**
@@ -60,4 +62,13 @@ export const secondaryNavigation: NavigationItem[] = [
 /** Staff-only surfaces, appended to the user menu for administrators. */
 export const staffNavigation: NavigationItem[] = [
   { to: '/audit-log', label: 'Audit log', icon: History },
+]
+
+/**
+ * Administrator-only surfaces. Rendered only for ``role === 'ADMIN'`` accounts
+ * (the same rule the backend APIs enforce); SAS staff never see them.
+ */
+export const adminNavigation: NavigationItem[] = [
+  { to: '/admin/users', label: 'User management', icon: Users },
+  { to: '/admin/login-activity', label: 'Login activity', icon: Activity },
 ]

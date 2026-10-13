@@ -1,8 +1,29 @@
 import { format, parseISO } from 'date-fns'
-import type { Equipment, Facility, ReservationStatus } from './types'
+import type { Equipment, Facility, ReservationStatus, User } from './types'
 
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ')
+}
+
+/**
+ * Whether an authenticated account still needs to complete NORSU affiliation
+ * onboarding.
+ *
+ * Administrator accounts are exempt: they administer the system rather than
+ * reserve under a campus identity, so they must never be treated as an
+ * unfinished regular user. The decision reuses the established role field
+ * (never a display name, email, or hardcoded id) and is shared by every place
+ * that decides whether to show the prompt or route to the affiliation step.
+ *
+ * `null` (no signed-in user yet) is never "needs onboarding", so nothing is
+ * prompted while authentication or profile data is still loading.
+ */
+export function needsAffiliationOnboarding(
+  user: Pick<User, 'role' | 'has_affiliation'> | null | undefined,
+): boolean {
+  if (!user) return false
+  if (user.role === 'ADMIN') return false
+  return !user.has_affiliation
 }
 
 /**

@@ -1,10 +1,6 @@
-import secrets
-
 from django.conf import settings
-from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser
 from django.db import IntegrityError, models, transaction
-from django.utils import timezone
 
 
 class Organization(models.Model):
@@ -440,7 +436,6 @@ class AuditLog(models.Model):
 
     class Action(models.TextChoices):
         LOGIN = "LOGIN", "Logged in"
-        LOGIN_2FA = "LOGIN_2FA", "Logged in with 2FA"
         LOGOUT = "LOGOUT", "Logged out"
         REGISTER = "REGISTER", "Registered"
         GOOGLE_FIRST_ACCOUNT = "GOOGLE_FIRST_ACCOUNT", "Google account created"
@@ -475,6 +470,9 @@ class AuditLog(models.Model):
         ORGANIZATION_REJECTED = "ORGANIZATION_REJECTED", "Organization rejected"
         ORGANIZATION_SUSPENDED = "ORGANIZATION_SUSPENDED", "Organization suspended"
         ORGANIZATION_REACTIVATED = "ORGANIZATION_REACTIVATED", "Organization reactivated"
+        USER_DELETED = "USER_DELETED", "User account deleted"
+        USER_DEACTIVATED = "USER_DEACTIVATED", "User account deactivated"
+        USER_REACTIVATED = "USER_REACTIVATED", "User account reactivated"
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -523,60 +521,64 @@ class AuditLog(models.Model):
             return None
 
 
-class TwoFactorBackupCode(models.Model):
-    """Single-use TOTP recovery codes.
+class LoginActivity(models.Model):
+    """One successful sign-in event, for the administrator audit view.
 
-    Only the hash of each code is stored (same hashers as passwords), so a
-    database leak does not expose usable codes. Codes are shown in plaintext
-    exactly once — when generated. A used code is stamped and can never be
-    reused.
+    Deliberately denormalized: ``user_name`` / ``email`` / ``role`` snapshot
+    the account at sign-in time and the ``user`` FK is ``SET_NULL``, so the
+    login history survives the account being deleted later. Never stores
+    passwords, OTP secrets, tokens, or any other credential — only the fact
+    that a sign-in happened, how, and when.
+
+    ``created_at`` is a timezone-aware server timestamp (``USE_TZ`` is on), so
+    the API renders it consistently in the project's configured timezone.
     """
+
+    class Method(models.TextChoices):
+        PASSWORD = "PASSWORD", "Email/Password"
+        GOOGLE = "GOOGLE", "Google OAuth"
+
+    class Status(models.TextChoices):
+        SUCCESS = "SUCCESS", "Successful"
+        FAILED = "FAILED", "Failed"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="backup_codes",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="login_activities",
+        help_text="Account that signed in; null once the account is deleted.",
     )
-    code_hash = models.CharField(max_length=200)
-    used_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    user_name = models.CharField(max_length=120, blank=True)
+    email = models.EmailField(blank=True)
+    role = models.CharField(max_length=16, blank=True)
+    method = models.CharField(
+        max_length=16, choices=Method.choices, db_index=True
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.SUCCESS,
+        db_index=True,
+    )
+    # Standard audit-trail metadata. PII-adjacent but shown only to
+    # administrators; never returned to ordinary users.
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
+        verbose_name = "login activity"
+        verbose_name_plural = "login activity"
+        indexes = [
+            # Common administrator filters/sorts: per-user history, by method,
+            # and by outcome — each newest-first.
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["method", "-created_at"]),
+            models.Index(fields=["status", "-created_at"]),
+        ]
 
-    def __str__(self) -> str:  # pragma: no cover — debug convenience only
-        return f"backup code for {self.user_id} ({'used' if self.used_at else 'unused'})"
-
-    # ------------------------------------------------------------------
-
-    CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no ambiguous I/1/O/0
-
-    @classmethod
-    def generate(cls, user, count: int = 10) -> list[str]:
-        """Replace all codes for the user and return the plaintext batch."""
-        cls.objects.filter(user=user).delete()
-        codes = []
-        for _ in range(count):
-            raw = "".join(secrets.choice(cls.CODE_CHARS) for _ in range(10))
-            codes.append(f"{raw[:5]}-{raw[5:]}")
-            cls.objects.create(user=user, code_hash=make_password(raw))
-        return codes
-
-    @classmethod
-    def verify(cls, user, code: str) -> bool:
-        """Check a backup code; consume it atomically when valid."""
-        normalized = (code or "").strip().replace("-", "").upper()
-        if not normalized:
-            return False
-        for entry in cls.objects.filter(user=user, used_at__isnull=True):
-            if check_password(normalized, entry.code_hash):
-                # Re-check used_at inside the update to avoid double-use races.
-                updated = cls.objects.filter(
-                    pk=entry.pk, used_at__isnull=True
-                ).update(used_at=timezone.now())
-                return bool(updated)
-        return False
-
-    @classmethod
-    def remaining(cls, user) -> int:
-        return cls.objects.filter(user=user, used_at__isnull=True).count()
+    def __str__(self) -> str:
+        actor = self.user_name or self.email or "Unknown user"
+        return f"{actor} — {self.get_method_display()} — {self.created_at:%Y-%m-%d %H:%M}"

@@ -21,8 +21,6 @@ interface AuthContextValue {
   user: User | null
   loading: boolean
   login: (username: string, password: string) => Promise<User>
-  /** Completes a 2FA-challenged login with a TOTP or backup code. */
-  verifyTwoFactorLogin: (mfaToken: string, code: string) => Promise<User>
   logout: () => void
   updateUser: (user: User) => void
   isStaff: boolean
@@ -80,12 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user
   }, [])
 
-  const verifyTwoFactorLogin = useCallback(async (mfaToken: string, code: string) => {
-    const user = await api.verifyTwoFactorLogin(mfaToken, code)
-    setUser(user)
-    return user
-  }, [])
-
   const logout = useCallback(() => {
     tokenStore.clear()
     // Security boundary: never leave one account's cached data on a shared
@@ -102,7 +94,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         loading,
         login,
-        verifyTwoFactorLogin,
         logout,
         updateUser,
         isStaff: user?.role === 'ADMIN' || user?.role === 'STAFF',

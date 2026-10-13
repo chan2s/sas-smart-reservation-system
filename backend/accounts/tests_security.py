@@ -1,9 +1,8 @@
 """Security tests: Google OAuth hardening, JWT protection, rate limiting.
 
 Covers the required security model:
-* the Google callback issues JWTs directly — no email OTP step exists
+* the Google callback issues JWTs directly — no OTP step exists
 * every callback error path redirects to the SPA, never leaks internals
-* Google sign-in never bypasses TOTP-protected accounts
 * global API throttles (anon/user) and sensitive-endpoint throttles
 """
 
@@ -217,34 +216,14 @@ class ThrottlingTests(APITestCase):
         self.assertIn(429, statuses)
         cache.clear()
 
-    def test_2fa_verify_login_throttle(self):
-        from django.core.cache import cache
-
-        client = APIClient()
-        statuses = []
-        for _ in range(7):
-            statuses.append(
-                client.post(
-                    "/api/auth/2fa/verify-login/",
-                    {"mfa_token": "bogus", "code": "000000"},
-                ).status_code
-            )
-        self.assertIn(429, statuses)
-        cache.clear()
-
     def test_throttled_response_is_uniform_json(self):
         from django.core.cache import cache
 
         client = APIClient()
+        credentials = {"username": "nobody", "password": "wrongpass"}
         for _ in range(7):
-            client.post(
-                "/api/auth/2fa/verify-login/",
-                {"mfa_token": "bogus", "code": "000000"},
-            )
-        last = client.post(
-            "/api/auth/2fa/verify-login/",
-            {"mfa_token": "bogus", "code": "000000"},
-        )
+            client.post("/api/auth/login/", credentials)
+        last = client.post("/api/auth/login/", credentials)
         self.assertEqual(last.status_code, 429)
         self.assertEqual(
             last.data.get("detail"), "Too many requests. Please try again later."

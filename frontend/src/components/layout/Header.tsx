@@ -15,6 +15,7 @@ import { Avatar } from '@/components/ui/Misc'
 import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
 import { cn } from '@/lib/utils'
 import {
+  adminNavigation,
   primaryNavigation,
   primaryNavigationFor,
   secondaryNavigation,
@@ -83,6 +84,7 @@ function HeaderActions() {
   const { user, logout, isStaff } = useAuth()
   const { data: unread } = useUnreadCount()
   const navigate = useNavigate()
+  const isAdmin = user?.role === 'ADMIN'
 
   return (
     <div className="flex items-center gap-1.5 justify-self-end">
@@ -197,6 +199,16 @@ function HeaderActions() {
                 ))}
               </>
             )}
+            {isAdmin && (
+              <>
+                {adminNavigation.map((item) => (
+                  <MenuItem key={item.to} onClick={() => { close(); navigate(item.to) }}>
+                    <item.icon className="size-4" />
+                    {item.label}
+                  </MenuItem>
+                ))}
+              </>
+            )}
             <div className="my-1 h-px bg-line" aria-hidden />
             <MenuItem onClick={() => { close(); navigate('/notifications') }}>
               <Bell className="size-4" />
@@ -225,7 +237,8 @@ function HeaderActions() {
 // ---------------------------------------------------------------------------
 
 function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { isStaff } = useAuth()
+  const { user, isStaff } = useAuth()
+  const isAdmin = user?.role === 'ADMIN'
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
@@ -294,6 +307,36 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
               {item.label}
             </NavLink>
           ))}
+          {isStaff && (
+            <>
+              {staffNavigation.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={onClose}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-body transition-colors duration-150 hover:bg-soft hover:text-ink"
+                >
+                  <item.icon className="size-[18px]" aria-hidden />
+                  {item.label}
+                </NavLink>
+              ))}
+            </>
+          )}
+          {isAdmin && (
+            <>
+              {adminNavigation.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={onClose}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-body transition-colors duration-150 hover:bg-soft hover:text-ink"
+                >
+                  <item.icon className="size-[18px]" aria-hidden />
+                  {item.label}
+                </NavLink>
+              ))}
+            </>
+          )}
         </nav>
       </div>
     </div>
