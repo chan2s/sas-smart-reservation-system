@@ -24,6 +24,12 @@ interface AuthContextValue {
   logout: () => void
   updateUser: (user: User) => void
   isStaff: boolean
+  /**
+   * True while the signed-in account has not been approved by an
+   * administrator: the interface must hide/disable every state-changing
+   * action. Backend enforcement is authoritative — this only shapes the UI.
+   */
+  isViewOnly: boolean
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -97,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         updateUser,
         isStaff: user?.role === 'ADMIN' || user?.role === 'STAFF',
+        isViewOnly: user?.is_view_only ?? false,
       }}
     >
       {children}

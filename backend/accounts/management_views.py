@@ -18,7 +18,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 
 from .models import AuditLog, LoginActivity
-from .permissions import IsAdmin
+from .permissions import IsAccountApprovedOrReadOnly, IsAdmin
 from .serializers import AdminUserSerializer, LoginActivitySerializer
 
 # Read the swapped-in user model directly so the queries below stay readable.
@@ -92,9 +92,21 @@ def status_block_reason(target, caller, *, activating: bool) -> str:
 
 
 class _AdminOnlyMixin:
-    """Authenticated *and* administrator."""
+    """Authenticated *and* administrator.
 
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    ``IsAccountApprovedOrReadOnly`` sits on top so the global view-only policy
+    covers administrative mutations too: an *active* administrator is always
+    approved, so every legitimate admin action (approval, deactivation,
+    deletion, login-activity review) is unchanged, while a deactivated admin
+    account is limited to view-only reads exactly like any other pending
+    account.
+    """
+
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdmin,
+        IsAccountApprovedOrReadOnly,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -195,9 +207,13 @@ class AdminUserStatusView(_AdminOnlyMixin, generics.GenericAPIView):
     membership, password, Google link, reservations, and historical records
     are all preserved, and an administrator can reactivate it later.
 
-    An inactive account can no longer authenticate (email/password or Google)
-    and any token it already holds is rejected by ``accounts.jwt`` — the flag
-    is the single source of truth for access, not the UI.
+    The flag is the single source of truth for *approval*, not the UI. A
+    deactivated (not-approved) account may still sign in — with email/password
+    or Google — but is limited to view-only access: reads are allowed, while
+    every state-changing request is refused with 403 ``account_not_approved``
+    by ``accounts.permissions.IsAccountApprovedOrReadOnly``. Approving it again
+    (this endpoint with ``is_active: true``) restores full access on the very
+    next request.
 
     Responses: 200 with the updated row, 400 for an invalid payload or a
     refused status change, 401 anonymous, 403 not an administrator, 404 no

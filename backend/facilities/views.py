@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.models import AuditLog
-from accounts.permissions import IsSasStaffOrReadOnly
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaffOrReadOnly
 
 from equipment.models import FacilityResource
 from equipment.serializers import FacilityResourceSerializer
@@ -24,7 +24,7 @@ class FacilityViewSet(viewsets.ModelViewSet):
         Facility.objects.prefetch_related("operating_hours", "images").all()
     )
     serializer_class = FacilitySerializer
-    permission_classes = [IsSasStaffOrReadOnly]
+    permission_classes = [IsSasStaffOrReadOnly, IsAccountApprovedOrReadOnly]
     pagination_class = None
     search_fields = ("name", "location", "description")
     filterset_fields = ("facility_type", "status", "is_active")

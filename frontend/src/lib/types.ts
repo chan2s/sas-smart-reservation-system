@@ -154,6 +154,14 @@ export interface User {
   has_affiliation: boolean
   can_create_reservations: boolean
   reservation_block_reason: string
+  /**
+   * Account approval (view-only policy). `is_approved` is the authoritative
+   * server-side condition (the existing `is_active` flag); `is_view_only` is
+   * its inverse and drives the pending-approval notice and hidden actions.
+   * Distinct from `organization_verification_status`.
+   */
+  is_approved: boolean
+  is_view_only: boolean
 }
 
 export type FacilityStatus = 'OPERATIONAL' | 'MAINTENANCE'
@@ -861,6 +869,8 @@ export interface AdminUser {
   affiliation_label: string
   organization_ref: Organization | null
   is_active: boolean
+  /** Account approval (the existing is_active flag) — drives view-only mode. */
+  is_approved: boolean
   is_staff: boolean
   is_superuser: boolean
   date_joined: string

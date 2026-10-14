@@ -50,7 +50,7 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
 ]
 
 export function EquipmentPage() {
-  const { isStaff } = useAuth()
+  const { isStaff, isViewOnly } = useAuth()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
@@ -131,7 +131,7 @@ export function EquipmentPage() {
         title="Equipment"
         description="Manage and monitor all equipment and resources available for reservation."
         actions={
-          isStaff ? (
+          isStaff && !isViewOnly ? (
             <Button icon={<Plus className="size-4" />} onClick={openAdd}>
               Add Equipment
             </Button>
@@ -227,7 +227,7 @@ export function EquipmentPage() {
                   : 'Equipment will appear here once SAS adds it to the inventory.'
             }
             action={
-              isStaff && !(search || categoryFilter || statusFilter !== 'ALL') ? (
+              isStaff && !isViewOnly && !(search || categoryFilter || statusFilter !== 'ALL') ? (
                 <Button size="sm" icon={<Plus className="size-4" />} onClick={openAdd}>
                   Add Equipment
                 </Button>
@@ -254,7 +254,7 @@ export function EquipmentPage() {
                   <EquipmentTableRow
                     key={item.id}
                     item={item}
-                    isStaff={isStaff}
+                    isStaff={isStaff && !isViewOnly}
                     onEdit={() => openEdit(item)}
                     onMaintenance={() => setMaintaining(item)}
                     onRemove={() => setRemoving(item)}
@@ -275,7 +275,7 @@ export function EquipmentPage() {
                 <EquipmentMobileRow
                   key={item.id}
                   item={item}
-                  isStaff={isStaff}
+                  isStaff={isStaff && !isViewOnly}
                   onEdit={() => openEdit(item)}
                   onMaintenance={() => setMaintaining(item)}
                   onRemove={() => setRemoving(item)}

@@ -50,7 +50,7 @@ export function EquipmentDetailPage() {
   const { id } = useParams()
   const equipmentId = Number(id)
   const { toast } = useToast()
-  const { isStaff } = useAuth()
+  const { isStaff, isViewOnly } = useAuth()
   const { data: item, isLoading } = useEquipmentItem(equipmentId)
   const { data: history } = useEquipmentHistory(equipmentId)
   const { data: categories } = useEquipmentCategories()
@@ -191,7 +191,7 @@ export function EquipmentDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {isStaff && (
+          {isStaff && !isViewOnly && (
             <>
               <Button
                 variant="outline"
@@ -232,14 +232,16 @@ export function EquipmentDetailPage() {
               )}
             </>
           )}
-          <Button
-            icon={
-              myReport ? <Pencil className="size-4" /> : <TriangleAlert className="size-4" />
-            }
-            onClick={openIssueModal}
-          >
-            {myReport ? 'Edit my report' : 'Report an issue'}
-          </Button>
+          {!isViewOnly && (
+            <Button
+              icon={
+                myReport ? <Pencil className="size-4" /> : <TriangleAlert className="size-4" />
+              }
+              onClick={openIssueModal}
+            >
+              {myReport ? 'Edit my report' : 'Report an issue'}
+            </Button>
+          )}
         </div>
       </div>
 

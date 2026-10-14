@@ -29,7 +29,7 @@ export function ReservationDetailPage() {
   const { id } = useParams()
   const reservationId = Number(id)
   const navigate = useNavigate()
-  const { user, isStaff } = useAuth()
+  const { user, isStaff, isViewOnly } = useAuth()
   const { toast } = useToast()
   const { data: reservation, isLoading } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
@@ -99,13 +99,15 @@ export function ReservationDetailPage() {
     }
   }
 
-  const canApprove = isStaff && reservation.status === 'PENDING'
-  const canReject = isStaff && reservation.status === 'PENDING'
-  const canRequestChanges = isStaff && reservation.status === 'PENDING'
+  const canApprove = !isViewOnly && isStaff && reservation.status === 'PENDING'
+  const canReject = !isViewOnly && isStaff && reservation.status === 'PENDING'
+  const canRequestChanges =
+    !isViewOnly && isStaff && reservation.status === 'PENDING'
   // Cancellation visibility is decided by the BACKEND: can_cancel is evaluated
   // by the existing policy in services.workflow — the same source of truth the
   // cancel endpoint enforces. It is never recomputed or trusted from the client.
-  const canCancel = reservation.can_cancel
+  // View-only accounts may read this page but cannot cancel or check in/out.
+  const canCancel = reservation.can_cancel && !isViewOnly
   // When the user manages this reservation but the policy blocks cancellation
   // (e.g. the 2-day cancellation window), show the backend's reason instead of
   // an active button. Terminal statuses just show their status badge.
@@ -117,8 +119,10 @@ export function ReservationDetailPage() {
       'Cancellation is no longer available for this reservation.'
       : null
   const canCheckIn =
-    (isOwner || isStaff) && ['APPROVED', 'ACTIVE'].includes(reservation.status)
-  const canCheckOut = isStaff && reservation.status === 'ACTIVE'
+    !isViewOnly &&
+    (isOwner || isStaff) &&
+    ['APPROVED', 'ACTIVE'].includes(reservation.status)
+  const canCheckOut = !isViewOnly && isStaff && reservation.status === 'ACTIVE'
 
   /**
    * Rebook / request a new schedule: seed the reservation wizard from this
@@ -289,7 +293,7 @@ export function ReservationDetailPage() {
               </p>
             </div>
           </div>
-          {(isOwner || isStaff) && (
+          {(isOwner || isStaff) && !isViewOnly && (
             <Button className="shrink-0" onClick={startRebook}>
               {isStaff ? 'Rebook Reservation' : 'Request New Schedule'}
             </Button>

@@ -5,9 +5,12 @@ Covers the acceptance criteria for administrator-managed account status:
 * an administrator can deactivate an active account and reactivate it later;
 * the list reports the status and can filter on it (with search, role, and
   pagination);
-* a deactivated account cannot sign in with email/password or through Google,
-  and Google sign-in never reactivates it;
-* tokens issued before deactivation stop working (access and refresh);
+* the existing ``is_active`` flag is the account-approval condition: a
+  deactivated (not-approved) account can still sign in — with email/password
+  or through Google — but receives only view-only access. It may READ, and is
+  refused (403 ``account_not_approved``) for every state-changing request,
+  including with a JWT issued before deactivation. Google sign-in never
+  reactivates it.
 * non-administrators are refused, and self / superuser / last-superuser
   safeguards hold;
 * nothing is deleted or reset: role, password, organization, reservations,
@@ -62,6 +65,20 @@ def _make_reservation(requester) -> Reservation:
         date=date(2026, 9, 14),
         start_time=time(9, 0),
         end_time=time(11, 0),
+    )
+
+
+def _make_google_user(email: str, *, is_active: bool = True) -> User:
+    """Create an existing, registered account reachable through Google.
+
+    The callback never creates accounts any more, so tests start with the
+    account registration would have produced: password-less, plain requester,
+    optional approval state. The real callback then links the identity.
+    """
+    return User.objects.create_user(
+        username=f"google_{email.split('@')[0]}",
+        email=email,
+        is_active=is_active,
     )
 
 
@@ -236,24 +253,20 @@ class DeactivationGuardTests(_BaseManagementTest):
 
 
 class DeactivatedAccountAccessTests(_BaseManagementTest):
-    def test_inactive_user_cannot_log_in_with_password(self):
+    def test_inactive_user_signs_in_with_view_only_access(self):
         self.requester.is_active = False
         self.requester.save(update_fields=["is_active"])
         response = APIClient().post(
             LOGIN_URL, {"username": "req", "password": PASSWORD}, format="json"
         )
-        # Correct credentials + deactivated account: a distinct 403 so the SPA
-        # can show the dedicated deactivated-account modal.
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["code"], "account_deactivated")
-        self.assertEqual(
-            response.data["detail"],
-            "This account has been deactivated. Please contact the SAS Office "
-            "to restore access.",
-        )
-        self.assertNotIn("access", response.data)
-        # No session artifact is written for a refused sign-in.
-        self.assertEqual(LoginActivity.objects.filter(user=self.requester).count(), 0)
+        # Correct credentials + a not-approved account: the sign-in succeeds so
+        # the SPA can show the pending-approval (view-only) notice.
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access", response.data)
+        self.assertFalse(response.data["user"]["is_approved"])
+        self.assertTrue(response.data["user"]["is_view_only"])
+        # The sign-in is still recorded — the credentials were valid.
+        self.assertEqual(LoginActivity.objects.filter(user=self.requester).count(), 1)
 
     def test_wrong_password_for_deactivated_account_stays_generic(self):
         # The deactivated response must not become a username oracle: a wrong
@@ -276,7 +289,7 @@ class DeactivatedAccountAccessTests(_BaseManagementTest):
         self.assertEqual(response.status_code, 401)
         self.assertNotIn("code", response.data)
 
-    def test_existing_access_token_stops_working_after_deactivation(self):
+    def test_existing_access_token_is_view_only_after_deactivation(self):
         login = APIClient().post(LOGIN_URL, {"username": "req", "password": PASSWORD})
         self.assertEqual(login.status_code, 200)
         access = login.data["access"]
@@ -285,36 +298,45 @@ class DeactivatedAccountAccessTests(_BaseManagementTest):
 
         authed = APIClient()
         authed.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
-        self.assertEqual(authed.get(ME_URL).status_code, 401)
+        # The existing token still authenticates (reads allowed)...
+        self.assertEqual(authed.get(ME_URL).status_code, 200)
+        # ...but every state-changing request is refused.
+        blocked = authed.patch(ME_URL, {"first_name": "Nope"}, format="json")
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.data["code"], "account_not_approved")
 
-    def test_existing_refresh_token_is_refused_after_deactivation(self):
+    def test_existing_refresh_token_still_works_for_view_only_session(self):
         login = APIClient().post(LOGIN_URL, {"username": "req", "password": PASSWORD})
         refresh = login.data["refresh"]
 
         _set_status(self.admin_client, self.requester, False)
 
+        # A view-only session may refresh; approval is re-checked per request,
+        # not baked into the token.
         response = APIClient().post(REFRESH_URL, {"refresh": refresh}, format="json")
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access", response.data)
 
-    def test_reactivated_user_can_log_in_again(self):
+    def test_reactivation_restores_approved_access(self):
         login = APIClient().post(LOGIN_URL, {"username": "req", "password": PASSWORD})
         self.assertEqual(login.status_code, 200)
 
         _set_status(self.admin_client, self.requester, False)
-        self.assertEqual(
-            APIClient()
-            .post(LOGIN_URL, {"username": "req", "password": PASSWORD}, format="json")
-            .status_code,
-            403,
+        view_only = APIClient().post(
+            LOGIN_URL, {"username": "req", "password": PASSWORD}, format="json"
         )
+        self.assertEqual(view_only.status_code, 200)
+        self.assertFalse(view_only.data["user"]["is_approved"])
 
         _set_status(self.admin_client, self.requester, True)
         again = APIClient().post(LOGIN_URL, {"username": "req", "password": PASSWORD})
         self.assertEqual(again.status_code, 200)
         self.assertIn("access", again.data)
+        self.assertTrue(again.data["user"]["is_approved"])
 
-    def test_deactivated_google_account_cannot_sign_in_and_is_not_reactivated(self):
+    def test_not_approved_google_account_signs_in_view_only_and_is_not_reactivated(self):
         email = "deactivated@gmail.com"
+        _make_google_user(email)
         first = _oauth_callback(APIClient(), email)
         self.assertEqual(first.status_code, 302)
         self.assertIn("access=", first.url)
@@ -323,21 +345,22 @@ class DeactivatedAccountAccessTests(_BaseManagementTest):
 
         self.assertEqual(_set_status(self.admin_client, user, False).status_code, 200)
 
+        # A not-approved account may still sign in through Google (view-only);
+        # the sign-in must never flip it back to approved.
         again = _oauth_callback(APIClient(), email)
         self.assertEqual(again.status_code, 302)
-        self.assertIn("google_error=account_deactivated", again.url)
-        self.assertNotIn("access=", again.url)
+        self.assertIn("access=", again.url)
 
         user.refresh_from_db()
         self.assertFalse(user.is_active)
         self.assertEqual(User.objects.filter(email=email).count(), 1)
-        # A refused attempt is not a sign-in.
-        self.assertEqual(LoginActivity.objects.filter(user=user).count(), 1)
+        self.assertEqual(LoginActivity.objects.filter(user=user).count(), 2)
 
     def test_reactivated_google_account_regains_access(self):
         from allauth.socialaccount.models import SocialAccount
 
         email = "google-back@gmail.com"
+        _make_google_user(email)
         _oauth_callback(APIClient(), email)
         user = User.objects.get(email=email)
 

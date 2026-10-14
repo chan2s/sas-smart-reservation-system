@@ -1,8 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Lock, ShieldCheck } from 'lucide-react'
-import { useAuth } from '@/hooks/useAuth'
-import { api, ApiError } from '@/lib/api'
+import { api, apiErrorMessage } from '@/lib/api'
 import { useInternalOrganizations } from '@/hooks/queries'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Form'
@@ -41,7 +40,6 @@ const EMPTY_EXTERNAL = {
 }
 
 export function RegisterPage() {
-  const { login, logout } = useAuth()
   const navigate = useNavigate()
 
   const [formData, setFormData] = useState({
@@ -138,6 +136,18 @@ export function RegisterPage() {
 
     setSubmitting(true)
     try {
+      const externalPayload = isExternal
+        ? {
+            organization_name: external.organization_name.trim(),
+            organization_type: external.organization_type,
+            contact_person: external.contact_person.trim(),
+            contact_email: external.contact_email.trim().toLowerCase(),
+            contact_number: external.contact_number.trim(),
+            address: external.address.trim(),
+            purpose: external.purpose.trim(),
+          }
+        : {}
+
       await api.register({
         username: formData.username.trim(),
         password: formData.password,
@@ -149,30 +159,18 @@ export function RegisterPage() {
         ...(isInternalAffiliation && internalOrganizationId !== ''
           ? { organization_id: internalOrganizationId }
           : {}),
-        ...(isExternal ? external : {}),
+        ...externalPayload,
       })
 
-      // External organizations must be verified by an administrator before
-      // they can reserve. Do NOT authenticate the new account — clear any
-      // tokens, leave the dashboard unreachable, and hand off to the login
-      // page with the pending-approval notice.
-      if (isExternal) {
-        logout()
-        navigate('/login?registered=external', { replace: true })
-        return
-      }
-
-      // Everyone else keeps the existing flow: auto-login into the dashboard.
-      // `login` sets both the stored tokens and the in-memory auth state, so
-      // the protected dashboard is reachable immediately.
-      await login(formData.username.trim(), formData.password)
-      navigate('/dashboard', { replace: true })
+      // Successful registration NEVER authenticates the new account. The
+      // backend creates it (unapproved for external-organization sign-ups,
+      // subject to administrator approval policy) and issues no tokens. The
+      // user is redirected to the login page to sign in with the credentials
+      // they just registered — never straight to the dashboard.
+      const registeredCode = isExternal ? 'external' : 'success'
+      navigate(`/login?registered=${registeredCode}`, { replace: true })
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message)
-      } else {
-        setError('Registration failed. Please try again.')
-      }
+      setError(apiErrorMessage(err, 'Registration failed. Please try again.'))
     } finally {
       setSubmitting(false)
     }
@@ -184,10 +182,10 @@ export function RegisterPage() {
     try {
       // The exact same backend OAuth flow the login page uses — there is only
       // one Google implementation. The `register` intent only keeps OAuth
-      // errors on this page. A brand-new Google account is created as a plain
-      // REQUESTER with no affiliation, then completes the affiliation step
-      // (where external organizations still require SAS approval) before it
-      // can reserve. Existing accounts are linked by email, never duplicated.
+      // errors on this page. Google sign-in NEVER creates a SAS RESERVE
+      // account: an unregistered identity bounces back with
+      // "No account found for this Google account. Please register first." An
+      // already-registered one is sent to the login page instead.
       const { authorize_url } = await api.googleStart(window.location.origin, 'register')
       window.location.href = authorize_url
     } catch {

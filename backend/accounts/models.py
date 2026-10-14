@@ -314,6 +314,32 @@ class User(AbstractUser):
     def is_admin(self) -> bool:
         return self.role == self.Role.ADMIN
 
+    # -- Account approval (view-only policy) ---------------------------
+
+    @property
+    def is_approved(self) -> bool:
+        """Whether an administrator has approved this account for full access.
+
+        The existing account-status mechanism is reused rather than
+        duplicated: Django's built-in ``is_active`` flag *is* the authoritative
+        server-side approval condition. An administrator clears it (through
+        ``POST /api/auth/users/<pk>/status/``) to revoke approval; setting it
+        back approves the account. There is no second approval field to drift
+        out of sync with the flag Django, simplejwt, and the permission classes
+        already honour.
+
+        This is deliberately distinct from organization approval
+        (``Organization.verification_status``): an external organization's
+        verification status keeps its own independent rules and is never
+        consulted here.
+        """
+        return bool(self.is_active)
+
+    @property
+    def is_view_only(self) -> bool:
+        """True for an authenticated account that has not been approved."""
+        return not self.is_approved
+
     @property
     def is_sas_staff(self) -> bool:
         return self.role in (self.Role.ADMIN, self.Role.STAFF)

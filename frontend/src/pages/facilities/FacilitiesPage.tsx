@@ -47,7 +47,7 @@ const nextSevenDays = Array.from({ length: 7 }, (_, index) => {
  * Django API. Requesters see the same read-only layout without the controls.
  */
 export function FacilitiesPage() {
-  const { isStaff } = useAuth()
+  const { isStaff, isViewOnly } = useAuth()
   const { toast } = useToast()
 
   const [selected, setSelected] = useState<string>('')
@@ -117,7 +117,7 @@ export function FacilitiesPage() {
             : 'Find and reserve the right space for your next event.'
         }
         actions={
-          isStaff ? (
+          isStaff && !isViewOnly ? (
             <Button icon={<Plus className="size-4" />} onClick={openAdd}>
               Add Facility
             </Button>
@@ -188,7 +188,7 @@ export function FacilitiesPage() {
           <FacilityCard
             key={facility.id}
             facility={facility}
-            isStaff={isStaff}
+            isStaff={isStaff && !isViewOnly}
             onEdit={() => openEdit(facility)}
             onRemove={() => setRemoving(facility)}
           />
@@ -216,14 +216,14 @@ export function FacilitiesPage() {
                 : 'No facilities yet'
           }
           description={
-            isStaff && !showArchived && !search && !selected
+            isStaff && !isViewOnly && !showArchived && !search && !selected
               ? 'Add your first facility so requesters can reserve it.'
               : showArchived
                 ? 'Facilities you archive will appear here and can be restored.'
                 : 'Try adjusting your search or filter.'
           }
           action={
-            isStaff && !showArchived && !search && !selected ? (
+            isStaff && !isViewOnly && !showArchived && !search && !selected ? (
               <Button size="sm" icon={<Plus className="size-4" />} onClick={openAdd}>
                 Add Facility
               </Button>

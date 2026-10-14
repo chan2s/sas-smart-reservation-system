@@ -16,12 +16,14 @@ import { needsAffiliationOnboarding } from '@/lib/utils'
  * loading — see `needsAffiliationOnboarding`.
  */
 export function AffiliationPrompt() {
-  const { user, loading } = useAuth()
+  const { user, loading, isViewOnly } = useAuth()
   const location = useLocation()
   const [dismissed, setDismissed] = useState(false)
 
-  // Never prompt before the role/profile is known, or for administrators.
-  if (loading || !needsAffiliationOnboarding(user) || dismissed) return null
+  // Never prompt before the role/profile is known, or for administrators, or
+  // for a pending-approval account that cannot save an affiliation anyway.
+  if (loading || isViewOnly || !needsAffiliationOnboarding(user) || dismissed)
+    return null
   // The affiliation page itself has the full form — don't nag on top of it.
   if (location.pathname.startsWith('/onboarding/affiliation')) return null
 

@@ -27,7 +27,7 @@ export function FacilityDetailPage() {
   const { id } = useParams()
   const facilityId = Number(id)
   const navigate = useNavigate()
-  const { isStaff } = useAuth()
+  const { isStaff, isViewOnly } = useAuth()
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerIndex, setViewerIndex] = useState(0)
   const { data: facility, isLoading } = useFacility(facilityId)
@@ -135,13 +135,15 @@ export function FacilityDetailPage() {
             <Button variant="outline" icon={<CalendarDays className="size-4" />} onClick={() => navigate('/calendar')}>
               View calendar
             </Button>
-            <Button
-              disabled={!reservable}
-              icon={<CalendarDays className="size-4" />}
-              onClick={() => navigate(`/reservations/new?facility=${facility.id}`)}
-            >
-              {archived ? 'Unavailable' : 'Reserve this facility'}
-            </Button>
+            {!isViewOnly && (
+              <Button
+                disabled={!reservable}
+                icon={<CalendarDays className="size-4" />}
+                onClick={() => navigate(`/reservations/new?facility=${facility.id}`)}
+              >
+                {archived ? 'Unavailable' : 'Reserve this facility'}
+              </Button>
+            )}
           </div>
         </div>
       </div>

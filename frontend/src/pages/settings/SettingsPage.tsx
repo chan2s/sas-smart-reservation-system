@@ -7,6 +7,7 @@ import {
   VERIFICATION_LABEL,
   VERIFICATION_TONE,
 } from '@/components/organizations/OrganizationStatusNotice'
+import { ViewOnlyNotice } from '@/components/auth/ViewOnlyNotice'
 import type { User } from '@/lib/types'
 import { useToast } from '@/components/ui/Toast'
 import { api } from '@/lib/api'
@@ -18,7 +19,7 @@ import { Field, Input } from '@/components/ui/Form'
 import { Badge } from '@/components/ui/Badge'
 
 export function SettingsPage() {
-  const { user, updateUser } = useAuth()
+  const { user, updateUser, isViewOnly } = useAuth()
   const { toast } = useToast()
   const [firstName, setFirstName] = useState(user?.first_name ?? '')
   const [lastName, setLastName] = useState(user?.last_name ?? '')
@@ -28,6 +29,9 @@ export function SettingsPage() {
 
   async function save(event: FormEvent) {
     event.preventDefault()
+    // A pending-approval account cannot change its profile; the backend
+    // refuses it too (403 account_not_approved).
+    if (isViewOnly) return
     setSaving(true)
     try {
       const updated = await api.patch<User>('/api/auth/me/', {
@@ -69,6 +73,13 @@ export function SettingsPage() {
           </div>
         </div>
 
+        {isViewOnly && (
+          <ViewOnlyNotice
+            action="Editing your profile is unavailable"
+            className="mt-6"
+          />
+        )}
+
         <form onSubmit={save} className="mt-8 grid gap-5 sm:grid-cols-2">
           <Field label="First name" htmlFor="first-name">
             <Input id="first-name" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
@@ -99,11 +110,13 @@ export function SettingsPage() {
               disabled={Boolean(user?.organization_ref)}
             />
           </Field>
-          <div className="sm:col-span-2">
-            <Button type="submit" loading={saving}>
-              Save changes
-            </Button>
-          </div>
+          {!isViewOnly && (
+            <div className="sm:col-span-2">
+              <Button type="submit" loading={saving}>
+                Save changes
+              </Button>
+            </div>
+          )}
         </form>
       </Card>
 
@@ -165,15 +178,17 @@ export function SettingsPage() {
           />
         )}
 
-        <div className="mt-4">
-          <Link
-            to="/onboarding/affiliation"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-soft"
-          >
-            {user.has_affiliation ? 'Update affiliation' : 'Complete your affiliation'}
-            <ArrowRight className="size-3.5" aria-hidden />
-          </Link>
-        </div>
+        {!isViewOnly && (
+          <div className="mt-4">
+            <Link
+              to="/onboarding/affiliation"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-soft"
+            >
+              {user.has_affiliation ? 'Update affiliation' : 'Complete your affiliation'}
+              <ArrowRight className="size-3.5" aria-hidden />
+            </Link>
+          </div>
+        )}
       </Card>
     </div>
   )

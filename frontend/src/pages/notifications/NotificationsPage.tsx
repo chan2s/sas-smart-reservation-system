@@ -10,6 +10,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { useNotifications } from '@/hooks/queries'
+import { useAuth } from '@/hooks/useAuth'
 import { PageHeader, Skeleton, EmptyState } from '@/components/ui/Misc'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -25,6 +26,7 @@ const typeMeta: Record<NotificationType, { icon: React.ReactNode; className: str
 
 export function NotificationsPage() {
   const { data, isLoading } = useNotifications()
+  const { isViewOnly } = useAuth()
   const queryClient = useQueryClient()
 
   const markAll = useMutation({
@@ -44,7 +46,7 @@ export function NotificationsPage() {
         title="Notifications"
         description="Updates on your reservations and equipment status."
         actions={
-          unread > 0 ? (
+          unread > 0 && !isViewOnly ? (
             <Button variant="outline" size="sm" onClick={() => markAll.mutate()} icon={<CheckCheck className="size-4" />}>
               Mark all as read
             </Button>
@@ -78,6 +80,7 @@ export function NotificationsPage() {
 }
 
 function NotificationRow({ notification }: { notification: Notification }) {
+  const { isViewOnly } = useAuth()
   const queryClient = useQueryClient()
   const markRead = useMutation({
     mutationFn: () => endpoints.markNotificationRead(notification.id),
@@ -115,7 +118,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
   const content = notification.link ? (
     <Link
       to={notification.link}
-      onClick={() => !notification.read && markRead.mutate()}
+      onClick={() => !notification.read && !isViewOnly && markRead.mutate()}
       className="block transition-colors hover:bg-soft/60"
     >
       {body}

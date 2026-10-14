@@ -212,6 +212,11 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
+        # Global view-only policy: a not-approved (pending) account may read but
+        # not change state. Views that override ``permission_classes`` add this
+        # explicitly where they can mutate, or omit it where every method is a
+        # read-only lookup.
+        "accounts.permissions.IsAccountApprovedOrReadOnly",
     ),
     # Global API rate limiting (see accounts/throttling.py for the model).
     # Sensitive endpoints apply stricter endpoint-specific throttles.
@@ -255,6 +260,12 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "UPDATE_LAST_LOGIN": True,
+    # A not-approved account keeps its ability to authenticate (and therefore
+    # to READ). Approval is enforced per request by
+    # accounts.permissions.IsAccountApprovedOrReadOnly, so a token issued
+    # before an administrator revoked approval cannot be used to mutate state.
+    "CHECK_USER_IS_ACTIVE": False,
+    "USER_AUTHENTICATION_RULE": "accounts.jwt.user_authentication_rule",
 }
 
 
@@ -263,8 +274,10 @@ SIMPLE_JWT = {
 # ---------------------------------------------------------------------------
 
 AUTHENTICATION_BACKENDS = [
-    # Regular username/password authentication.
-    "django.contrib.auth.backends.ModelBackend",
+    # Regular username/password authentication. This ModelBackend subclass is
+    # identical except that it does not refuse an inactive (not-approved)
+    # account — view-only access requires the account to be able to sign in.
+    "accounts.backends.AllowInactiveModelBackend",
 
     # Google OAuth via django-allauth.
     "allauth.account.auth_backends.AuthenticationBackend",

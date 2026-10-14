@@ -473,6 +473,8 @@ class ExternalOrganizationRegistrationTests(TestCase):
         user = User.objects.get(username="bnhs")
         self.assertEqual(user.affiliation, User.Affiliation.EXTERNAL_ORGANIZATION)
         self.assertEqual(user.organization_ref, organization)
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.is_approved)
         # A member of an unverified org is blocked from reserving.
         self.assertFalse(user.can_create_reservations)
         self.assertTrue(
@@ -495,6 +497,18 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertEqual(User.objects.count(), 0)
         self.assertEqual(_external_organizations().count(), 0)
 
+    def test_registration_uses_configured_password_validators(self):
+        response = self.client.post(
+            REGISTER_URL,
+            _external_registration(password="password123"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("password", response.json())
+        self.assertIn("too common", response.json()["password"][0].lower())
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(_external_organizations().count(), 0)
+
     def test_new_external_user_can_log_in_and_is_still_blocked(self):
         self.client.post(REGISTER_URL, _external_registration(), format="json")
         response = self.client.post(
@@ -503,6 +517,8 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         body = response.json()
         self.assertIn("access", body)
+        self.assertFalse(body["user"]["is_approved"])
+        self.assertTrue(body["user"]["is_view_only"])
         self.assertFalse(body["user"]["can_create_reservations"])
         self.assertEqual(body["user"]["organization_verification_status"], "PENDING")
 
@@ -526,6 +542,8 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertEqual(user.affiliation, User.Affiliation.NORSU_FACULTY_STAFF)
         self.assertEqual(user.organization, "College of Engineering")
         self.assertIsNone(user.organization_ref)
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.is_approved)
         self.assertTrue(user.can_create_reservations)
 
 
@@ -629,6 +647,8 @@ class InternalOrganizationTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         user = User.objects.get(username="newstudent")
         self.assertEqual(user.organization_ref, self.internal)
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.is_approved)
         self.assertTrue(user.can_create_reservations)
         # Internal organizations never price as external.
         self.assertEqual(user.trusted_requester_type, "CAMPUS")

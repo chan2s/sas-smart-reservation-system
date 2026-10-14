@@ -23,6 +23,10 @@ export const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   // It is never auto-linked; the user must sign in with their own credentials.
   email_registered:
     'An account with this email already exists. Please log in with your existing credentials instead.',
+  // "Continue with Google" verified an identity that has no SAS RESERVE
+  // account. Registration is never automatic — the user must register first.
+  no_account_found:
+    'No account found for this Google account. Please register first.',
   // NOTE: `account_deactivated` is deliberately absent. The login page turns
   // that OAuth code (and the password login 403) into the dedicated
   // DeactivatedAccountModal, so the message is rendered as a modal from a
@@ -35,6 +39,14 @@ export const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
  * rather than a plain inline error.
  */
 export const GOOGLE_LOGIN_REDIRECT_CODES = new Set(['account_exists', 'email_registered'])
+
+/**
+ * Codes that mean "no account exists — the user must register first".
+ * The SPA renders these as a notice with a direct link to the registration
+ * page, so an unregistered Google identity is never created automatically
+ * and the visitor has an easy path to sign up.
+ */
+export const GOOGLE_REGISTER_REDIRECT_CODES = new Set(['no_account_found'])
 
 /** The message for an error code, or a generic fallback. */
 export function googleErrorMessage(code: string): string {

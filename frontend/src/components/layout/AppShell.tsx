@@ -2,6 +2,8 @@ import { Outlet } from 'react-router-dom'
 import { Header, MobileBottomNav } from './Header'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import { AffiliationPrompt } from '@/components/organizations/AffiliationPrompt'
+import { ViewOnlyBanner } from '@/components/auth/ViewOnlyNotice'
+import { useAuth } from '@/hooks/useAuth'
 
 /**
  * Application shell.
@@ -22,6 +24,7 @@ import { AffiliationPrompt } from '@/components/organizations/AffiliationPrompt'
  * mobile (which also clears the fixed bottom nav).
  */
 export function AppShell() {
+  const { isViewOnly } = useAuth()
   return (
     <div className="flex min-h-dvh flex-col bg-soft">
       <Header />
@@ -29,6 +32,8 @@ export function AppShell() {
       <main className="w-full flex-1">
         {/* Comfortable max content width — never overly wide on large monitors */}
         <div className="mx-auto w-full max-w-[1440px] px-4 pb-24 pt-8 sm:px-6 lg:px-10 lg:pb-14 lg:pt-10">
+          {/* Pending-approval notice for a not-approved account (view-only). */}
+          {isViewOnly && <ViewOnlyBanner className="mb-6" />}
           {/* Non-blocking nudge — never gates access for existing users. */}
           <AffiliationPrompt />
           <Outlet />

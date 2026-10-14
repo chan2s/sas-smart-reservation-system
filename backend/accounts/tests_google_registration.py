@@ -164,36 +164,36 @@ class RegisterIntentErrorRedirectTests(APITestCase):
 
 
 class GoogleRegistrationFlowTests(APITestCase):
-    """New registration and returning sign-in share one non-duplicating flow."""
+    """Existing-account sign-in vs. first-time refusal share one flow."""
 
     def setUp(self):
         self.client = APIClient()
 
-    def test_new_account_created_as_requester_and_routed_to_callback(self):
-        state = _start(self.client, intent="register")
-        response = _callback(self.client, state)
-        self.assertEqual(response.status_code, 302)
-        self.assertIn(f"{ORIGIN}/auth/callback", response.url)
-        self.assertIn("access", _tokens(response))
+    def test_new_google_identity_is_never_created(self):
+        """\"Continue with Google\" only authenticates existing accounts.
 
-        self.assertEqual(User.objects.filter(email=EMAIL).count(), 1)
-        user = User.objects.get(email=EMAIL)
-        self.assertEqual(user.role, "REQUESTER")
-        self.assertFalse(user.is_staff)
-        self.assertFalse(user.is_superuser)
-        # No affiliation yet — the SPA routes the account to onboarding.
-        self.assertFalse(user.has_affiliation)
-        # The Google identity is now associated via allauth's SocialAccount.
-        self.assertTrue(
-            SocialAccount.objects.filter(
-                provider=PROVIDER, uid=SUB, user=user
-            ).exists()
-        )
+        A verified Google identity with no SAS RESERVE account is sent back
+        to the login page with the "no account found" code; account creation
+        happens only through the normal registration endpoint.
+        """
+        for intent in ("login", "register"):
+            with self.subTest(intent=intent):
+                state = _start(self.client, intent=intent)
+                response = _callback(self.client, state)
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
+                self.assertIn("google_error=no_account_found", response.url)
+                self.assertNotIn("access=", response.url)
+                self.assertFalse(User.objects.filter(email=EMAIL).exists())
+                self.assertFalse(SocialAccount.objects.exists())
 
     def test_existing_google_account_redirects_to_login_on_register(self):
-        # First sign-in (login page) creates and associates the identity.
+        # An existing SAS RESERVE account (registered earlier, password-less,
+        # reachable through Google) signs in once through the login flow so
+        # the identity gets associated.
+        User.objects.create_user(username="googlereq", email=EMAIL)
         first = _callback(self.client, _start(self.client))
-        self.assertIn("/auth/callback", first.url)
+        self.assertIn("access", _tokens(first))
 
         # The same Google identity then clicks "Continue with Google" on the
         # registration page: no sign-in, no duplicate — straight to login.
@@ -206,6 +206,7 @@ class GoogleRegistrationFlowTests(APITestCase):
         self.assertEqual(SocialAccount.objects.count(), 1)
 
     def test_google_identity_signs_in_repeatedly_without_duplicates(self):
+        User.objects.create_user(username="googlereq", email=EMAIL)
         _callback(self.client, _start(self.client))
         second = _callback(self.client, _start(self.client))
         self.assertIn("access", _tokens(second))
@@ -296,7 +297,12 @@ class GoogleRegistrationApprovalTests(APITestCase):
         self.client = APIClient()
 
     def _register_google_user(self) -> str:
-        response = _callback(self.client, _start(self.client, intent="register"))
+        # An existing, registered SAS RESERVE account reachable through
+        # Google: created via registration (password-less), then signed in
+        # through the login flow so the identity is associated and JWTs are
+        # issued. Google sign-in itself never creates the account.
+        User.objects.create_user(username="googlereq", email=EMAIL)
+        response = _callback(self.client, _start(self.client))
         access = _tokens(response)["access"]
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
         return access

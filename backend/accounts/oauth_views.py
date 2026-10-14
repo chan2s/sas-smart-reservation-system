@@ -358,6 +358,12 @@ def google_callback(request):
     # 5. Resolve the local account from the verified Google identity.
     #
     # Security model:
+    #   * "Continue with Google" only ever AUTHENTICATES an account that
+    #     already exists — it never creates a user, profile, organization, or
+    #     any other record. A brand-new Google identity is refused here and
+    #     the browser is sent back to the login page with the
+    #     ``no_account_found`` code; registration goes through the normal
+    #     (password) registration endpoint instead.
     #   * The account is matched by Google's stable subject id ("sub") via the
     #     django-allauth SocialAccount row — never by an email address the
     #     client could have supplied.
@@ -368,9 +374,10 @@ def google_callback(request):
     #   * A password-less account (one originally created through Google) may
     #     adopt the identity on sign-in: the Google-verified email is the only
     #     credential it ever had, so its owner keeps access.
-    #   * A deactivated account (is_active=False) is refused with no state
-    #     change: Google sign-in never reactivates an account, and the refusal
-    #     happens before any identity is re-linked or last-login updated.
+    #   * A not-approved (inactive) account may still sign in — it simply
+    #     receives the view-only experience, enforced per request by
+    #     accounts.permissions.IsAccountApprovedOrReadOnly. Signing in never
+    #     changes approval.
     from django.contrib.auth import get_user_model
     from django.utils import timezone
     from allauth.socialaccount.models import SocialAccount
@@ -414,59 +421,39 @@ def google_callback(request):
                 # account. Never link it automatically — the user must sign in
                 # with it instead.
                 return frontend_error("email_registered", "/login")
+    # No local account matches this verified Google identity: refuse without
+    # creating anything (spec: Continue with Google must never auto-register).
+    # Always back to the login page, whatever page started the flow.
+    if user is None:
+        logger.info(
+            "Google OAuth: no SAS RESERVE account for verified Google identity "
+            "(sub=%s). No account was created.",
+            sub,
+        )
+        return frontend_error("no_account_found", "/login")
 
-    if user is not None:
-        # A deactivated account cannot sign in through Google — and signing in
-        # must NEVER bring it back to life. Reactivating is an explicit
-        # administrator action (accounts.management_views.AdminUserStatusView);
-        # role, password, reservations, and the social link all stay exactly
-        # as they are, so the sign-in is refused before anything is touched.
-        if not user.is_active:
-            logger.warning(
-                "Google OAuth: deactivated account attempted sign-in (user_id=%s).",
-                user.pk,
-            )
-            return frontend_error("account_deactivated", "/login")
+    # A not-approved (inactive) account may still sign in through Google —
+    # it simply receives the view-only experience (enforced per request by
+    # accounts.permissions.IsAccountApprovedOrReadOnly). Signing in must
+    # NEVER change approval: role, password, reservations, the social link,
+    # and the ``is_active`` flag all stay exactly as they are. Approving or
+    # reactivating remains an explicit administrator action
+    # (accounts.management_views.AdminUserStatusView).
 
-        # Existing account: associate (or refresh) the Google identity.
-        if social_account is None:
-            social_account = _link_google_identity(user, sub, userinfo)
-        else:
-            social_account.last_login = timezone.now()
-            social_account.save(update_fields=["last_login"])
-        if intent == "register":
-            # "Continue with Google" on the registration page for an account
-            # that already exists: do NOT sign in and do NOT duplicate — the
-            # SPA shows the account-exists notice with a link to log in.
-            return frontend_error("account_exists", "/login")
+    # Existing account: associate (or refresh) the Google identity.
+    if social_account is None:
+        social_account = _link_google_identity(user, sub, userinfo)
     else:
-        # New account: plain REQUESTER, never privileged.
-        username_base = email.split("@")[0].replace(".", "_")[:140] or "google_user"
-        username = username_base
-        suffix = 1
-        while User.objects.filter(username=username).exists():
-            suffix += 1
-            username = f"{username_base}{suffix}"
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            first_name=(userinfo.get("given_name") or "")[:150],
-            last_name=(userinfo.get("family_name") or "")[:150],
-        )
-        user.role = "REQUESTER"
-        user.save(update_fields=["role"])
-        _link_google_identity(user, sub, userinfo)
-        AuditLog.record(
-            user,
-            AuditLog.Action.GOOGLE_FIRST_ACCOUNT,
-            object_type="auth",
-            object_repr="Account created via first-time Google sign-in",
-            request=request,
-        )
+        social_account.last_login = timezone.now()
+        social_account.save(update_fields=["last_login"])
+    if intent == "register":
+        # "Continue with Google" on the registration page for an account
+        # that already exists: do NOT sign in and do NOT duplicate — the
+        # SPA shows the account-exists notice with a link to log in.
+        return frontend_error("account_exists", "/login")
 
     # 6. Audit, record the login activity, and issue first-party JWTs — no
-    #    Google tokens reach the browser. A new account continues to
-    #    onboarding (affiliation) via the SPA callback page.
+    #    Google tokens reach the browser.
     AuditLog.record(
         user,
         AuditLog.Action.LOGIN,

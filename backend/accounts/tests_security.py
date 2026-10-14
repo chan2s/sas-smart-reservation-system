@@ -1,7 +1,9 @@
 """Security tests: Google OAuth hardening, JWT protection, rate limiting.
 
 Covers the required security model:
-* the Google callback issues JWTs directly — no OTP step exists
+* "Continue with Google" only authenticates existing registered accounts —
+  an unregistered Google identity is refused without creating anything,
+  while an existing account receives JWTs directly (no OTP step exists)
 * every callback error path redirects to the SPA, never leaks internals
 * global API throttles (anon/user) and sensitive-endpoint throttles
 """
@@ -50,26 +52,51 @@ def _fragment_tokens(response) -> dict:
     )
 
 
+def _make_google_user(email: str) -> User:
+    """Create an existing, registered account reachable through Google.
+
+    Under the no-auto-registration policy the callback can only sign into an
+    account that already exists. A password-less REQUESTER (such as an
+    account originally created through Google) is adoptable on sign-in, so
+    these tests create the user the same way registration does — with an
+    unusable password — and let the real callback link the identity.
+    """
+    return User.objects.create_user(
+        username=f"gsignin_{email.split('@')[0]}", email=email
+    )
+
+
 class FirstTimeGoogleSignInTests(APITestCase):
-    """New Google accounts authenticate immediately — no OTP step."""
+    """Google sign-in authenticates existing accounts; it never registers."""
 
     def setUp(self):
         self.client = APIClient()
         self.email = "bypass.user@gmail.com"
 
-    def test_new_google_user_receives_jwt_immediately(self):
+    def test_unregistered_google_identity_is_refused_without_creating_account(self):
+        first = _oauth_callback(self.client, self.email)
+        self.assertEqual(first.status_code, 302)
+        # Not created → bounced back to the login page with the clear
+        # "no account found" message and no JWT in the redirect.
+        self.assertIn("google_error=no_account_found", first.url)
+        self.assertNotIn("access=", first.url)
+        # No user (and no identity record) was created.
+        self.assertEqual(User.objects.filter(email=self.email).count(), 0)
+
+    def test_registered_google_account_receives_jwt_immediately(self):
+        _make_google_user(self.email)
         first = _oauth_callback(self.client, self.email)
         self.assertEqual(first.status_code, 302)
         self.assertIn("/auth/callback", first.url)
         self.assertIn("access=", first.url)
         self.assertNotIn("verify-otp", first.url)
-        # Exactly one account was created, active and non-privileged.
+        # Adopting the verified identity never duplicates the account.
         self.assertEqual(User.objects.filter(email=self.email).count(), 1)
         user = User.objects.get(email=self.email)
-        self.assertTrue(user.is_active)
         self.assertEqual(user.role, "REQUESTER")
 
     def test_second_callback_signs_in_without_duplicates(self):
+        _make_google_user(self.email)
         _oauth_callback(self.client, self.email)
         second = _oauth_callback(self.client, self.email)
         self.assertEqual(second.status_code, 302)
@@ -90,7 +117,8 @@ class GoogleJwtProtectionTests(APITestCase):
         self.client = APIClient()
         self.email = "jwtblock.user@gmail.com"
 
-    def test_callback_jwt_authenticates_the_new_user(self):
+    def test_callback_jwt_authenticates_the_existing_account(self):
+        _make_google_user(self.email)
         response = _oauth_callback(self.client, self.email)
         tokens = _fragment_tokens(response)
         self.assertIn("access", tokens)
@@ -100,8 +128,8 @@ class GoogleJwtProtectionTests(APITestCase):
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.data["email"], self.email)
 
-    def test_inactive_google_account_cannot_use_issued_token(self):
-        """An inactive account's JWT cannot authenticate (no active-based bypass)."""
+    def test_inactive_account_token_is_view_only(self):
+        """An inactive (not-approved) account's JWT authenticates for reads only."""
         from rest_framework_simplejwt.tokens import RefreshToken
 
         user = User.objects.create_user(
@@ -111,10 +139,20 @@ class GoogleJwtProtectionTests(APITestCase):
         )
         stale = RefreshToken.for_user(user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {stale.access_token}")
-        self.assertEqual(self.client.get("/api/auth/me/").status_code, 401)
+        # The token still authenticates so the account can see its own status.
+        me = self.client.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 200)
+        self.assertFalse(me.data["is_approved"])
+        # A state-changing call with the same token is refused.
+        blocked = self.client.patch(
+            "/api/auth/me/", {"first_name": "Nope"}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.data["code"], "account_not_approved")
 
-    def test_password_login_of_google_created_account_without_password(self):
-        """A Google-created account has no usable password — login must fail."""
+    def test_password_login_of_google_linked_account_without_password(self):
+        """A Google-linked account without a password cannot password-login."""
+        _make_google_user(self.email)
         _oauth_callback(self.client, self.email)
         user = User.objects.get(email=self.email)
         self.assertFalse(user.has_usable_password())
@@ -136,6 +174,7 @@ class VerifiedUserFlowTests(APITestCase):
         self.email = "happy.path@gmail.com"
 
     def test_full_flow_from_google_to_authenticated_apis(self):
+        _make_google_user(self.email)
         response = _oauth_callback(self.client, self.email)
         tokens = _fragment_tokens(response)
         self.assertIn("access", tokens)

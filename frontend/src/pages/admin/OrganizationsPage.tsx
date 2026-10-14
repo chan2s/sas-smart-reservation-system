@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { useOrganization, useOrganizations, useVerifyOrganization } from '@/hooks/queries'
+import { useAuth } from '@/hooks/useAuth'
 import type { OrganizationVerificationAction, OrganizationFilters } from '@/lib/api'
 import type { Organization, VerificationStatus } from '@/lib/types'
 import { PageHeader, EmptyState, Skeleton } from '@/components/ui/Misc'
@@ -58,6 +59,10 @@ function rows(payload: { results?: Organization[] } | Organization[] | undefined
  */
 export function OrganizationsPage() {
   const { toast } = useToast()
+  // A not-approved account cannot change an organization's verification
+  // status — the decision controls below are hidden, exactly like the read
+  // queue stays available.
+  const { isViewOnly } = useAuth()
   const [scope, setScope] = useState<'EXTERNAL' | 'INTERNAL'>('EXTERNAL')
   const [status, setStatus] = useState<VerificationStatus | ''>('PENDING')
   const [search, setSearch] = useState('')
@@ -423,28 +428,29 @@ export function OrganizationsPage() {
                   /* Managed internal organizations are always approved and
                      never deleted — staff only activate/deactivate them. */
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {organization.is_active === false ? (
-                      <Button
-                        size="sm"
-                        loading={verify.isPending}
-                        onClick={() => decide('reactivate')}
-                        icon={<RotateCcw className="size-4" />}
-                      >
-                        Reactivate
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={verify.isPending}
-                        onClick={() => setPendingAction('suspend')}
-                        icon={<ShieldOff className="size-4" />}
-                      >
-                        Deactivate
-                      </Button>
-                    )}
+                    {!isViewOnly &&
+                      (organization.is_active === false ? (
+                        <Button
+                          size="sm"
+                          loading={verify.isPending}
+                          onClick={() => decide('reactivate')}
+                          icon={<RotateCcw className="size-4" />}
+                        >
+                          Reactivate
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={verify.isPending}
+                          onClick={() => setPendingAction('suspend')}
+                          icon={<ShieldOff className="size-4" />}
+                        >
+                          Deactivate
+                        </Button>
+                      ))}
                   </div>
-                ) : (
+                ) : !isViewOnly ? (
                   <div className="mt-4 flex flex-wrap gap-2">
                     {organization.verification_status !== 'APPROVED' && (
                       <Button
@@ -490,7 +496,7 @@ export function OrganizationsPage() {
                       </Button>
                     )}
                   </div>
-                )}
+                ) : null}
               </Card>
             </>
           )}

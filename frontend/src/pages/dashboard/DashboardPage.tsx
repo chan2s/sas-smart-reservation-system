@@ -47,7 +47,7 @@ const upcomingColumns: ResponsiveTableColumn[] = [
 
 export function DashboardPage() {
   const navigate = useNavigate()
-  const { isStaff } = useAuth()
+  const { isStaff, isViewOnly } = useAuth()
   const {
     data: summary,
     isLoading: summaryLoading,
@@ -87,9 +87,11 @@ export function DashboardPage() {
         title="Manage your campus resources"
         description="Monitor reservations, facilities, equipment, and upcoming events from one centralized workspace."
         actions={
-          <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
-            Create Reservation
-          </Button>
+          !isViewOnly && (
+            <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
+              Create Reservation
+            </Button>
+          )
         }
       />
 
@@ -185,9 +187,11 @@ export function DashboardPage() {
                   ? "Today's calendar is clear — new requests awaiting your approval will appear here."
                   : 'Reservations you book — and requests awaiting review — will appear here.'}
               </p>
-              <Button size="sm" className="mt-4" onClick={() => navigate('/reservations/new')}>
-                Create reservation
-              </Button>
+              {!isViewOnly && (
+                <Button size="sm" className="mt-4" onClick={() => navigate('/reservations/new')}>
+                  Create reservation
+                </Button>
+              )}
             </div>
           ) : (
             <ul className="mt-2 divide-y divide-line">

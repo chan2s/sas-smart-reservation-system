@@ -37,7 +37,7 @@ export function ReservationsPage() {
   const [facility, setFacility] = useState('')
   const [date, setDate] = useState('')
   const [organization, setOrganization] = useState('')
-  const { isStaff } = useAuth()
+  const { isStaff, isViewOnly } = useAuth()
   const { data: counts } = useReservationCounts()
   const { data: facilities } = useFacilities()
   const { data: internalOrganizations } = useInternalOrganizations()
@@ -82,9 +82,11 @@ export function ReservationsPage() {
           title="Reservations"
           description="Review, approve, and manage every reservation request across the campus."
           actions={
-            <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
-              Create Reservation
-            </Button>
+            !isViewOnly && (
+              <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
+                Create Reservation
+              </Button>
+            )
           }
         />
         <Card className="mt-8">
@@ -114,9 +116,11 @@ export function ReservationsPage() {
         title="Reservations"
         description="Review, approve, and manage every reservation request across the campus."
         actions={
-          <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
-            Create Reservation
-          </Button>
+          !isViewOnly && (
+            <Button onClick={() => navigate('/reservations/new')} icon={<Plus className="size-4" />}>
+              Create Reservation
+            </Button>
+          )
         }
       />
 
@@ -239,7 +243,7 @@ export function ReservationsPage() {
                 status !== 'ALL' ||
                 requesterType !== 'ALL' ||
                 organization
-              ) ? (
+              ) && !isViewOnly ? (
                 <Button size="sm" onClick={() => navigate('/reservations/new')}>
                   Create reservation
                 </Button>

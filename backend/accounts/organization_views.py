@@ -16,7 +16,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 
 from accounts.models import AuditLog, Organization, User
-from accounts.permissions import IsSasStaff
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
 from accounts.serializers import (
     AffiliationUpdateSerializer,
     OrganizationBriefSerializer,
@@ -63,7 +63,10 @@ class MyAffiliationView(generics.GenericAPIView):
     (or updates) the caller's organization.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAccountApprovedOrReadOnly,
+    ]
     serializer_class = AffiliationUpdateSerializer
 
     def get(self, request):
@@ -288,7 +291,11 @@ class OrganizationVerifyView(generics.GenericAPIView):
     suspended organization is treated as a reactivation and audited as such.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsSasStaff,
+        IsAccountApprovedOrReadOnly,
+    ]
     serializer_class = OrganizationVerificationSerializer
 
     def post(self, request, pk):

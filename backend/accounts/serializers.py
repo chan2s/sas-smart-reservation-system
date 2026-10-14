@@ -1,38 +1,13 @@
 from django.contrib.auth import get_user_model
-from rest_framework import exceptions, serializers, status
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.auth.password_validation import validate_password
+from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .login_activity import record_password_login
 from .models import AuditLog, LoginActivity, Organization
 
 User = get_user_model()
-
-
-#: Shown to a person whose credentials were *correct* but whose account an
-#: administrator has deactivated. The exact copy is part of the API contract:
-#: the SPA's deactivated-account modal (DeactivatedAccountModal) renders the
-#: same sentence, so the two must stay in sync.
-DEACTIVATED_LOGIN_MESSAGE = (
-    "This account has been deactivated. Please contact the SAS Office to "
-    "restore access."
-)
-
-
-class DeactivatedAccountAuthenticationFailed(exceptions.AuthenticationFailed):
-    """403 refusal for a correct password on a deactivated account.
-
-    The body is a dict on purpose: DRF renders a dict ``detail`` verbatim, so
-    the response carries both the human message and a machine-readable
-    ``code: "account_deactivated"`` the SPA can key the modal on. Bad
-    credentials never raise this — they keep simplejwt's generic 401, so the
-    endpoint still never reveals which usernames exist.
-    """
-
-    status_code = status.HTTP_403_FORBIDDEN
-    default_detail = {
-        "detail": DEACTIVATED_LOGIN_MESSAGE,
-        "code": "account_deactivated",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +261,12 @@ class UserSerializer(serializers.ModelSerializer):
     has_affiliation = serializers.BooleanField(read_only=True)
     can_create_reservations = serializers.BooleanField(read_only=True)
     reservation_block_reason = serializers.CharField(read_only=True)
+    # Account-approval summary (view-only policy). ``is_approved`` is the
+    # authoritative server-side condition; ``is_view_only`` is its inverse and
+    # drives the SPA's pending-approval notice. Both are read-only — a client
+    # can never set its own approval state.
+    is_approved = serializers.BooleanField(read_only=True)
+    is_view_only = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -305,6 +286,8 @@ class UserSerializer(serializers.ModelSerializer):
             "has_affiliation",
             "can_create_reservations",
             "reservation_block_reason",
+            "is_approved",
+            "is_view_only",
         )
         read_only_fields = (
             "role",
@@ -327,7 +310,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     (no tokens). The SPA must send external registrants to the login page.
     """
 
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True)
     affiliation = serializers.ChoiceField(
         choices=User.selectable_affiliation_choices(),
         required=False,
@@ -370,6 +353,19 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
+        password = attrs.get("password")
+        if password:
+            candidate_user = User(
+                username=attrs.get("username", ""),
+                first_name=attrs.get("first_name", ""),
+                last_name=attrs.get("last_name", ""),
+                email=attrs.get("email", ""),
+            )
+            try:
+                validate_password(password, candidate_user)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"password": exc.messages}) from exc
+
         if attrs.get("affiliation") != User.Affiliation.EXTERNAL_ORGANIZATION:
             if attrs.get("affiliation") in INTERNAL_AFFILIATIONS:
                 attrs["_internal_organization"] = resolve_internal_organization(
@@ -417,6 +413,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         }
         user = User(**validated_data)
         user.set_password(password)
+        user.is_active = False
         if affiliation:
             user.affiliation = affiliation
         user.save()
@@ -444,25 +441,18 @@ class LoginSerializer(TokenObtainPairSerializer):
     token pair is issued in this single step, with no second verification
     factor and no ``mfa_required`` challenge.
 
-    A *deactivated* account is refused distinctly: because the credential
-    check itself succeeded, the response is a 403 whose body carries
-    ``code: "account_deactivated"`` so the SPA can show the dedicated
-    deactivated-account modal. Wrong usernames/passwords keep simplejwt's
-    generic "no active account" 401 — the endpoint must never confirm which
-    usernames exist.
+    A *not-approved* (inactive) account also signs in, but only ever gets the
+    view-only experience: the login succeeds so the SPA can show the pending-
+    approval banner, while every state-changing API call is refused with 403
+    by ``accounts.permissions.IsAccountApprovedOrReadOnly``. Approval is a flag
+    on the account, re-checked on every request — issuing a token never grants
+    write access. Wrong usernames/passwords keep simplejwt's generic
+    "no active account" 401, so the endpoint never confirms which usernames
+    exist.
     """
 
     def validate(self, attrs):
-        try:
-            data = super().validate(attrs)
-        except exceptions.AuthenticationFailed:
-            # ModelBackend folds "inactive" into the same None it returns for
-            # bad credentials, so simplejwt raised its generic error. Re-check
-            # the credentials quietly: only a correct password for an existing
-            # inactive account is upgraded to the explicit deactivation
-            # refusal; everything else re-raises it untouched.
-            self._raise_if_deactivated_account(attrs)
-            raise
+        data = super().validate(attrs)
         request = self.context.get("request") if self.context else None
         # Successful credential sign-in — recorded server-side.
         record_password_login(self.user, request)
@@ -475,23 +465,6 @@ class LoginSerializer(TokenObtainPairSerializer):
         )
         data["user"] = UserSerializer(self.user).data
         return data
-
-    def _raise_if_deactivated_account(self, attrs):
-        username = (attrs.get(self.username_field) or "").strip()
-        password = attrs.get("password") or ""
-        if not username or not password:
-            return
-        # Same case-insensitive natural-key lookup ModelBackend performs, so
-        # the upgrade triggers exactly when its credential check passed.
-        candidate = User.objects.filter(
-            **{f"{self.username_field}__iexact": username}
-        ).first()
-        if (
-            candidate is not None
-            and not candidate.is_active
-            and candidate.check_password(password)
-        ):
-            raise DeactivatedAccountAuthenticationFailed()
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
@@ -511,6 +484,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
     organization_ref = OrganizationBriefSerializer(read_only=True)
     is_protected = serializers.SerializerMethodField()
     last_login = serializers.DateTimeField(read_only=True)
+    is_approved = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -527,6 +501,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "affiliation_label",
             "organization_ref",
             "is_active",
+            "is_approved",
             "is_staff",
             "is_superuser",
             "date_joined",

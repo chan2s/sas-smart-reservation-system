@@ -8,7 +8,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from accounts.permissions import IsSasStaff
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
 from facilities.models import Facility
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
@@ -80,8 +80,14 @@ def _trusted_requester_type(request, requested) -> str:
 
 
 class ReservationViewSet(viewsets.ModelViewSet):
-    """Administrative reservation management + requester self-service."""
-    permission_classes = [IsAuthenticated]
+    """Administrative reservation management + requester self-service.
+
+    A not-approved account may list and read reservations it is authorized to
+    see, but every write — create, resubmit, cancel, check-in/out, approval —
+    is a state change refused by ``IsAccountApprovedOrReadOnly`` (and, for the
+    staff-only actions, by ``IsSasStaff`` on top).
+    """
+    permission_classes = [IsAuthenticated, IsAccountApprovedOrReadOnly]
 
     search_fields = (
         "event_name",
@@ -227,7 +233,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @action(detail=False, methods=["get"], permission_classes=[IsSasStaff])
+    @action(detail=False, methods=["get"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def users(self, request):
         """Campus-user directory for admin "reserve on behalf of" search.
 
@@ -314,7 +320,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             )
         return super().destroy(request, *args, **kwargs)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def approve(self, request, pk=None):
         reservation = self.get_object()
         try:
@@ -329,7 +335,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def retry_approval_email(self, request, pk=None):
         """Re-send the approval notification email for an approved reservation.
 
@@ -354,7 +360,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             }
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def reject(self, request, pk=None):
         reservation = self.get_object()
         try:
@@ -369,7 +375,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def request_changes(self, request, pk=None):
         reservation = self.get_object()
         try:
@@ -479,7 +485,11 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
+    )
     def check_in(self, request, pk=None):
         """Check a reservation in.
 
@@ -520,7 +530,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def check_out(self, request, pk=None):
         reservation = self.get_object()
         try:

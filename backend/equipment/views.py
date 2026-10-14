@@ -10,7 +10,11 @@ from rest_framework.response import Response
 from reservations.models import ReservationItem
 
 from accounts.models import AuditLog
-from accounts.permissions import IsSasStaff, IsSasStaffOrReadOnly
+from accounts.permissions import (
+    IsAccountApprovedOrReadOnly,
+    IsSasStaff,
+    IsSasStaffOrReadOnly,
+)
 
 from .models import (
     Equipment,
@@ -52,7 +56,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         .all()
     )
     serializer_class = EquipmentSerializer
-    permission_classes = [IsSasStaffOrReadOnly]
+    permission_classes = [IsSasStaffOrReadOnly, IsAccountApprovedOrReadOnly]
     pagination_class = None
     search_fields = ("name", "description", "storage_location", "asset_code", "category__name")
 
@@ -472,7 +476,11 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
+    )
     def report_issue(self, request, pk=None):
         """Report a problem with one piece of equipment.
 
@@ -570,7 +578,7 @@ class FacilityResourceViewSet(viewsets.ModelViewSet):
         .prefetch_related("equipment__equipment_images")
         .all()
     )
-    permission_classes = [IsSasStaffOrReadOnly]
+    permission_classes = [IsSasStaffOrReadOnly, IsAccountApprovedOrReadOnly]
     pagination_class = None
     search_fields = ("equipment__name", "facility__name", "description")
 
@@ -656,7 +664,11 @@ class MaintenanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MaintenanceRecordSerializer
     search_fields = ("equipment__name", "description")
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly],
+    )
     def resolve(self, request, pk=None):
         record = self.get_object()
         record.status = MaintenanceRecord.Status.RESOLVED
@@ -668,7 +680,7 @@ class MaintenanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
     @action(
         detail=True,
         methods=["patch"],
-        permission_classes=[IsAuthenticated],
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
         url_path="edit",
     )
     def edit(self, request, pk=None):

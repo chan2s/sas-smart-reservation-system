@@ -40,6 +40,7 @@ function account(overrides: Partial<AdminUser> = {}): AdminUser {
     affiliation_label: '',
     organization_ref: null,
     is_active: true,
+    is_approved: true,
     is_staff: false,
     is_superuser: false,
     date_joined: '2026-10-11T16:57:21+0800',

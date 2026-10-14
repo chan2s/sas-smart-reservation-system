@@ -49,7 +49,7 @@ function statusParam(status: StatusFilter): 'true' | 'false' | undefined {
  * shows what the backend reports.
  */
 export function UserManagementPage() {
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, isViewOnly } = useAuth()
   const { toast } = useToast()
 
   const [users, setUsers] = useState<AdminUser[] | null>(null)
@@ -285,18 +285,22 @@ export function UserManagementPage() {
             </TableCell>
             <TableCell align="right">
               <TableActions>
-                <StatusButton
-                  item={item}
-                  currentUserId={currentUser?.id}
-                  onSelect={(target, nextActive) =>
-                    setPendingStatus({ user: target, nextActive })
-                  }
-                />
-                <DeleteButton
-                  item={item}
-                  currentUserId={currentUser?.id}
-                  onDelete={setPendingDelete}
-                />
+                {!isViewOnly && (
+                  <>
+                    <StatusButton
+                      item={item}
+                      currentUserId={currentUser?.id}
+                      onSelect={(target, nextActive) =>
+                        setPendingStatus({ user: target, nextActive })
+                      }
+                    />
+                    <DeleteButton
+                      item={item}
+                      currentUserId={currentUser?.id}
+                      onDelete={setPendingDelete}
+                    />
+                  </>
+                )}
               </TableActions>
             </TableCell>
           </TableRow>
@@ -322,18 +326,22 @@ export function UserManagementPage() {
               </CardField>
             </div>
             <CardActions>
-              <StatusButton
-                item={item}
-                currentUserId={currentUser?.id}
-                onSelect={(target, nextActive) =>
-                  setPendingStatus({ user: target, nextActive })
-                }
-              />
-              <DeleteButton
-                item={item}
-                currentUserId={currentUser?.id}
-                onDelete={setPendingDelete}
-              />
+              {!isViewOnly && (
+                <>
+                  <StatusButton
+                    item={item}
+                    currentUserId={currentUser?.id}
+                    onSelect={(target, nextActive) =>
+                      setPendingStatus({ user: target, nextActive })
+                    }
+                  />
+                  <DeleteButton
+                    item={item}
+                    currentUserId={currentUser?.id}
+                    onDelete={setPendingDelete}
+                  />
+                </>
+              )}
             </CardActions>
           </div>
         )}

@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { OfflineBanner } from '@/components/offline/OfflineBanner'
 import { PwaNotices } from '@/components/pwa/PwaNotices'
+import { ViewOnlyAccessDenied } from '@/components/auth/ViewOnlyNotice'
 import { useAuth } from '@/hooks/useAuth'
 import { Spinner } from '@/components/ui/Misc'
 
@@ -124,6 +125,31 @@ function Protected() {
   return <AppShell />
 }
 
+/**
+ * Blocks a not-approved (view-only) account from a prohibited action form
+ * reached directly by URL. Backend enforcement is authoritative; this keeps
+ * the UI consistent and shows a clear access-denied message.
+ */
+function RequireApproved({
+  children,
+  title,
+}: {
+  children: ReactNode
+  title: string
+}) {
+  const { user, loading, isViewOnly } = useAuth()
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-soft">
+        <Spinner />
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (isViewOnly) return <ViewOnlyAccessDenied title={title} />
+  return children
+}
+
 /** Blocks access for requesters; only administrators and SAS staff pass. */
 function RequireStaff({ children }: { children: ReactNode }) {
   const { user, loading, isStaff } = useAuth()
@@ -180,22 +206,52 @@ export default function App() {
           {/* Read-only local backup view — reachable offline. */}
           <Route path="/offline" element={<OfflinePage />} />
           {/* Affiliation completion — reachable at any time from the profile. */}
-          <Route path="/onboarding/affiliation" element={<AffiliationPage />} />
+          <Route
+            path="/onboarding/affiliation"
+            element={
+              <RequireApproved title="Updating your affiliation">
+                <AffiliationPage />
+              </RequireApproved>
+            }
+          />
           <Route path="/facilities" element={<FacilitiesPage />} />
           <Route path="/facilities/:id" element={<FacilityDetailPage />} />
           <Route
             path="/facilities/:id/resources"
             element={
-              <RequireStaff>
-                <FacilityResourcesPage />
-              </RequireStaff>
+              <RequireApproved title="Editing this facility's resources">
+                <RequireStaff>
+                  <FacilityResourcesPage />
+                </RequireStaff>
+              </RequireApproved>
             }
           />
           <Route path="/reservations" element={<ReservationsPage />} />
-          <Route path="/reservations/new" element={<ReservationWizardPage />} />
+          <Route
+            path="/reservations/new"
+            element={
+              <RequireApproved title="Creating a reservation">
+                <ReservationWizardPage />
+              </RequireApproved>
+            }
+          />
           <Route path="/reservations/:id" element={<ReservationDetailPage />} />
-          <Route path="/reservations/:id/check-in" element={<CheckInPage />} />
-          <Route path="/reservations/:id/check-out" element={<CheckOutPage />} />
+          <Route
+            path="/reservations/:id/check-in"
+            element={
+              <RequireApproved title="Check-in">
+                <CheckInPage />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/reservations/:id/check-out"
+            element={
+              <RequireApproved title="Check-out">
+                <CheckOutPage />
+              </RequireApproved>
+            }
+          />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/equipment" element={<EquipmentPage />} />
           <Route path="/equipment/:id" element={<EquipmentDetailPage />} />

@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .models import AuditLog
+from .permissions import IsAccountApprovedOrReadOnly
 from .throttling import (
     AuthLoginThrottle,
     AuthRefreshThrottle,
@@ -28,8 +29,15 @@ class RefreshView(TokenRefreshView):
 
 
 class MeView(generics.RetrieveUpdateAPIView):
+    """GET / PATCH /api/auth/me/.
+
+    Reading your own profile and account status always works; updating it is a
+    state change and is therefore refused for a not-approved account by
+    ``IsAccountApprovedOrReadOnly``.
+    """
+
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsAccountApprovedOrReadOnly]
 
     def get_object(self):
         return self.request.user
