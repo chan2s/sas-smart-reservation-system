@@ -1,0 +1,17 @@
+node_modules/
+
+# Build artifacts (the PWA plugin writes dev-dist/ while the dev server serves).
+dist/
+dev-dist/
+coverage/
+
+# Local logs and throwaway browser-driver output
+*.log
+chrome-profile-*/
+chrome-cache-*/
+chrome-cdp-*/
+
+# Keep the image build context to source + lockfile + config.
+.env
+.env.*
+!.env.example

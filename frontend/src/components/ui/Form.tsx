@@ -56,6 +56,7 @@ export function Field({
   htmlFor,
   hint,
   error,
+  required,
   children,
   className,
 }: {
@@ -63,12 +64,22 @@ export function Field({
   htmlFor?: string
   hint?: string
   error?: string
+  /** Shows a required marker next to the label (the input still needs `required`). */
+  required?: boolean
   children: ReactNode
   className?: string
 }) {
   return (
     <div className={cn('space-y-1.5', className)}>
-      <label htmlFor={htmlFor} className="block text-[13px] font-medium text-ink">
+      <label
+        htmlFor={htmlFor}
+        className={cn(
+          'block text-[13px] font-medium text-ink',
+          // Drawn with CSS content so the marker stays decorative: it never
+          // enters the label's text content or its accessible name.
+          required && "after:ml-0.5 after:text-status-rejected after:content-['*']",
+        )}
+      >
         {label}
       </label>
       {children}

@@ -8,6 +8,21 @@ import { VitePWA } from 'vite-plugin-pwa'
 // warning). The project sets `allowImportingTsExtensions`, so this is safe.
 import { runtimeCaching } from './src/lib/pwa/cache-rules.ts'
 
+// Dev-server plumbing, overridable by the environment (see compose.yaml).
+//
+// Both are read from plain process env vars that are deliberately NOT prefixed
+// with `VITE_`: they configure the dev server process, and a `VITE_` prefix
+// would inline them into the client bundle instead.
+//
+// * DEV_PROXY_TARGET — where /api and /media are proxied. Defaults to the local
+//   Django dev server, so `npm run dev` on the host behaves exactly as before;
+//   inside Docker Compose it is the `backend` service.
+// * DEV_USE_POLLING — watch files by polling. Containers that read a bind mount
+//   from the Windows host often miss inotify events, which silently stops HMR
+//   and full-reload from firing.
+const proxyTarget = process.env.DEV_PROXY_TARGET?.trim() || 'http://127.0.0.1:8000'
+const pollForChanges = process.env.DEV_USE_POLLING === 'true'
+
 // PWA + service-worker strategy.
 //
 // The app is an authenticated SPA talking to a Django API. Connectivity is an
@@ -128,14 +143,32 @@ export default defineConfig(({ command }) => {
       // domain pattern instead of pinning one — this is the dev server only;
       // production builds are unaffected.
       allowedHosts: ['.devtunnels.ms'],
+      watch: {
+        // Polling only where the environment asks for it (Docker on Windows);
+        // the host keeps the cheaper native filesystem events. Polling costs a
+        // little latency but is what makes HMR fire reliably when the source
+        // directory is bind-mounted from Windows into the container.
+        usePolling: pollForChanges,
+        interval: 300,
+        // Keep throwaway output out of the watch set: browser-driver profiles
+        // and caches, build output, and local logs are not application source.
+        // This is not just tidiness — with the project bind-mounted from a
+        // Windows host, Docker Desktop's file sharing emulates inotify by
+        // walking the tree, so ~600 junk entries in the watch set saturated it
+        // and made a document request take 27s instead of 0.4s.
+        ignored: ['**/chrome-*/**', '**/dist/**', '**/dev-dist/**', '**/*.log'],
+      },
       proxy: {
         // Forward API calls to the Django dev server during development.
+        // `changeOrigin` makes the backend see the proxy target as the Host,
+        // so Django's ALLOWED_HOSTS must accept it: 127.0.0.1 locally, and
+        // the `backend` service name inside Docker (`backend/.env`).
         '/api': {
-          target: 'http://127.0.0.1:8000',
+          target: proxyTarget,
           changeOrigin: true,
         },
         '/media': {
-          target: 'http://127.0.0.1:8000',
+          target: proxyTarget,
           changeOrigin: true,
         },
       },

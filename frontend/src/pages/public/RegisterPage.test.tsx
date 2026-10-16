@@ -47,12 +47,19 @@ function renderRegister() {
   )
 }
 
-async function submitBasicRegistration() {
+function fillRegistrationForm({ confirmPassword = 'pass12345' } = {}) {
   fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Juan' } })
   fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Dela Cruz' } })
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'requester' } })
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'juan@example.com' } })
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pass12345' } })
+  fireEvent.change(screen.getByLabelText('Confirm password'), {
+    target: { value: confirmPassword },
+  })
+}
+
+async function submitBasicRegistration() {
+  fillRegistrationForm()
   fireEvent.click(screen.getByRole('button', { name: 'Create Account' }))
   await waitFor(() => expect(apiState.register).toHaveBeenCalled())
 }
@@ -88,5 +95,95 @@ describe('RegisterPage', () => {
         password: 'pass12345',
       }),
     )
+  })
+
+  it('never sends the confirmation password to the backend', async () => {
+    apiState.register.mockResolvedValue({ id: 1 })
+
+    renderRegister()
+    await submitBasicRegistration()
+
+    expect(apiState.register).toHaveBeenCalledTimes(1)
+    expect(apiState.register.mock.calls[0][0]).not.toHaveProperty('confirm_password')
+  })
+
+  it('blocks submission and reports a mismatch while the passwords differ', async () => {
+    renderRegister()
+    fillRegistrationForm({ confirmPassword: 'different99' })
+
+    expect(await screen.findByText('Passwords do not match')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create Account' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create Account' }))
+    expect(apiState.register).not.toHaveBeenCalled()
+  })
+
+  it('clears the mismatch error as soon as both passwords match', async () => {
+    renderRegister()
+    fillRegistrationForm({ confirmPassword: 'different99' })
+    expect(await screen.findByText('Passwords do not match')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'pass12345' },
+    })
+
+    expect(screen.queryByText('Passwords do not match')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Create Account' })).toBeEnabled()
+  })
+
+  it('toggles each password field independently', () => {
+    renderRegister()
+
+    const password = screen.getByLabelText('Password') as HTMLInputElement
+    const confirmPassword = screen.getByLabelText('Confirm password') as HTMLInputElement
+    expect(password.type).toBe('password')
+    expect(confirmPassword.type).toBe('password')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }))
+    expect(password.type).toBe('text')
+    expect(confirmPassword.type).toBe('password')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show confirm password' }))
+    expect(password.type).toBe('text')
+    expect(confirmPassword.type).toBe('text')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide password' }))
+    expect(password.type).toBe('password')
+    expect(confirmPassword.type).toBe('text')
+  })
+
+  it('shows a loading label and prevents duplicate submissions', async () => {
+    let resolveRegister: (value: unknown) => void = () => {}
+    apiState.register.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRegister = resolve
+        }),
+    )
+
+    renderRegister()
+    fillRegistrationForm()
+    fireEvent.click(screen.getByRole('button', { name: 'Create Account' }))
+
+    const submitting = await screen.findByRole('button', { name: 'Creating account...' })
+    expect(submitting).toBeDisabled()
+
+    fireEvent.click(submitting)
+    expect(apiState.register).toHaveBeenCalledTimes(1)
+
+    resolveRegister({ id: 1 })
+    expect(await screen.findByText('login reached ?registered=success')).toBeTruthy()
+  })
+
+  it('marks password fields as required with new-password autocomplete', () => {
+    renderRegister()
+
+    const password = screen.getByLabelText('Password')
+    const confirmPassword = screen.getByLabelText('Confirm password')
+
+    expect(password).toBeRequired()
+    expect(confirmPassword).toBeRequired()
+    expect(password).toHaveAttribute('autocomplete', 'new-password')
+    expect(confirmPassword).toHaveAttribute('autocomplete', 'new-password')
   })
 })
