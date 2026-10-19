@@ -475,6 +475,7 @@ class AuditLog(models.Model):
         RESERVATION_APPROVED = "RESERVATION_APPROVED", "Reservation approved"
         RESERVATION_REJECTED = "RESERVATION_REJECTED", "Reservation rejected"
         RESERVATION_CANCELLED = "RESERVATION_CANCELLED", "Reservation cancelled"
+        RESERVATION_NO_SHOW = "RESERVATION_NO_SHOW", "Reservation marked no-show"
         RESERVATION_STATUS = "RESERVATION_STATUS", "Reservation status changed"
         EARLY_CHECK_IN = "EARLY_CHECK_IN", "Early check-in performed"
         CHECK_IN = "CHECK_IN", "Checked in"

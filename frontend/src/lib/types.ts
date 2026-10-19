@@ -439,6 +439,8 @@ export type ReservationStatus =
   | 'COMPLETED'
   | 'REJECTED'
   | 'CANCELLED'
+  /** Marked by an administrator after an approved event ended unattended. */
+  | 'NO_SHOW'
   /** Reached its event start time without being approved. */
   | 'EXPIRED'
 
@@ -552,6 +554,8 @@ export interface ReservationEvent {
     | 'CANCELLED'
     | 'CHECKED_IN'
     | 'CHECKED_OUT'
+    | 'NO_SHOW'
+    | 'REMINDER_SENT'
     | 'COMMENT'
     | 'EXPIRED'
     | 'REBOOKED'
@@ -628,6 +632,13 @@ export interface ReservationSummary {
    * same rule the resubmit endpoint enforces.)
    */
   can_edit: boolean
+  /**
+   * Server-computed (staff only): may the current user mark this reservation
+   * as a no-show? True only for an APPROVED, never checked-in reservation
+   * whose calendar date is at least one day in the past (i.e. from the day
+   * after the event onward — not 24 hours after its start time).
+   */
+  can_mark_no_show: boolean
   /**
    * Server-computed: an administrator has requested changes and the
    * reservation is still awaiting review — the requester is expected to edit.
@@ -729,6 +740,12 @@ export interface ReservationDetail extends ReservationSummary {
   early_check_in_override: boolean
   approved_by_name: string
   approved_at: string | null
+  /** Administrator who explicitly marked the reservation as a no-show. */
+  no_show_marked_by_name: string
+  /** When the no-show was recorded (null unless status is NO_SHOW). */
+  no_show_marked_at: string | null
+  /** When the automatic three-days-before reminder was delivered. */
+  reminder_sent_at: string | null
   items: ReservationItem[]
   events: ReservationEvent[]
   inspection: InspectionReport | null
@@ -942,6 +959,7 @@ export type TrackStatus =
   | 'REJECTED'
   | 'CANCELLED'
   | 'COMPLETED'
+  | 'NO_SHOW'
   | 'EXPIRED'
   | 'CHECKED_IN'
 

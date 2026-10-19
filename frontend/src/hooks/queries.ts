@@ -513,12 +513,21 @@ export function useReservationAction(id: number | null) {
       action,
       body,
     }: {
-      action: 'approve' | 'reject' | 'request_changes' | 'cancel' | 'check_in' | 'check_out'
+      action:
+        | 'approve'
+        | 'reject'
+        | 'request_changes'
+        | 'cancel'
+        | 'check_in'
+        | 'check_out'
+        | 'mark-no-show'
       body?: Record<string, unknown>
     }) => endpoints.reservationAction(id as number, action, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['reservation', id] })
       void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      // Status-tab badges and the calendar are derived from the same write.
+      void queryClient.invalidateQueries({ queryKey: ['reservation-counts'] })
       void queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
       void queryClient.invalidateQueries({ queryKey: ['summary'] })
       void queryClient.invalidateQueries({ queryKey: ['notifications'] })

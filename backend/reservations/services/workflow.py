@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.utils import timezone
 
@@ -512,6 +513,129 @@ def cancel_reservation(reservation, actor, reason=""):
     return reservation
 
 
+def no_show_eligibility(reservation, user=None, now=None):
+    """Evaluate whether a reservation may be marked as a no-show.
+
+    Single source of truth for BOTH the API's ``can_mark_no_show`` field (what
+    the frontend displays) and the ``mark_no_show`` endpoint's enforcement, so
+    the two can never disagree. Returns ``(allowed, code, reason)`` where
+    ``code`` is ``""`` when allowed, or one of ``"not_permitted"``,
+    ``"status"``, ``"checked_in"``, ``"already_marked"``,
+    ``"date_not_passed"``.
+
+    Rules: only SAS staff may perform the action; only an APPROVED reservation
+    that was never checked in is eligible (an ACTIVE/COMPLETED one was
+    attended); and the reservation's CALENDAR DATE must be at least one day in
+    the past, in the project's configured timezone. Eligibility therefore
+    begins at local midnight on the day AFTER the event — deliberately NOT 24
+    hours after the scheduled start time (a reservation dated Oct 19 becomes
+    eligible on Oct 20 regardless of its start time). Cancelled, rejected,
+    expired, completed, and already-marked reservations are never eligible.
+    """
+    if user is not None and not getattr(user, "is_sas_staff", False):
+        return False, "not_permitted", ""
+    if reservation.status == Reservation.Status.NO_SHOW:
+        return (
+            False,
+            "already_marked",
+            "This reservation has already been marked as a no-show.",
+        )
+    if reservation.status != Reservation.Status.APPROVED:
+        return (
+            False,
+            "status",
+            "Only approved reservations can be marked as a no-show.",
+        )
+    if reservation.checked_in_at is not None:
+        return (
+            False,
+            "checked_in",
+            "This reservation was checked in and cannot be marked as a no-show.",
+        )
+    if timezone.localdate(now or timezone.now()) <= reservation.date:
+        return (
+            False,
+            "date_not_passed",
+            (
+                "This reservation can only be marked as a no-show on or "
+                "after the day following the scheduled event date."
+            ),
+        )
+    return True, "", ""
+
+
+def mark_no_show(reservation, actor, now=None):
+    """Explicitly mark a past-date, approved reservation as a no-show.
+
+    Administrator-only and never automatic: the caller must confirm the
+    action. The status re-check, write, timeline entry, and audit record run in
+    one transaction under a row lock, so a repeated or concurrent request —
+    including a concurrent check-in — produces exactly one transition (the
+    loser gets a clear error), and the original schedule remains available in
+    the event/audit history.
+
+    The requester is deliberately NOT notified: no no-show notification
+    workflow exists in the application.
+    """
+    if not getattr(actor, "is_sas_staff", False):
+        raise PermissionDenied(
+            "Only administrators can mark a reservation as a no-show."
+        )
+    now = now or timezone.now()
+
+    with transaction.atomic():
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        allowed, code, blocker = no_show_eligibility(locked, actor, now=now)
+        if not allowed:
+            raise ValueError(
+                blocker or "This reservation cannot be marked as a no-show."
+            )
+
+        marked_at = now
+        from_status = locked.status
+        locked.status = Reservation.Status.NO_SHOW
+        locked.no_show_marked_at = marked_at
+        locked.no_show_marked_by = actor
+        locked.save(
+            update_fields=[
+                "status",
+                "no_show_marked_at",
+                "no_show_marked_by",
+                "updated_at",
+            ]
+        )
+        detail = (
+            f"Marked as no-show by {actor.display_name} for "
+            f"{locked.event_name}: the requester did not check in within the "
+            f"permitted period. Scheduled event: {locked.date} "
+            f"{locked.start_time:%H:%M}–{locked.end_time:%H:%M} at "
+            f"{locked.facility.name}."
+        )
+        record_event(
+            locked,
+            ReservationEvent.EventType.NO_SHOW,
+            actor=actor,
+            from_status=from_status,
+            to_status=locked.status,
+            message=detail,
+        )
+        AuditLog.record(
+            actor,
+            AuditLog.Action.RESERVATION_NO_SHOW,
+            object_type="reservation",
+            object_id=locked.reservation_id,
+            object_repr=locked.event_name,
+            detail=detail,
+        )
+
+    # Keep the caller's in-memory instance in sync with the persisted write.
+    reservation.status = locked.status
+    reservation.no_show_marked_at = locked.no_show_marked_at
+    reservation.no_show_marked_by = locked.no_show_marked_by
+    reservation.updated_at = locked.updated_at
+    return reservation
+
+
 def check_in_reservation(reservation, actor, override=False):
     """Check a reservation in.
 
@@ -520,53 +644,96 @@ def check_in_reservation(reservation, actor, override=False):
     explicitly confirms the override (``override=True``) is allowed — the
     backend verifies the role itself; a regular user cannot bypass the window
     by sending the flag.
+
+    Check-in is refused once the reservation's calendar date is in the past
+    (the reservation is then in its no-show window), and for cancelled,
+    no-show, rejected, completed, or expired reservations. The status re-check
+    and the write run in one transaction under a row lock, so a concurrent
+    check-in / no-show pair can never both succeed: whichever commits first
+    makes the other ineligible.
     """
-    # A stale PENDING whose event started is expired first, and an expired
-    # reservation can never be checked in or occupy the facility.
-    expiration.refresh_reservation_status(reservation)
-    if reservation.status == Reservation.Status.EXPIRED:
-        raise ValueError(
-            "This reservation has expired and can no longer be checked in."
-        )
-    if reservation.status not in (Reservation.Status.APPROVED, Reservation.Status.ACTIVE):
-        raise ValueError("Only approved reservations can be checked in.")
     now = timezone.now()
-    override_used = bool(now < reservation.check_in_open_time and actor.is_admin and override)
-    if now < reservation.check_in_open_time and not override_used:
-        raise CheckInNotOpenError(reservation)
-    from_status = reservation.status
-    reservation.status = Reservation.Status.ACTIVE
-    reservation.checked_in_at = timezone.now()
-    reservation.early_check_in_override = override_used
-    reservation.save(
-        update_fields=["status", "checked_in_at", "early_check_in_override", "updated_at"]
-    )
-    record_event(
-        reservation,
-        ReservationEvent.EventType.CHECKED_IN,
-        actor=actor,
-        from_status=from_status,
-        to_status=reservation.status,
-        message=(
-            "Early check-in override performed by an administrator before the "
-            "standard 3-hour window."
+    with transaction.atomic():
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        # A stale PENDING whose event started is expired first, and an expired
+        # reservation can never be checked in or occupy the facility.
+        expiration.refresh_reservation_status(locked, now=now)
+        if locked.status == Reservation.Status.EXPIRED:
+            raise ValueError(
+                "This reservation has expired and can no longer be checked in."
+            )
+        if locked.status == Reservation.Status.NO_SHOW:
+            raise ValueError(
+                "This reservation was marked as a no-show and cannot be checked in."
+            )
+        if locked.status == Reservation.Status.CANCELLED:
+            raise ValueError(
+                "This reservation was cancelled and cannot be checked in."
+            )
+        if locked.status not in (
+            Reservation.Status.APPROVED,
+            Reservation.Status.ACTIVE,
+        ):
+            raise ValueError("Only approved reservations can be checked in.")
+        # One-day no-show rule: from the day AFTER the event date onward, the
+        # reservation is in the administrator no-show window, so check-in is
+        # closed even if it was never used. The API can never bypass this.
+        if timezone.localdate(now) > locked.date:
+            raise ValueError(
+                "Check-in is no longer available: the reservation date has passed."
+            )
+        override_used = bool(
+            now < locked.check_in_open_time and actor.is_admin and override
+        )
+        if now < locked.check_in_open_time and not override_used:
+            raise CheckInNotOpenError(locked)
+        from_status = locked.status
+        locked.status = Reservation.Status.ACTIVE
+        locked.checked_in_at = now
+        locked.early_check_in_override = override_used
+        locked.save(
+            update_fields=[
+                "status",
+                "checked_in_at",
+                "early_check_in_override",
+                "updated_at",
+            ]
+        )
+        record_event(
+            locked,
+            ReservationEvent.EventType.CHECKED_IN,
+            actor=actor,
+            from_status=from_status,
+            to_status=locked.status,
+            message=(
+                "Early check-in override performed by an administrator before "
+                "the standard 3-hour window."
+                if override_used
+                else "Requester checked in with SAS staff."
+            ),
+        )
+        AuditLog.record(
+            actor,
+            AuditLog.Action.EARLY_CHECK_IN
             if override_used
-            else "Requester checked in with SAS staff."
-        ),
-    )
-    AuditLog.record(
-        actor,
-        AuditLog.Action.EARLY_CHECK_IN if override_used else AuditLog.Action.CHECK_IN,
-        object_type="reservation",
-        object_id=reservation.reservation_id,
-        object_repr=reservation.event_name,
-        detail=(
-            f"Early check-in override — standard window opened at "
-            f"{reservation.check_in_open_time:%Y-%m-%d %H:%M}."
-            if override_used
-            else ""
-        ),
-    )
+            else AuditLog.Action.CHECK_IN,
+            object_type="reservation",
+            object_id=locked.reservation_id,
+            object_repr=locked.event_name,
+            detail=(
+                f"Early check-in override — standard window opened at "
+                f"{locked.check_in_open_time:%Y-%m-%d %H:%M}."
+                if override_used
+                else ""
+            ),
+        )
+
+    # Keep the caller's in-memory instance in sync with the persisted write, so
+    # the API layer serializes the checked-in state it just recorded.
+    reservation.status = locked.status
+    reservation.checked_in_at = locked.checked_in_at
+    reservation.early_check_in_override = locked.early_check_in_override
+    reservation.updated_at = locked.updated_at
     return reservation
 
 

@@ -255,6 +255,12 @@ export const STATUS_META: Record<
     bg: 'bg-status-cancelled-bg',
     dot: 'bg-status-cancelled',
   },
+  NO_SHOW: {
+    label: 'No-show',
+    text: 'text-status-no-show',
+    bg: 'bg-status-no-show-bg',
+    dot: 'bg-status-no-show',
+  },
   EXPIRED: {
     label: 'Expired',
     text: 'text-status-expired',

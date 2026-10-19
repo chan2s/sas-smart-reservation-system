@@ -11,6 +11,7 @@ import io
 import json
 from datetime import date, datetime, timedelta
 
+from django.db import models
 from django.db.models import Count, Sum
 from django.db.models.functions import ExtractHour
 from django.http import HttpResponse
@@ -356,12 +357,20 @@ def cancellation_rate() -> float:
 
 
 def no_show_rate() -> float:
-    """Approved/active reservations past their date that were never checked in."""
+    """Share of decided reservations that were no-shows.
+
+    Counts both explicitly recorded NO_SHOW reservations (an administrator
+    confirmed the absence) and approved/active reservations past their date
+    that were never checked in (not yet reviewed by staff).
+    """
     today = timezone.localdate()
     no_shows = Reservation.objects.filter(
-        date__lt=today,
-        status__in=[Reservation.Status.APPROVED, Reservation.Status.ACTIVE],
-        checked_in_at__isnull=True,
+        models.Q(status=Reservation.Status.NO_SHOW)
+        | models.Q(
+            date__lt=today,
+            status__in=[Reservation.Status.APPROVED, Reservation.Status.ACTIVE],
+            checked_in_at__isnull=True,
+        )
     ).count()
     denominator = Reservation.objects.exclude(status=Reservation.Status.PENDING).count()
     if not denominator:
@@ -433,7 +442,10 @@ REPORTS = [
     {
         "slug": "no-show",
         "title": "No-Show Report",
-        "description": "Approved reservations that were never checked in.",
+        "description": (
+            "Reservations marked as no-show by an administrator, plus approved "
+            "reservations past their event that were never checked in."
+        ),
     },
 ]
 
@@ -534,14 +546,51 @@ def _report_rows(slug: str, start=None, end=None):
         return headers, rows
 
     if slug == "no-show":
-        qs = Reservation.objects.filter(
-            date__lt=timezone.localdate(),
-            status__in=[Reservation.Status.APPROVED, Reservation.Status.ACTIVE],
-            checked_in_at__isnull=True,
-        ).select_related("facility", "requester")
-        headers = ["Reservation ID", "Event", "Requester", "Facility", "Date", "Status"]
+        today = timezone.localdate()
+        qs = _in_range(
+            Reservation.objects.filter(
+                models.Q(status=Reservation.Status.NO_SHOW)
+                | models.Q(
+                    date__lt=today,
+                    status__in=[
+                        Reservation.Status.APPROVED,
+                        Reservation.Status.ACTIVE,
+                    ],
+                    checked_in_at__isnull=True,
+                )
+            ).select_related("facility", "requester", "no_show_marked_by"),
+            start,
+            end,
+        ).order_by("-date", "-start_time")
+        headers = [
+            "Reservation ID",
+            "Event",
+            "Requester",
+            "Facility",
+            "Date",
+            "Start",
+            "End",
+            "Status",
+            "No-show recorded at",
+            "Recorded by",
+        ]
         rows = [
-            [r.reservation_id, r.event_name, r.requester_display_name, r.facility.name, r.date.isoformat(), r.get_status_display()]
+            [
+                r.reservation_id,
+                r.event_name,
+                r.requester_display_name,
+                r.facility.name,
+                r.date.isoformat(),
+                r.start_time.strftime("%H:%M"),
+                r.end_time.strftime("%H:%M"),
+                r.get_status_display(),
+                (
+                    timezone.localtime(r.no_show_marked_at).isoformat()
+                    if r.no_show_marked_at
+                    else ""
+                ),
+                r.no_show_marked_by.display_name if r.no_show_marked_by else "",
+            ]
             for r in qs
         ]
         return headers, rows

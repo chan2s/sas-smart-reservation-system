@@ -106,7 +106,12 @@ class ReservationViewSet(viewsets.ModelViewSet):
         # approval and check-in paths re-check their own object as well).
         expiration.expire_overdue_reservations()
         qs = Reservation.objects.select_related(
-            "facility", "requester", "created_by", "approved_by", "organization_ref"
+            "facility",
+            "requester",
+            "created_by",
+            "approved_by",
+            "no_show_marked_by",
+            "organization_ref",
         ).prefetch_related("items__equipment__category", "events")
         user = self.request.user
 
@@ -500,7 +505,10 @@ class ReservationViewSet(viewsets.ModelViewSet):
         administrator who explicitly confirms the override (``override: true``
         in the request body) may check in — the backend verifies the role, so
         a regular user cannot bypass the window by sending the flag. The
-        override is recorded on the reservation.
+        override is recorded on the reservation. Check-in is refused once the
+        reservation's calendar date has passed (from the next day onward the
+        reservation enters its no-show window), and for cancelled, no-show,
+        rejected, completed, or expired reservations.
         """
         reservation = self.get_object()
         is_owner = reservation.requester_id == request.user.id
@@ -529,6 +537,37 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 reservation, context={"request": request}
             ).data
         )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="mark-no-show",
+        permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly],
+    )
+    def mark_no_show(self, request, pk=None):
+        """Explicitly mark a past-date, approved reservation as a no-show.
+
+        Staff-only on top of the account-approval policy. The eligibility
+        rules (APPROVED status, never checked in, reservation calendar date at
+        least one day in the past in the project's timezone) are enforced by
+        ``services.workflow.no_show_eligibility`` — the same helper that drives
+        the frontend's ``can_mark_no_show`` flag. The status write, timeline
+        entry, and audit record run under a row lock, so a concurrent check-in
+        cannot also succeed. The action is never automatic: an administrator
+        must confirm it.
+        """
+        reservation = self.get_object()
+        try:
+            workflow.mark_no_show(reservation, request.user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        data = ReservationDetailSerializer(
+            reservation, context={"request": request}
+        ).data
+        # The updated reservation is the response body (matching the other
+        # action endpoints); ``message`` is an additive convenience field.
+        data["message"] = "Reservation successfully marked as no-show."
+        return Response(data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def check_out(self, request, pk=None):

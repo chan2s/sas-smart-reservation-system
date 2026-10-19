@@ -30,6 +30,7 @@ const ACTION_GROUPS: { label: string; actions: { value: string; label: string }[
       { value: 'RESERVATION_APPROVED', label: 'Approved' },
       { value: 'RESERVATION_REJECTED', label: 'Rejected' },
       { value: 'RESERVATION_CANCELLED', label: 'Cancelled' },
+      { value: 'RESERVATION_NO_SHOW', label: 'No-shows' },
     ],
   },
   {
@@ -60,6 +61,7 @@ const TONE_BY_ACTION: Record<string, string> = {
   RESERVATION_APPROVED: 'bg-status-available-bg text-status-available',
   RESERVATION_REJECTED: 'bg-status-rejected-bg text-status-rejected',
   RESERVATION_CANCELLED: 'bg-softer text-muted',
+  RESERVATION_NO_SHOW: 'bg-status-no-show-bg text-status-no-show',
   RESERVATION_CREATED: 'bg-brand-soft text-brand',
   EARLY_CHECK_IN: 'bg-status-pending-bg text-status-pending',
   CHECK_IN: 'bg-status-available-bg text-status-available',

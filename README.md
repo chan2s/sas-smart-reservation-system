@@ -449,6 +449,24 @@ docker compose config --quiet
 
 The actual test count and results should be taken from the current project rather than assumed from older documentation.
 
+### Scheduled tasks
+
+Both maintenance sweeps are idempotent management commands, so they can be
+scheduled with the host's cron (or a Render cron job) — no always-on worker is
+required. Run them from the `backend` directory with the same environment and
+virtualenv as the web process:
+
+```cron
+# Move unapproved reservations to EXPIRED once their event starts.
+*/10 * * * * cd /path/to/backend && /path/to/python manage.py expire_reservations >> /var/log/sas-expire.log 2>&1
+
+# Send the three-days-before reminder (at most once per reservation).
+0 * * * * cd /path/to/backend && /path/to/python manage.py send_reservation_reminders >> /var/log/sas-reminders.log 2>&1
+```
+
+`python manage.py send_reservation_reminders --dry-run` reports how many
+reminders are currently due without sending anything.
+
 ---
 
 ## 6. API Overview
@@ -468,6 +486,7 @@ The actual test count and results should be taken from the current project rathe
 | `/api/reservations/{id}/cancel/` | Cancel a reservation |
 | `/api/reservations/{id}/check_in/` | Check in |
 | `/api/reservations/{id}/check_out/` | Check out |
+| `POST /api/reservations/{id}/mark-no-show/` | Staff-only: mark an approved reservation as a no-show from the day after its event date |
 | `GET /api/reservations/checkin/{code}/` | QR scan lookup |
 | `POST /api/availability/check/` | Check availability and conflicts |
 | `POST /api/availability/resources/` | Smart resource recommendations |

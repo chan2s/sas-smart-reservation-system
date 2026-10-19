@@ -313,6 +313,11 @@ class Reservation(models.Model):
         COMPLETED = "COMPLETED", "Completed"
         REJECTED = "REJECTED", "Rejected"
         CANCELLED = "CANCELLED", "Cancelled"
+        # An approved reservation whose event ended without the requester ever
+        # checking in. Set EXPLICITLY by an administrator after the event has
+        # ended (never automatically), and deliberately distinct from REJECTED
+        # (a pre-event staff decision) and CANCELLED (withdrawn by a person).
+        NO_SHOW = "NO_SHOW", "No-show"
         # A pending reservation whose scheduled EVENT START TIME was reached
         # before anyone approved it. Deliberately distinct from REJECTED (an
         # explicit staff decision) and CANCELLED (withdrawn by a person): it
@@ -357,6 +362,7 @@ class Reservation(models.Model):
         Status.REJECTED,
         Status.CANCELLED,
         Status.EXPIRED,
+        Status.NO_SHOW,
     ]
 
     reservation_id = models.CharField(max_length=20, unique=True, editable=False)
@@ -480,6 +486,33 @@ class Reservation(models.Model):
         help_text="Delivery state of the approval notification email (staff diagnostic).",
     )
 
+    # Automatic three-days-before reminder. ``reminder_sent_at`` is the
+    # reliable "already delivered" marker the scheduled task checks and claims
+    # atomically, so a reservation never receives the reminder twice even when
+    # the task runs on several workers or is retried after a restart.
+    reminder_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the upcoming-reservation reminder was delivered (null = not sent yet).",
+    )
+
+    # Explicit administrator no-show decision. Nullable so every pre-existing
+    # reservation keeps working; ``SET_NULL`` preserves the reservation even if
+    # the administrator's account is later deleted.
+    no_show_marked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When an administrator marked this reservation as a no-show.",
+    )
+    no_show_marked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reservations_marked_no_show",
+        help_text="Administrator who marked this reservation as a no-show.",
+    )
+
     checkin_code = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     checked_in_at = models.DateTimeField(null=True, blank=True)
     checked_out_at = models.DateTimeField(null=True, blank=True)
@@ -498,6 +531,8 @@ class Reservation(models.Model):
             models.Index(fields=["facility", "date"]),
             models.Index(fields=["requester_type", "status"]),
             models.Index(fields=["contact_email"]),
+            # The scheduled reminder sweep filters on exactly these columns.
+            models.Index(fields=["status", "reminder_sent_at"]),
         ]
 
     def save(self, *args, **kwargs):
@@ -615,6 +650,11 @@ class Reservation(models.Model):
         return timezone.make_aware(datetime.combine(self.date, self.start_time))
 
     @property
+    def end_datetime(self):
+        """Timezone-aware end of the event (date + end_time)."""
+        return timezone.make_aware(datetime.combine(self.date, self.end_time))
+
+    @property
     def check_in_open_time(self):
         """Check-in window opens 3 hours before the event start."""
         return self.start_datetime - timedelta(hours=3)
@@ -627,6 +667,11 @@ class Reservation(models.Model):
     def has_started(self) -> bool:
         """True once the scheduled EVENT START TIME has been reached."""
         return timezone.now() >= self.start_datetime
+
+    @property
+    def has_ended(self) -> bool:
+        """True once the scheduled EVENT END TIME has been reached."""
+        return timezone.now() >= self.end_datetime
 
     @property
     def expiration_reason(self) -> str:
@@ -682,6 +727,11 @@ class ReservationEvent(models.Model):
         CANCELLED = "CANCELLED", "Cancelled"
         CHECKED_IN = "CHECKED_IN", "Checked in"
         CHECKED_OUT = "CHECKED_OUT", "Checked out"
+        # An administrator explicitly recorded that the requester did not
+        # attend an approved event that has already ended.
+        NO_SHOW = "NO_SHOW", "Marked as no-show"
+        # The automatic three-days-before reminder was delivered in-app.
+        REMINDER_SENT = "REMINDER_SENT", "Reminder sent"
         COMMENT = "COMMENT", "Comment"
         # Reached its event start time without being approved (recorded by the
         # system, with no actor).

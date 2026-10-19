@@ -8,6 +8,7 @@ import {
   Clock3,
   MessageSquareWarning,
   QrCode,
+  UserX,
   XCircle,
 } from 'lucide-react'
 import { format } from 'date-fns'
@@ -19,6 +20,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Field, Textarea } from '@/components/ui/Form'
 import { draftFromReservation, saveDraft } from '@/lib/reservationDraft'
 import { Skeleton } from '@/components/ui/Misc'
@@ -34,7 +36,9 @@ export function ReservationDetailPage() {
   const { data: reservation, isLoading } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
 
-  const [modal, setModal] = useState<null | 'reject' | 'changes' | 'cancel' | 'checkin-override'>(null)
+  const [modal, setModal] = useState<
+    null | 'reject' | 'changes' | 'cancel' | 'checkin-override' | 'no-show'
+  >(null)
   const [reason, setReason] = useState('')
 
   if (isLoading || !reservation) {
@@ -118,10 +122,17 @@ export function ReservationDetailPage() {
       ? reservation.cancellation_reason ||
       'Cancellation is no longer available for this reservation.'
       : null
+  // The backend decides no-show eligibility (approved, never checked in, event
+  // date at least one day in the past) and returns can_mark_no_show; the button
+  // never recomputes those rules. Once that window opens, check-in is closed —
+  // the two actions are mutually exclusive by design (and the backend enforces
+  // the same rule, so hiding a button is never the only protection).
+  const canMarkNoShow = !isViewOnly && isStaff && reservation.can_mark_no_show
   const canCheckIn =
     !isViewOnly &&
     (isOwner || isStaff) &&
-    ['APPROVED', 'ACTIVE'].includes(reservation.status)
+    ['APPROVED', 'ACTIVE'].includes(reservation.status) &&
+    !canMarkNoShow
   const canCheckOut = !isViewOnly && isStaff && reservation.status === 'ACTIVE'
 
   /**
@@ -247,6 +258,15 @@ export function ReservationDetailPage() {
               onClick={() => setModal('changes')}
             >
               Request Changes
+            </Button>
+          )}
+          {canMarkNoShow && (
+            <Button
+              variant="danger"
+              icon={<UserX className="size-4" />}
+              onClick={() => setModal('no-show')}
+            >
+              Mark as No-Show
             </Button>
           )}
           {canCancel && (
@@ -534,6 +554,14 @@ export function ReservationDetailPage() {
               {reservation.checked_out_at && (
                 <DetailItem label="Checked out" value={formatDateTime(reservation.checked_out_at)} />
               )}
+              {reservation.no_show_marked_at && (
+                <DetailItem
+                  label="Marked no-show"
+                  value={`${
+                    reservation.no_show_marked_by_name || 'Administrator'
+                  } · ${formatDateTime(reservation.no_show_marked_at)}`}
+                />
+              )}
             </dl>
           </Card>
 
@@ -656,6 +684,21 @@ export function ReservationDetailPage() {
           />
         </Field> */}
       </Modal>
+
+      {/* No-show: staff-only, explicit confirmation, backend revalidates. */}
+      <ConfirmDialog
+        open={modal === 'no-show'}
+        onClose={() => setModal(null)}
+        title="Mark Reservation as No-Show?"
+        description="Are you sure you want to mark this reservation as a no-show? This action should only be performed if the requester did not attend the scheduled event."
+        recordName={`${reservation.event_name} · ${reservation.reservation_id}`}
+        confirmLabel="Confirm No-Show"
+        cancelLabel="Cancel"
+        onConfirm={async () => {
+          await action.mutateAsync({ action: 'mark-no-show' })
+          toast('Reservation marked as no-show.')
+        }}
+      />
 
       {/* Admin override: early check-in requires an explicit confirmation */}
       <Modal
@@ -812,6 +855,8 @@ function Timeline({ events }: { events: ReservationEvent[] }) {
               event.event_type === 'CHECKED_IN' && 'bg-status-active',
               event.event_type === 'CHECKED_OUT' && 'bg-status-completed',
               event.event_type === 'CANCELLED' && 'bg-status-cancelled',
+              event.event_type === 'NO_SHOW' && 'bg-status-no-show',
+              event.event_type === 'REMINDER_SENT' && 'bg-status-approved',
               event.event_type === 'EXPIRED' && 'bg-status-expired',
               ['REBOOKED', 'NEW_SCHEDULE_REQUESTED'].includes(event.event_type) && 'bg-brand',
               ['CREATED', 'CHANGES_REQUESTED'].includes(event.event_type) && 'bg-status-pending',

@@ -292,7 +292,14 @@ class ReservationAdmin(admin.ModelAdmin):
         "requester__affiliation",
     )
     inlines = [ReservationItemInline, ReservationFeeInline, ReservationEventInline]
-    readonly_fields = ("approval_email_status", "estimated_total", "checkin_code")
+    readonly_fields = (
+        "approval_email_status",
+        "estimated_total",
+        "checkin_code",
+        "reminder_sent_at",
+        "no_show_marked_at",
+        "no_show_marked_by",
+    )
     fieldsets = (
         (
             "Requester",
@@ -337,9 +344,17 @@ class ReservationAdmin(admin.ModelAdmin):
                     "approved_by",
                     "approved_at",
                     "approval_email_status",
+                    "reminder_sent_at",
+                    "no_show_marked_at",
+                    "no_show_marked_by",
                     "rebooked_from",
                     "estimated_total",
-                )
+                ),
+                "description": (
+                    "NO_SHOW is recorded by an administrator through the "
+                    "reservation page (or API) after the event has ended; "
+                    "the timestamp and administrator below are audit facts."
+                ),
             },
         ),
         (

@@ -176,6 +176,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     # ``resubmit`` endpoint enforces (owner or SAS staff, status PENDING). The
     # frontend only uses it to show or hide the edit affordance.
     can_edit = serializers.SerializerMethodField()
+    # Staff-only no-show eligibility, decided on the backend with the SAME rule
+    # the ``mark_no_show`` endpoint enforces: APPROVED, never checked in, and a
+    # calendar date at least one day in the past. Always false for non-staff.
+    can_mark_no_show = serializers.SerializerMethodField()
     # True when the reservation is awaiting review AND an administrator has
     # requested changes that have not been superseded by a decision — the
     # state in which the requester is expected to edit and resubmit.
@@ -226,6 +230,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "cancellation_reason",
             "can_edit",
             "changes_requested",
+            "can_mark_no_show",
             "checked_in_at",
             "checked_out_at",
             "resources",
@@ -290,6 +295,14 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_can_edit(self, obj):
         return self._edit_eligibility(obj)
 
+    def get_can_mark_no_show(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+        allowed, _code, _reason = workflow.no_show_eligibility(obj, user)
+        return allowed
+
     def get_changes_requested(self, obj):
         # Only meaningful while the reservation is still awaiting review: an
         # approve/reject/cancel decision supersedes the outstanding request.
@@ -342,6 +355,9 @@ class ReservationDetailSerializer(ReservationListSerializer):
     items = ReservationItemSerializer(many=True, read_only=True)
     events = ReservationEventSerializer(many=True, read_only=True)
     inspection = InspectionReportSerializer(read_only=True)
+    no_show_marked_by_name = serializers.SerializerMethodField()
+    no_show_marked_at = serializers.DateTimeField(read_only=True)
+    reminder_sent_at = serializers.DateTimeField(read_only=True)
     availability = serializers.SerializerMethodField()
     # The reservation a rebook / new-schedule request created, if any. Lets an
     # expired reservation link forward to its replacement.
@@ -357,6 +373,9 @@ class ReservationDetailSerializer(ReservationListSerializer):
             "early_check_in_override",
             "approved_by_name",
             "approved_at",
+            "no_show_marked_by_name",
+            "no_show_marked_at",
+            "reminder_sent_at",
             "items",
             "events",
             "inspection",
@@ -366,6 +385,9 @@ class ReservationDetailSerializer(ReservationListSerializer):
 
     def get_approved_by_name(self, obj):
         return obj.approved_by.display_name if obj.approved_by else ""
+
+    def get_no_show_marked_by_name(self, obj):
+        return obj.no_show_marked_by.display_name if obj.no_show_marked_by else ""
 
     def get_rescheduled_to(self, obj):
         latest = (
