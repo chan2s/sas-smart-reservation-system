@@ -884,8 +884,8 @@ export function ReservationWizardPage() {
           </h1>
           <p className="mx-auto mt-2 max-w-sm text-[15px] text-body">
             {approved
-              ? 'Your reservation has been automatically approved and confirmed.'
-              : 'Your reservation has been submitted for approval. You will be notified once SAS reviews it.'}
+              ? 'Your reservation has been automatically approved and confirmed. A confirmation email will be sent to your registered email address.'
+              : 'Your reservation has been submitted for approval. A confirmation email will be sent to your registered email address, and you will be notified once SAS reviews it.'}
           </p>
           <div className="mt-4 flex justify-center">
             {approved ? (

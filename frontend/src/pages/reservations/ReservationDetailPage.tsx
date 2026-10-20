@@ -109,8 +109,11 @@ export function ReservationDetailPage() {
     !isViewOnly && isStaff && reservation.status === 'PENDING'
   // Cancellation visibility is decided by the BACKEND: can_cancel is evaluated
   // by the existing policy in services.workflow — the same source of truth the
-  // cancel endpoint enforces. It is never recomputed or trusted from the client.
-  // View-only accounts may read this page but cannot cancel or check in/out.
+  // cancel endpoint enforces. That policy already hides the button for every
+  // finalized reservation (CANCELLED / NO_SHOW / COMPLETED / REJECTED / EXPIRED),
+  // for events that have already ended, and for the 2-day requester window, so
+  // the button is never recomputed or trusted from the client. View-only
+  // accounts may read this page but cannot cancel or check in/out.
   const canCancel = reservation.can_cancel && !isViewOnly
   // When the user manages this reservation but the policy blocks cancellation
   // (e.g. the 2-day cancellation window), show the backend's reason instead of

@@ -1384,6 +1384,50 @@ class RequesterCancellationTests(TestCase):
         self.assertEqual(chair["available"], 4)
 
 
+    def test_ended_event_cannot_be_cancelled_by_requester(self):
+        """The scheduled end time has passed: the API refuses the request."""
+        reservation = self._make_reservation(
+            date=timezone.localdate(), start_time=time(0, 0), end_time=time(0, 30)
+        )
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("already ended", response.json()["detail"])
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(self._cancel_events(reservation).count(), 0)
+
+    def test_past_ended_reservation_cannot_be_cancelled_by_staff(self):
+        """Staff are exempt from the 2-day window, never from a finished event."""
+        reservation = self._make_reservation(
+            date=timezone.localdate() - timedelta(days=3),
+            start_time=time(8, 0),
+            end_time=time(10, 0),
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("already ended", response.json()["detail"])
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(self._cancel_events(reservation).count(), 0)
+
+    def test_no_show_reservation_cannot_be_cancelled(self):
+        reservation = self._make_reservation(status=Reservation.Status.NO_SHOW)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/reservations/{reservation.id}/cancel/", format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.NO_SHOW)
+        self.assertEqual(self._cancel_events(reservation).count(), 0)
+
+
 class CancellationEligibilityApiTests(TestCase):
     """The detail API reports backend-computed cancellation eligibility.
 
@@ -1465,6 +1509,39 @@ class CancellationEligibilityApiTests(TestCase):
     def test_terminal_status_reports_not_cancellable(self):
         reservation = self._create(status=Reservation.Status.CANCELLED)
         data = self._get_detail(reservation, self.requester)
+        self.assertFalse(data["can_cancel"])
+        self.assertEqual(
+            data["cancellation_reason"],
+            "This reservation can no longer be cancelled.",
+        )
+
+
+    def test_ended_event_reports_not_cancellable(self):
+        """An APPROVED reservation whose event already ended is history."""
+        reservation = self._create(
+            date=timezone.localdate(), start_time=time(0, 0), end_time=time(0, 30)
+        )
+        data = self._get_detail(reservation, self.requester)
+        self.assertFalse(data["can_cancel"])
+        self.assertEqual(
+            data["cancellation_reason"],
+            (
+                "This reservation's event has already ended and can no "
+                "longer be cancelled."
+            ),
+        )
+
+    def test_ended_event_is_not_cancellable_for_staff_either(self):
+        reservation = self._create(
+            date=timezone.localdate(), start_time=time(0, 0), end_time=time(0, 30)
+        )
+        data = self._get_detail(reservation, self.staff)
+        self.assertFalse(data["can_cancel"])
+        self.assertIn("already ended", data["cancellation_reason"])
+
+    def test_no_show_reports_not_cancellable(self):
+        reservation = self._create(status=Reservation.Status.NO_SHOW)
+        data = self._get_detail(reservation, self.staff)
         self.assertFalse(data["can_cancel"])
         self.assertEqual(
             data["cancellation_reason"],

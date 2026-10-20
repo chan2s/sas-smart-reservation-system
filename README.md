@@ -449,23 +449,60 @@ docker compose config --quiet
 
 The actual test count and results should be taken from the current project rather than assumed from older documentation.
 
-### Scheduled tasks
+### Automatic reservation reminder emails
 
-Both maintenance sweeps are idempotent management commands, so they can be
-scheduled with the host's cron (or a Render cron job) — no always-on worker is
-required. Run them from the `backend` directory with the same environment and
-virtualenv as the web process:
+The Django backend checks for upcoming approved reservations **automatically**:
+the scheduler starts with the backend process, runs an immediate catch-up sweep,
+then checks every hour. It sends the branded reminder email plus the existing
+in-app notification for reservations scheduled within the next three days. No
+administrator action and no browser tab are required.
+
+Relevant `.env` keys (see `backend/.env.example`):
+
+```dotenv
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_USE_SSL=false
+EMAIL_HOST_USER=your-address@gmail.com
+EMAIL_HOST_PASSWORD=your-google-app-password
+DEFAULT_FROM_EMAIL=SAS RESERVE <your-address@gmail.com>
+```
+
+Delivery is recorded on the reservation (`reminder_email_sent_at`), so a
+restart, an hourly repeat, or two overlapping workers never email the same
+reservation twice. Failed sends release their claim and are retried on the next
+check. A short database lease elects one active scheduler even when gunicorn or
+Docker runs several backend workers.
+
+Operational commands (run from `backend/` with the same environment and
+virtualenv as the web process):
+
+```bash
+# One manual sweep (safe and idempotent; useful for verification).
+python manage.py send_reservation_reminders
+
+# Report how many reminders are due without sending anything.
+python manage.py send_reservation_reminders --dry-run
+
+# Dedicated scheduler process for deployments that prefer a worker service.
+python manage.py run_reminder_scheduler
+```
+
+To run the scheduler in a dedicated process instead of web workers, set
+`REMINDER_SCHEDULER_ENABLED=false` on the web service and run
+`python manage.py run_reminder_scheduler` as a separate always-on service. The
+in-process default is safe with multiple workers because of the database lease,
+but a dedicated worker avoids idle scheduler threads.
+
+The unrelated expiration sweep remains an idempotent management command and can
+still be scheduled with the host's cron (or a Render cron job):
 
 ```cron
 # Move unapproved reservations to EXPIRED once their event starts.
 */10 * * * * cd /path/to/backend && /path/to/python manage.py expire_reservations >> /var/log/sas-expire.log 2>&1
-
-# Send the three-days-before reminder (at most once per reservation).
-0 * * * * cd /path/to/backend && /path/to/python manage.py send_reservation_reminders >> /var/log/sas-reminders.log 2>&1
 ```
-
-`python manage.py send_reservation_reminders --dry-run` reports how many
-reminders are currently due without sending anything.
 
 ---
 

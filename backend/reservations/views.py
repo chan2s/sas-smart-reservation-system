@@ -12,7 +12,6 @@ from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
 from facilities.models import Facility
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
-from notifications.email_service import send_reservation_submitted
 from .models import Reservation, ReservationEvent
 from .serializers import (
     ReservationCreateSerializer,
@@ -20,7 +19,7 @@ from .serializers import (
     ReservationListSerializer,
     ReservationResubmitSerializer,
 )
-from .services import expiration, workflow
+from .services import confirmations, expiration, workflow
 from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
 from .services.recommendations import recommend_resources_with_pricing
@@ -219,17 +218,14 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
                 f"/reservations/{reservation.id}",
             )
-        # Send email notification to the requester
-        if reservation.requester and reservation.requester.email:
-            send_reservation_submitted(
-                user_email=reservation.requester.email,
-                reservation_id=reservation.reservation_id,
-                event_name=reservation.event_name,
-                facility_name=reservation.facility.name,
-                date=reservation.date.isoformat(),
-                start_time=reservation.start_time.strftime("%H:%M"),
-                end_time=reservation.end_time.strftime("%H:%M"),
-            )
+        # Booking confirmation email. Scheduled AFTER the creation has been
+        # saved and the final status has been decided above, so the message
+        # always describes the status that was actually persisted (pending or
+        # auto-approved). It is dispatched by the backend via
+        # transaction.on_commit, never by the React frontend, and delivery is
+        # idempotent + best-effort: a failed send is logged and can never undo
+        # or alter this reservation.
+        confirmations.schedule_booking_confirmation(reservation)
 
         return Response(
             ReservationDetailSerializer(

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import { ApiError } from '@/lib/api'
 import type { ReservationDetail } from '@/lib/types'
 
 const state = vi.hoisted(() => ({
@@ -40,7 +48,13 @@ vi.mock('@/components/ui/Toast', () => ({
 }))
 
 vi.mock('@/lib/api', () => ({
-  ApiError: class ApiError extends Error {},
+  ApiError: class ApiError extends Error {
+    status: number
+    constructor(status: number, message: string) {
+      super(message)
+      this.status = status
+    }
+  },
   apiErrorMessage: (error: unknown, fallback: string) =>
     error instanceof Error && error.message ? error.message : fallback,
 }))
@@ -139,6 +153,10 @@ function renderPage() {
 
 function noShowButton() {
   return screen.queryByRole('button', { name: /mark as no-show/i })
+}
+
+function cancelButton() {
+  return screen.queryByRole('button', { name: /^cancel reservation$/i })
 }
 
 beforeEach(() => {
@@ -262,5 +280,115 @@ describe('ReservationDetailPage no-show action', () => {
     expect(alert.textContent).toContain('day following the scheduled event date')
     expect(screen.getByText('Confirm No-Show')).toBeTruthy()
     expect(state.toast).not.toHaveBeenCalled()
+  })
+})
+
+describe('ReservationDetailPage cancel action visibility', () => {
+  it('shows the button when the backend reports the reservation is cancellable', () => {
+    state.reservation = reservation({ can_cancel: true, cancellation_reason: null })
+    renderPage()
+    expect(cancelButton()).toBeTruthy()
+  })
+
+  it('hides the button once the reservation is cancelled', () => {
+    state.reservation = reservation({
+      status: 'CANCELLED',
+      status_label: 'Cancelled',
+      can_cancel: false,
+      cancellation_reason: 'This reservation can no longer be cancelled.',
+    })
+    renderPage()
+    expect(cancelButton()).toBeNull()
+  })
+
+  it('hides the button for an already marked no-show reservation', () => {
+    state.reservation = reservation({
+      status: 'NO_SHOW',
+      status_label: 'No-show',
+      can_cancel: false,
+      can_mark_no_show: false,
+      cancellation_reason: 'This reservation can no longer be cancelled.',
+    })
+    renderPage()
+    expect(cancelButton()).toBeNull()
+    expect(noShowButton()).toBeNull()
+    expect(screen.queryByRole('button', { name: /^check in$/i })).toBeNull()
+  })
+
+  it('hides the button for completed and otherwise finalized reservations', () => {
+    state.reservation = reservation({
+      status: 'COMPLETED',
+      status_label: 'Completed',
+      can_cancel: false,
+      cancellation_reason: 'This reservation can no longer be cancelled.',
+    })
+    renderPage()
+    expect(cancelButton()).toBeNull()
+  })
+
+  it('hides the button once the event has ended and explains why', () => {
+    state.reservation = reservation({
+      can_cancel: false,
+      cancellation_reason:
+        "This reservation's event has already ended and can no longer be cancelled.",
+    })
+    renderPage()
+    expect(cancelButton()).toBeNull()
+    expect(screen.getByText(/already ended/)).toBeTruthy()
+  })
+
+  it('keeps the two-day window restriction hidden with the policy reason', () => {
+    state.reservation = reservation({
+      can_cancel: false,
+      cancellation_reason:
+        'Reservations scheduled within the next 2 days cannot be cancelled.',
+    })
+    renderPage()
+    expect(cancelButton()).toBeNull()
+    expect(screen.getByText(/next 2 days/)).toBeTruthy()
+  })
+
+  it('cancels through the existing confirmation dialog and reports success', async () => {
+    state.reservation = reservation({ can_cancel: true, cancellation_reason: null })
+    state.mutateAsync.mockResolvedValue(undefined)
+    renderPage()
+
+    fireEvent.click(cancelButton() as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /^cancel reservation$/i }),
+    )
+
+    await waitFor(() =>
+      expect(state.mutateAsync).toHaveBeenCalledWith({
+        action: 'cancel',
+        body: { reason: '' },
+      }),
+    )
+    expect(state.toast).toHaveBeenCalledWith('Reservation cancelled.')
+  })
+
+  it('shows the backend rejection message when the action is prohibited', async () => {
+    state.reservation = reservation({ can_cancel: true, cancellation_reason: null })
+    state.mutateAsync.mockRejectedValue(
+      new ApiError(
+        400,
+        "This reservation's event has already ended and can no longer be cancelled.",
+      ),
+    )
+    renderPage()
+
+    fireEvent.click(cancelButton() as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /^cancel reservation$/i }),
+    )
+
+    await waitFor(() =>
+      expect(state.toast).toHaveBeenCalledWith(
+        "This reservation's event has already ended and can no longer be cancelled.",
+        'error',
+      ),
+    )
   })
 })

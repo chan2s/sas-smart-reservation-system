@@ -297,6 +297,8 @@ class ReservationAdmin(admin.ModelAdmin):
         "estimated_total",
         "checkin_code",
         "reminder_sent_at",
+        "reminder_email_sent_at",
+        "reminder_email_claimed_at",
         "no_show_marked_at",
         "no_show_marked_by",
     )
@@ -345,6 +347,8 @@ class ReservationAdmin(admin.ModelAdmin):
                     "approved_at",
                     "approval_email_status",
                     "reminder_sent_at",
+                    "reminder_email_sent_at",
+                    "reminder_email_claimed_at",
                     "no_show_marked_at",
                     "no_show_marked_by",
                     "rebooked_from",

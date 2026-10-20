@@ -1,0 +1,38 @@
+{% autoescape off %}
+SAS RESERVE
+Smart Facility and Resource Reservation System
+NORSU-BSC
+========================================
+
+Hello, {{ requester_name }},
+
+BOOKING CONFIRMATION
+
+{{ message }}
+
+RESERVATION DETAILS
+-------------------
+Reference number: {{ reservation_id }}
+Event: {{ event_name }}
+Facility: {{ facility_name }}
+{% if resources %}Equipment / resources: {{ resources|join:", " }}
+{% endif %}Reservation date: {{ date|date:"F j, Y" }}
+Event time: {{ start_time|time:"g:i A" }} - {{ end_time|time:"g:i A" }}
+Submitted on: {{ submitted_on|date:"F j, Y g:i A" }}
+Status: {{ status_label }}
+
+{% if is_pending %}WHAT HAPPENS NEXT
+------------------
+{{ next_action }}
+{% else %}BOOKING INSTRUCTIONS
+--------------------
+{{ check_in_instructions }}
+{% endif %}
+View your reservation in SAS RESERVE:
+{{ view_url }}
+
+---
+This is an automated booking confirmation from {{ site_name }} (NORSU-BSC).
+Please do not reply to this email.
+If you have questions, please contact the SAS Office.
+{% endautoescape %}

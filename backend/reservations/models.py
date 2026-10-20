@@ -495,6 +495,46 @@ class Reservation(models.Model):
         blank=True,
         help_text="When the upcoming-reservation reminder was delivered (null = not sent yet).",
     )
+    # Email is tracked independently from the in-app reminder so adding email
+    # delivery never suppresses an in-app reminder (or vice versa), and two
+    # workers can never email the same reservation twice. ``sent_at`` is only
+    # written AFTER the SMTP backend accepted the message; ``claimed_at`` is a
+    # short-lived in-progress lease so a crashed send can be retried.
+    reminder_email_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="When the reminder EMAIL was successfully delivered (null = not sent yet).",
+    )
+    reminder_email_claimed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Internal in-progress lease for the reminder email; cleared on "
+            "success or failure so a crashed send can be retried."
+        ),
+    )
+
+    # Automatic booking-confirmation email. Sent ONCE per reservation, after
+    # the creation transaction commits. ``confirmation_email_sent_at`` is
+    # written only after the email backend accepted the message, so a failed
+    # send is never recorded as delivered; ``confirmation_email_claimed_at`` is
+    # a short-lived in-progress lease that keeps a duplicate request/worker
+    # from emailing the same reservation twice.
+    confirmation_email_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="When the booking confirmation email was delivered (null = not sent yet).",
+    )
+    confirmation_email_claimed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Internal in-progress lease for the booking confirmation email; "
+            "cleared on success or failure."
+        ),
+    )
 
     # Explicit administrator no-show decision. Nullable so every pre-existing
     # reservation keeps working; ``SET_NULL`` preserves the reservation even if
@@ -533,6 +573,7 @@ class Reservation(models.Model):
             models.Index(fields=["contact_email"]),
             # The scheduled reminder sweep filters on exactly these columns.
             models.Index(fields=["status", "reminder_sent_at"]),
+            models.Index(fields=["status", "reminder_email_sent_at"]),
         ]
 
     def save(self, *args, **kwargs):
@@ -797,3 +838,26 @@ class InspectionReport(models.Model):
 
     def __str__(self) -> str:
         return f"Inspection — {self.reservation.reservation_id}"
+
+
+class ReminderSchedulerLease(models.Model):
+    """Singleton lease that elects one reminder scheduler across processes.
+
+    Every Django worker may start an in-process scheduler thread. This row
+    makes only the lease holder perform the actual sweep, so gunicorn workers,
+    a restarted container, and a dedicated scheduler process can never run
+    overlapping checks. The lease expires quickly and is renewed on every poll;
+    when a worker dies another one takes over automatically.
+    """
+
+    name = models.CharField(max_length=64, primary_key=True)
+    owner = models.CharField(max_length=64, blank=True)
+    expires_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "reminder scheduler lease"
+        verbose_name_plural = "reminder scheduler lease"
+
+    def __str__(self) -> str:
+        return f"{self.name} — {self.owner or 'unowned'} until {self.expires_at:%Y-%m-%d %H:%M}"

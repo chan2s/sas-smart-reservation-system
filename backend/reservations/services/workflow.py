@@ -405,7 +405,9 @@ def cancellation_eligibility(reservation, user):
     * ``""``                    — cancellable
     * ``"not_permitted"``       — the user is neither the requester nor staff
     * ``"status"``              — terminal status (COMPLETED / CANCELLED /
-      REJECTED / EXPIRED can never be cancelled)
+      REJECTED / EXPIRED / NO_SHOW can never be cancelled)
+    * ``"event_ended"``         — the event's scheduled END time has already
+      passed (refused for requesters and staff alike)
     * ``"cancellation_window"`` — requester (non-staff) cancelling a
       reservation whose event date is today or tomorrow
     """
@@ -420,11 +422,27 @@ def cancellation_eligibility(reservation, user):
         return False, "not_permitted", ""
     if reservation.status in Reservation.TERMINAL_STATUSES:
         return False, "status", "This reservation can no longer be cancelled."
+    # An event whose scheduled END time has passed is history: it can no
+    # longer be cancelled by anyone, staff included. From the day after the
+    # event the administrator's Mark as No-Show decision is the only remaining
+    # action, and a past event must never be pulled back into the live
+    # workflow. Keyed off the scheduled end in the project's timezone
+    # (``Reservation.has_ended``), never the creation date.
+    if reservation.has_ended:
+        return (
+            False,
+            "event_ended",
+            (
+                "This reservation's event has already ended and can no "
+                "longer be cancelled."
+            ),
+        )
     # Cancellation-window policy: requesters cannot cancel a reservation whose
     # event date is today or tomorrow (even one created days in advance).
-    # Staff/admin are exempt — their reservation-management functions are
-    # unchanged. Compared against the server's local calendar date (Asia/Manila)
-    # using the event date, not the creation date. 2+ days out is cancellable.
+    # Staff/admin are exempt from THIS window (they are not exempt from the
+    # event-ended rule above). Compared against the server's local calendar date
+    # (Asia/Manila) using the event date, not the creation date. 2+ days out is
+    # cancellable.
     if is_owner and not staff:
         days_until_event = (reservation.date - timezone.localdate()).days
         if 0 <= days_until_event <= 1:
@@ -439,10 +457,11 @@ def cancellation_eligibility(reservation, user):
 def cancel_reservation(reservation, actor, reason=""):
     """Cancel a reservation (by its own requester or by SAS staff).
 
-    Policy (unchanged) — enforced via ``cancellation_eligibility``: terminal
-    statuses (COMPLETED, CANCELLED, REJECTED, EXPIRED) can never be cancelled,
-    and a requester cannot cancel a reservation whose event date is today or
-    tomorrow — staff are exempt.
+    Enforced via ``cancellation_eligibility``: terminal statuses (COMPLETED,
+    CANCELLED, REJECTED, EXPIRED, NO_SHOW) can never be cancelled, an event
+    that has already ended can never be cancelled (staff included), and a
+    requester cannot cancel a reservation whose event date is today or
+    tomorrow — staff are exempt from that window only.
 
     The whole transition runs in one transaction under a row lock, so the
     policy always revalidates the CURRENT database state: two rapid

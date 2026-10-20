@@ -8,6 +8,7 @@ set, the project falls back to SQLite so the app can be run out of the box.
 """
 
 import os
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -30,6 +31,34 @@ ENV_FILE = BASE_DIR / ".env"
 # NOTE: .env is read ONCE per process. Django's autoreloader watches Python
 # files only, so an edited .env still requires a full server restart.
 load_dotenv(ENV_FILE, override=True)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable ("true", "1", "yes", "on")."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_from_email(value: str) -> str:
+    """Accept both ``Name <address>`` and the common ``Name address>`` typo.
+
+    An email header is a list of addresses, but ``Display Name <address>`` is
+    what Django's SMTP backend expects for ``DEFAULT_FROM_EMAIL``. A missing
+    opening ``<`` (or missing brackets entirely) otherwise produces an invalid
+    From header and Gmail rejects the message. Plain addresses pass through.
+    """
+    value = (value or "").strip()
+    if not value or ("<" in value and ">" in value):
+        return value
+    match = re.match(r"^(.*?)\s*<?([^<>\s]+@[^<>\s]+)>?$", value)
+    if not match:
+        return value
+    name, address = match.group(1).strip(), match.group(2)
+    if not address:
+        return value
+    return f"{name} <{address}>" if name else address
 
 
 # SECURITY WARNING: keep the secret key used in production secret!
@@ -151,7 +180,14 @@ def _database_config() -> dict:
 
 
 DATABASES = {
-    "default": _database_config()
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_DATABASE"),
+        "USER": os.getenv("DB_USERNAME"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST", "localhost"),
+        "PORT": os.getenv("DB_PORT", "5432"),
+    }
 }
 
 
@@ -352,6 +388,70 @@ GOOGLE_CLIENT_SECRET = os.environ.get(
 #   GOOGLE_REDIRECT_URI=https://sas.example.com/api/auth/google/callback/
 # It must match the registered Authorized redirect URI character-for-character.
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Email (Gmail SMTP by default)
+# ---------------------------------------------------------------------------
+# All credentials come from backend/.env (or the hosting provider's environment
+# variables). Nothing here is hardcoded and nothing is exposed to the frontend.
+#
+# EMAIL_USE_TLS and EMAIL_USE_SSL are mutually exclusive on a real SMTP server:
+# port 587 uses TLS, port 465 uses SSL. They are read independently so an
+# existing .env keeps working unchanged.
+
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = _env_bool("EMAIL_USE_SSL", False)
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = _normalize_from_email(
+    os.environ.get("DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@localhost>")
+)
+# Keep a hung SMTP connection from blocking the reminder sweep forever.
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))
+
+
+# ---------------------------------------------------------------------------
+# Automatic reservation reminder scheduler
+# ---------------------------------------------------------------------------
+# The in-process scheduler starts with the backend (see
+# reservations.apps.ReservationsConfig.ready) and checks every hour. It is
+# disabled automatically for management commands, migrations and tests. Every
+# instance competes for a short database lease, so only ONE process actually
+# performs a sweep even when several web workers start their own thread.
+#
+# For a deployment that prefers a separate worker, set
+# REMINDER_SCHEDULER_ENABLED=false on the web service and run
+# ``python manage.py run_reminder_scheduler`` as a dedicated process.
+REMINDER_SCHEDULER_ENABLED = _env_bool("REMINDER_SCHEDULER_ENABLED", True)
+REMINDER_SCHEDULER_INTERVAL_SECONDS = int(
+    os.environ.get("REMINDER_SCHEDULER_INTERVAL_SECONDS", "3600")
+)
+# Delay before the first check after a process starts (the check itself runs
+# immediately after that; every restart therefore triggers a catch-up sweep).
+REMINDER_SCHEDULER_INITIAL_DELAY_SECONDS = int(
+    os.environ.get("REMINDER_SCHEDULER_INITIAL_DELAY_SECONDS", "10")
+)
+# How long a worker may hold the scheduler lease without renewing it. A dead
+# worker is replaced within this window; a live worker renews every poll.
+REMINDER_SCHEDULER_LEASE_SECONDS = int(
+    os.environ.get("REMINDER_SCHEDULER_LEASE_SECONDS", "180")
+)
+REMINDER_SCHEDULER_POLL_SECONDS = int(
+    os.environ.get("REMINDER_SCHEDULER_POLL_SECONDS", "60")
+)
+
+# Days before the event the reminder becomes due (three-day reminder window).
+RESERVATION_REMINDER_DAYS = int(os.environ.get("RESERVATION_REMINDER_DAYS", "3"))
+# A failed/crashed send releases its claim after this long so it can be retried.
+REMINDER_EMAIL_CLAIM_TIMEOUT_SECONDS = int(
+    os.environ.get("REMINDER_EMAIL_CLAIM_TIMEOUT_SECONDS", "900")
+)
 
 
 # ---------------------------------------------------------------------------

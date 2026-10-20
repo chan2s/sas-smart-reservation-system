@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 
 SAS_RESERVE_SITE_NAME = "SAS RESERVE"
 
+REMINDER_SUBJECT = "Reminder: Your SAS RESERVE Booking Is Coming Up"
+
+BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
+
+CHECK_IN_INSTRUCTIONS = (
+    "Please check in at the facility at least 3 hours before your event start "
+    "time. Present your reservation reference number and a valid ID at the "
+    "SAS Office or check-in desk."
+)
+
 
 def send_reservation_email(
     recipient_email: str,
@@ -195,6 +205,190 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
         reason = _classify_email_error(exc)
         logger.error(
             "Approval email FAILED for reservation %s to %s: %s",
+            reservation.reservation_id,
+            email,
+            str(exc)[:200],
+        )
+        return False, reason
+
+
+def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
+    """Send the branded booking confirmation for a newly created reservation.
+
+    The wording follows the reservation's SAVED status: a pending reservation
+    is explicitly described as awaiting administrator approval, while an
+    auto-approved one is described as confirmed. This function never changes
+    the reservation and never raises into the caller — a failed delivery is
+    reported so the caller can log it while the reservation remains intact.
+
+    Returns ``(success, error_category)`` with the same categories as
+    :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
+    ``smtp_authentication``, ``invalid_recipient``, ``connection``,
+    ``unknown``; ``None`` on success).
+    """
+    from django.utils import timezone
+
+    from reservations.models import Reservation as ReservationModel
+
+    email = resolve_requester_email(reservation)
+    if not email:
+        return False, "no_email"
+
+    status = reservation.status
+    status_label = reservation.get_status_display()
+    if status == ReservationModel.Status.APPROVED:
+        message = (
+            "Your reservation request has been successfully recorded and "
+            "approved. Your booking is confirmed."
+        )
+        next_action = CHECK_IN_INSTRUCTIONS
+    elif status == ReservationModel.Status.PENDING:
+        message = (
+            "Your reservation request has been successfully recorded. It is "
+            "currently awaiting administrator approval, so your booking is "
+            "not yet confirmed."
+        )
+        next_action = (
+            "No further action is needed right now. You can check your "
+            "reservation status in SAS RESERVE at any time."
+        )
+    else:
+        message = (
+            "Your reservation request has been successfully recorded with the "
+            f'status "{status_label}".'
+        )
+        next_action = (
+            "You can check your reservation status in SAS RESERVE at any time."
+        )
+
+    context = build_reservation_context(
+        reservation,
+        status=status,
+        status_label=status_label,
+        message=message,
+        next_action=next_action,
+    )
+    submitted_at = reservation.created_at or timezone.now()
+    if timezone.is_aware(submitted_at):
+        submitted_at = timezone.localtime(submitted_at)
+    context["submitted_on"] = submitted_at
+    context["is_approved"] = status == ReservationModel.Status.APPROVED
+    context["is_pending"] = status == ReservationModel.Status.PENDING
+    context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
+
+    try:
+        html_message = render_to_string(
+            "emails/reservation_confirmation.html", context
+        )
+        plain_message = render_to_string(
+            "emails/reservation_confirmation.txt", context
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never break creation
+        logger.error(
+            "Booking confirmation template render failed for %s: %s",
+            reservation.reservation_id,
+            str(exc)[:200],
+        )
+        return False, _classify_email_error(exc)
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=BOOKING_CONFIRMATION_SUBJECT,
+            body=plain_message,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+            ),
+            to=[email],
+        )
+        message.attach_alternative(html_message, "text/html")
+        sent = message.send(fail_silently=False)
+        if sent:
+            logger.info(
+                "Booking confirmation email sent for reservation %s to %s "
+                "(status: %s, domain: %s)",
+                reservation.reservation_id,
+                email.split("@")[0] if "@" in email else "unknown",
+                status,
+                email.split("@")[1] if "@" in email else "unknown",
+            )
+            return True, None
+        return False, "smtp"
+    except Exception as exc:  # noqa: BLE001 — delivery must never break creation
+        reason = _classify_email_error(exc)
+        logger.error(
+            "Booking confirmation email FAILED for reservation %s to %s: %s",
+            reservation.reservation_id,
+            email,
+            str(exc)[:200],
+        )
+        return False, reason
+
+
+def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
+    """Send the branded three-days-before reminder to the requester.
+
+    Returns ``(success, error_category)`` using the same categories as
+    :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
+    ``smtp_authentication``, ``invalid_recipient``, ``connection``,
+    ``unknown``; ``None`` on success). Delivery never raises into the
+    scheduler: a failure is reported so the caller can retry later.
+    """
+    email = resolve_requester_email(reservation)
+    if not email:
+        return False, "no_email"
+
+    context = build_reservation_context(
+        reservation,
+        status=reservation.Status.APPROVED,
+        status_label="Approved",
+        message=(
+            "Your reservation is scheduled within the next three days. "
+            "Please review the details below and make the necessary "
+            "preparations."
+        ),
+        next_action=CHECK_IN_INSTRUCTIONS,
+    )
+    context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
+
+    try:
+        html_message = render_to_string(
+            "emails/reservation_reminder.html", context
+        )
+        plain_message = render_to_string(
+            "emails/reservation_reminder.txt", context
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never crash the sweep
+        logger.error(
+            "Reminder email template render failed for %s: %s",
+            reservation.reservation_id,
+            str(exc)[:200],
+        )
+        return False, _classify_email_error(exc)
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=REMINDER_SUBJECT,
+            body=plain_message,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+            ),
+            to=[email],
+        )
+        message.attach_alternative(html_message, "text/html")
+        sent = message.send(fail_silently=False)
+        if sent:
+            logger.info(
+                "Reminder email sent for reservation %s to %s (domain: %s)",
+                reservation.reservation_id,
+                email.split("@")[0] if "@" in email else "unknown",
+                email.split("@")[1] if "@" in email else "unknown",
+            )
+            return True, None
+        return False, "smtp"
+    except Exception as exc:  # noqa: BLE001 — delivery must never break the sweep
+        reason = _classify_email_error(exc)
+        logger.error(
+            "Reminder email FAILED for reservation %s to %s: %s",
             reservation.reservation_id,
             email,
             str(exc)[:200],
