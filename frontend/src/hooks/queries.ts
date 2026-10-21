@@ -133,6 +133,10 @@ export function useSaveFacilityGallery() {
  * Resources/equipment assigned to a facility. The wizard uses this instead of
  * the global equipment list so a requester only ever sees resources that
  * belong to the facility they picked.
+ *
+ * The facility payload also exposes the derived list of configured built-in
+ * amenities (``built_in_amenities``), which the reservation wizard uses to
+ * know which equipment the facility already provides.
  */
 export function useFacilityResources(id: number | null, params?: Record<string, string>) {
   return useQuery({

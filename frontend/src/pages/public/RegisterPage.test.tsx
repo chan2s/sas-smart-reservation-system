@@ -175,6 +175,21 @@ describe('RegisterPage', () => {
     expect(await screen.findByText('login reached ?registered=success')).toBeTruthy()
   })
 
+  it('starts the Google flow with the register intent, not the login intent', async () => {
+    apiState.googleStart.mockResolvedValue({
+      authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth',
+    })
+
+    renderRegister()
+    fireEvent.click(screen.getByRole('button', { name: /Continue with Google/i }))
+
+    await waitFor(() =>
+      expect(apiState.googleStart).toHaveBeenCalledWith(window.location.origin, 'register'),
+    )
+    // Starting the OAuth flow never submits the form itself.
+    expect(apiState.register).not.toHaveBeenCalled()
+  })
+
   it('marks password fields as required with new-password autocomplete', () => {
     renderRegister()
 

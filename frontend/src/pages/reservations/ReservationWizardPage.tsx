@@ -21,6 +21,7 @@ import {
   useReservations,
   useResubmitReservation,
 } from '@/hooks/queries'
+import { usePreferredBuiltinAmenities } from '@/hooks/usePreferredBuiltinAmenities'
 import { useSuggestedResources } from '@/hooks/useSuggestedResources'
 import { useToast } from '@/components/ui/Toast'
 import { ApiError } from '@/lib/api'
@@ -373,13 +374,21 @@ export function ReservationWizardPage() {
   // Suggested resources (rule config + the backend recommender)
   // ------------------------------------------------------------------
   // What the chosen facility already provides, so suggestions subtract it.
+  //
+  // Built-in amenities are derived from the facility's equipment configuration:
+  // a ``built_ins`` token only becomes an effective built-in amenity when the
+  // facility has an active resource whose equipment name matches the token.
+  // That keeps the wizard in sync with the configured inventory instead of a
+  // static list typed on the facility record.
+  const builtInAmenities = usePreferredBuiltinAmenities(facility)
+
   const facilityMetadata = useMemo<FacilitySeatingMetadata>(
     () => ({
       seatingType: facility?.seating_type ?? null,
       builtInSeats: facility?.built_in_seats ?? null,
-      builtIns: facility?.built_ins ?? [],
+      builtIns: builtInAmenities,
     }),
-    [facility],
+    [facility, builtInAmenities],
   )
 
   const {

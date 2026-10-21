@@ -60,8 +60,12 @@ class Facility(models.Model):
         default=list,
         blank=True,
         help_text=(
-            'Items the space already provides, e.g. '
-            '["tables", "chairs", "projector", "sound_system", "stage", "podium"].'
+            'Requested built-in amenities, e.g. '
+            '["tables", "chairs", "projector", "sound_system", "stage", "podium"]. '
+            'A token becomes a configured built-in amenity only when it matches an '
+            'active facility resource, so the reservation wizard stays in sync with '
+            'the configured inventory instead of a static list typed on the facility '
+            'record.'
         ),
     )
     status = models.CharField(

@@ -9,6 +9,19 @@ from .models import (
 )
 
 
+def _configured_builtin_description(facility) -> str:
+    """Short description of the configured built-in amenities for one facility."""
+    from equipment.services import configured_builtin_tokens_for_facility
+
+    tokens = configured_builtin_tokens_for_facility(facility.id)
+    if not tokens:
+        return ""
+    joined = ", ".join(tokens)
+    if len(tokens) == 1:
+        return f"Configured built-in amenity: {joined}."
+    return f"Configured built-in amenities: {joined}."
+
+
 @admin.register(EquipmentCategory)
 class EquipmentCategoryAdmin(admin.ModelAdmin):
     list_display = ("name", "icon")
@@ -75,11 +88,7 @@ class FacilityResourceAdmin(admin.ModelAdmin):
             "Resource",
             {
                 "fields": ("equipment", "facility", "quantity", "status", "description"),
-                "description": (
-                    "Assign one equipment/resource item to one facility. "
-                    "Quantity 0 inherits the equipment's total inventory. "
-                    "Images come from the equipment item's gallery."
-                ),
+                "description": _configured_builtin_description,
             },
         ),
         (

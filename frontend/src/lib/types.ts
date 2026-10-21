@@ -246,8 +246,16 @@ export interface FacilityPayload {
   status: FacilityStatus
   is_active: boolean
   seating_type?: SeatingType | null
-  built_in_seats?: number | null
-  built_ins?: string[]
+  built_in_seats?: number | null   built_ins?: string[]
+  /** Built-in amenity tokens that are backed by an active facility resource.
+   *
+   * This mirrors the backend's configured-built-in interpretation: a token is
+   * only treated as an effective built-in amenity when the facility has an
+   * active resource row whose equipment name matches the token. Items without
+   * that backing are still stored on the facility, but they are not effective
+   * built-in amenities for reservation purposes.
+   */
+  built_in_amenities?: string[]
   image?: File | null
 }
 

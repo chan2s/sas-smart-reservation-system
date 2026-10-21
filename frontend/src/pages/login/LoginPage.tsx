@@ -26,6 +26,10 @@ export function LoginPage() {
   const registeredParam = searchParams.get('registered')
   const registeredExternal = registeredParam === 'external'
   const registeredSuccess = registeredParam === 'success'
+  // A Google sign-up on /register created the account (same approval policy as
+  // the form) and returned here; the identity is already linked, so the user
+  // signs in with Google.
+  const registeredGoogle = registeredParam === 'google'
 
   // "Continue with Google" that found an existing account redirects here with
   // ?google_error=account_exists (or email_registered). These get a dedicated
@@ -159,6 +163,19 @@ export function LoginPage() {
                     administrator approval. Please wait for the administrator to approve
                     your organization before making a reservation. You can log in after
                     registration.
+                  </p>
+                </div>
+              )}
+
+              {registeredGoogle && (
+                <div
+                  role="status"
+                  className="mb-6 flex items-start gap-2.5 rounded-xl border border-status-available/30 bg-status-available-bg px-3.5 py-3 text-[13px] text-status-available"
+                >
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <p>
+                    Registration successful. Please sign in with Google to continue — your
+                    account is pending administrator approval.
                   </p>
                 </div>
               )}

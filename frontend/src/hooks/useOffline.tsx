@@ -18,11 +18,12 @@ import {
   setApiReachable,
 } from '@/lib/offline/connectivity'
 import { getBackupMeta } from '@/lib/offline/db'
+import { probeBackend } from '@/lib/offline/health'
 import { syncOfflineBackup, type SyncResult } from '@/lib/offline/sync'
 
-const HEALTH_URL = '/api/health/'
-const HEALTH_TIMEOUT_MS = 6000
 const OFFLINE_POLL_MS = 20000
+/** Do not hammer the backend when several triggers fire close together. */
+const MIN_PROBE_INTERVAL_MS = 5000
 const SYNC_DEBOUNCE_MS = 4000
 
 interface OfflineContextValue {
@@ -48,28 +49,6 @@ interface OfflineContextValue {
 
 const OfflineContext = createContext<OfflineContextValue | null>(null)
 
-async function probeBackend(): Promise<boolean> {
-  if (typeof fetch !== 'function') return true
-  const controller = new AbortController()
-  const timer = window.setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS)
-  try {
-    const response = await fetch(HEALTH_URL, {
-      method: 'GET',
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    })
-    // The server answered. 5xx means the backend itself is failing (e.g. a
-    // proxy error page), so it does not count as reachable; 4xx just means the
-    // route is unknown to an older deployment but the service is up.
-    return response.status < 500
-  } catch {
-    return false
-  } finally {
-    window.clearTimeout(timer)
-  }
-}
-
 /**
  * Connectivity + offline-backup orchestration.
  *
@@ -93,19 +72,64 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   const wasOffline = useRef(false)
   const syncDebounce = useRef<number | null>(null)
 
+  // Probe bookkeeping: never run two probes at once, never hammer the backend
+  // when several triggers fire together, and never write state after unmount.
+  const mounted = useRef(true)
+  const inFlightProbe = useRef<Promise<boolean> | null>(null)
+  const inFlightController = useRef<AbortController | null>(null)
+  const lastProbeAt = useRef(0)
+  const lastKnownReachable = useRef<boolean | null>(getApiReachable())
+
   const applyReachability = useCallback((value: boolean | null) => {
+    lastKnownReachable.current = value
     setApiReachableState(value)
     // Mirror into the store read synchronously by src/lib/api.ts.
     setApiReachable(value)
   }, [])
 
-  const runProbe = useCallback(async () => {
-    setChecking(true)
-    const reachable = await probeBackend()
-    setChecking(false)
-    applyReachability(reachable)
-    return reachable
-  }, [applyReachability])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      // Abort an outstanding probe so it cannot resolve into a dead tree.
+      inFlightController.current?.abort()
+      inFlightController.current = null
+      inFlightProbe.current = null
+    }
+  }, [])
+
+  const runProbe = useCallback(
+    async ({ force = false }: { force?: boolean } = {}): Promise<boolean> => {
+      if (!mounted.current) return false
+      // Join the probe already in flight instead of starting a second one.
+      if (inFlightProbe.current) return inFlightProbe.current
+      // Scheduled triggers (mount, offline poll) are rate limited; an explicit
+      // user retry or a browser 'online' recovery signal (force) always probes.
+      if (!force && Date.now() - lastProbeAt.current < MIN_PROBE_INTERVAL_MS) {
+        return lastKnownReachable.current !== false
+      }
+
+      const controller = new AbortController()
+      inFlightController.current = controller
+      setChecking(true)
+
+      const probe = probeBackend(controller.signal)
+        .then((reachable) => {
+          lastProbeAt.current = Date.now()
+          if (mounted.current) applyReachability(reachable)
+          return reachable
+        })
+        .finally(() => {
+          if (inFlightProbe.current === probe) inFlightProbe.current = null
+          if (inFlightController.current === controller) inFlightController.current = null
+          if (mounted.current) setChecking(false)
+        })
+
+      inFlightProbe.current = probe
+      return probe
+    },
+    [applyReachability],
+  )
 
   // First probe on mount.
   useEffect(() => {
@@ -116,7 +140,9 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onOnline = () => {
       setBrowserOnlineState(true)
-      void runProbe()
+      // The browser just regained a network: probe immediately instead of
+      // waiting for the offline poll interval, so recovery is instant.
+      void runProbe({ force: true })
     }
     const onOffline = () => {
       setBrowserOnlineState(false)
@@ -223,7 +249,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   }, [queryClient, user, syncNow])
 
   const retryConnection = useCallback(async () => {
-    const reachable = await runProbe()
+    const reachable = await runProbe({ force: true })
     if (reachable) void syncNow()
     return reachable
   }, [runProbe, syncNow])

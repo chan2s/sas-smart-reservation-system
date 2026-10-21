@@ -69,7 +69,9 @@ class FacilityAdmin(admin.ModelAdmin):
     search_fields = ("name", "location")
     # ``seating_type`` / ``built_in_seats`` / ``built_ins`` are plain model
     # fields, so they are editable on the change form. ``built_ins`` expects a
-    # JSON list of tokens, e.g. ["tables", "chairs", "projector"].
+    # JSON list of tokens, e.g. ["tables", "chairs", "projector"]. Among those,
+    # only tokens that match an active ``FacilityResource`` become configured
+    # built-in amenities (they are excluded from reservation suggestions).
     inlines = [FacilityImageInline, FacilityResourceInline, OperatingHourInline]
 
     # ------------------------------------------------------------------
@@ -135,6 +137,8 @@ class FacilityAdmin(admin.ModelAdmin):
             "facility": facility,
             "rows": rows,
             "assigned_count": sum(1 for row in rows if row["assigned"]),
+            "declared_built_ins": facility.built_ins or [],
+            "configured_builtin_tokens": self._configured_builtin_tokens(facility),
             # Read-only reminder that facility pricing stays separate from the
             # per-resource equipment/service fees.
             "rates": PricingRule.objects.filter(
@@ -149,6 +153,10 @@ class FacilityAdmin(admin.ModelAdmin):
         return TemplateResponse(
             request, "admin/facilities/facility/manage_equipment.html", context
         )
+        """Built-in amenity tokens that are backed by an active facility resource."""
+        from equipment.services import configured_builtin_tokens_for_facility
+
+        return sorted(configured_builtin_tokens_for_facility(facility.id))
 
     def _handle_manage_equipment_post(self, request, facility, assignments):
         """Apply adds/removes, then return to the page with a summary message."""

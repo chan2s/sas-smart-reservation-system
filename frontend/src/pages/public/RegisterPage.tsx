@@ -313,11 +313,12 @@ export function RegisterPage() {
     setGoogleLoading(true)
     try {
       // The exact same backend OAuth flow the login page uses — there is only
-      // one Google implementation. The `register` intent only keeps OAuth
-      // errors on this page. Google sign-in NEVER creates a SAS RESERVE
-      // account: an unregistered identity bounces back with
-      // "No account found for this Google account. Please register first." An
-      // already-registered one is sent to the login page instead.
+      // one Google implementation. The signed `register` intent tells the
+      // backend to CREATE the account from Google's verified identity (it
+      // stays unapproved, exactly like a form registration). An identity that
+      // is already registered is never duplicated: it is sent to the login
+      // page instead. Registration never authenticates, so the backend returns
+      // here via /login?registered=google.
       const { authorize_url } = await api.googleStart(window.location.origin, 'register')
       window.location.href = authorize_url
     } catch {

@@ -4,7 +4,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from reservations.models import ReservationItem
@@ -44,9 +44,17 @@ from .services import (
 
 
 class EquipmentCategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    """Public read-only listing of equipment categories.
+
+    Used by the equipment create/edit form and the category filter on the
+    equipment list page. Categories are reference data, so reads are open to
+    any authenticated or anonymous caller — only writes (never exposed here)
+    would require staff.
+    """
     queryset = EquipmentCategory.objects.all()
     serializer_class = EquipmentCategorySerializer
     pagination_class = None
+    permission_classes = [AllowAny]
 
 
 class EquipmentViewSet(viewsets.ModelViewSet):

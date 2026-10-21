@@ -106,6 +106,28 @@ describe('LoginPage — deactivated account modal', () => {
     expect(screen.getByText(DEACTIVATED_MESSAGE)).toBeTruthy()
   })
 
+  it('a Google sign-up returns here with a success notice and Google sign-in', () => {
+    renderLogin(['/login?registered=google'])
+
+    expect(screen.getByText(/Registration successful/i)).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: /Continue with Google/i }),
+    ).toBeTruthy()
+  })
+
+  it('the login Google button starts the login flow, not registration', async () => {
+    apiState.googleStart.mockResolvedValue({
+      authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth',
+    })
+    renderLogin()
+
+    fireEvent.click(screen.getByRole('button', { name: /Continue with Google/i }))
+
+    await waitFor(() =>
+      expect(apiState.googleStart).toHaveBeenCalledWith(window.location.origin),
+    )
+  })
+
   it('OK dismisses the modal and scrubs the google_error parameter', async () => {
     const { container } = renderLogin([
       '/login?google_error=account_deactivated',

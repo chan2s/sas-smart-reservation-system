@@ -1,21 +1,23 @@
 """Google OAuth registration-flow tests.
 
-The registration page reuses the shared ``/api/auth/google/`` implementation
-and adds two behaviors:
+The registration page reuses the shared ``/api/auth/google/`` implementation.
+The signed ``intent`` issued by ``google_start`` decides which operation runs:
 
-* a signed ``intent`` that keeps OAuth errors on ``/register``;
-* existing-account detection by Google's stable subject id (``sub``) via the
-  django-allauth ``SocialAccount`` table — never by a client-supplied email.
+* ``intent=login`` only authenticates an existing account (never creates one);
+* ``intent=register`` creates the local account from Google's *verified*
+  identity, links it through the django-allauth ``SocialAccount`` table, and
+  applies the same approval policy as the password registration endpoint
+  (unapproved / view-only until an administrator approves it).
 
 These tests drive the real start + callback endpoints with Google mocked,
-covering: signed-intent handling, new-account creation, existing-account
-redirect to login, no duplicate accounts, no insecure email-based linking,
-denied consent / provider errors, unverified email, and
-external-organization approval (which Google never bypasses).
+covering: signed-intent handling, account creation, approval policy, no
+duplicate accounts, no insecure email-based linking, denied consent / provider
+errors, unverified email, and external-organization approval (which Google
+never bypasses).
 """
 
 from unittest import mock
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from allauth.socialaccount.models import SocialAccount
 from django.core.signing import TimestampSigner
@@ -23,7 +25,7 @@ from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Organization, User
+from .models import AuditLog, Organization, User
 
 _OVERRIDES = dict(
     GOOGLE_CLIENT_ID="test-id",
@@ -58,6 +60,7 @@ def _callback(
     code="auth-code",
     provider_error=None,
     fail_token=False,
+    **extra,
 ):
     """Drive the real callback through a mocked Google identity exchange."""
     userinfo = (
@@ -76,6 +79,7 @@ def _callback(
         query["code"] = code
     if provider_error:
         query["error"] = provider_error
+    query.update(extra)
 
     import requests
 
@@ -94,9 +98,12 @@ def _callback(
 
 
 def _tokens(response) -> dict:
-    return dict(
-        pair.split("=", 1) for pair in urlparse(response.url).fragment.split("&")
-    )
+    return {
+        key: unquote(value)
+        for key, value in (
+            pair.split("=", 1) for pair in urlparse(response.url).fragment.split("&")
+        )
+    }
 
 
 class RegisterIntentStateTests(APITestCase):
@@ -155,6 +162,16 @@ class RegisterIntentErrorRedirectTests(APITestCase):
         self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
         self.assertIn("google_error=invalid_state", response.url)
 
+    def test_expired_state_is_rejected(self):
+        # An expired signature is refused before the (untrusted) intent is
+        # read, so the error goes to the safe default: the login page.
+        state = _start(self.client, intent="register")
+        with mock.patch("accounts.oauth_views.STATE_MAX_AGE_SECONDS", -1):
+            response = _callback(self.client, state)
+        self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
+        self.assertIn("google_error=invalid_state", response.url)
+        self.assertFalse(User.objects.filter(email=EMAIL).exists())
+
     def test_token_exchange_failure_does_not_create_account(self):
         state = _start(self.client, intent="register")
         response = _callback(self.client, state, fail_token=True)
@@ -164,60 +181,99 @@ class RegisterIntentErrorRedirectTests(APITestCase):
 
 
 class GoogleRegistrationFlowTests(APITestCase):
-    """Existing-account sign-in vs. first-time refusal share one flow."""
+    """Registering with Google creates an account; logging in never does."""
 
     def setUp(self):
         self.client = APIClient()
 
-    def test_new_google_identity_is_never_created(self):
-        """\"Continue with Google\" only authenticates existing accounts.
-
-        A verified Google identity with no SAS RESERVE account is sent back
-        to the login page with the "no account found" code; account creation
-        happens only through the normal registration endpoint.
-        """
-        for intent in ("login", "register"):
-            with self.subTest(intent=intent):
-                state = _start(self.client, intent=intent)
-                response = _callback(self.client, state)
-                self.assertEqual(response.status_code, 302)
-                self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
-                self.assertIn("google_error=no_account_found", response.url)
-                self.assertNotIn("access=", response.url)
-                self.assertFalse(User.objects.filter(email=EMAIL).exists())
-                self.assertFalse(SocialAccount.objects.exists())
-
-    def test_existing_google_account_redirects_to_login_on_register(self):
-        # An existing SAS RESERVE account (registered earlier, password-less,
-        # reachable through Google) signs in once through the login flow so
-        # the identity gets associated.
-        User.objects.create_user(username="googlereq", email=EMAIL)
-        first = _callback(self.client, _start(self.client))
-        self.assertIn("access", _tokens(first))
-
-        # The same Google identity then clicks "Continue with Google" on the
-        # registration page: no sign-in, no duplicate — straight to login.
+    def test_new_google_identity_registers_an_account(self):
         response = _callback(self.client, _start(self.client, intent="register"))
+
+        # Registration success returns to the login page (registration never
+        # authenticates, exactly like the password flow) — no JWTs.
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
-        self.assertIn("google_error=account_exists", response.url)
+        self.assertIn("registered=google", response.url)
         self.assertNotIn("access=", response.url)
+
+        user = User.objects.get(email=EMAIL)
+        self.assertEqual(user.first_name, "Juan")
+        self.assertEqual(user.last_name, "Dela Cruz")
+        self.assertEqual(user.username, "new.grad")
+        self.assertEqual(user.role, User.Role.REQUESTER)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        # Same approval policy as a normal registration: unapproved until an
+        # administrator approves it.
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.is_approved)
+        self.assertTrue(user.is_view_only)
+        # Google is the account's only credential.
+        self.assertFalse(user.has_usable_password())
+        self.assertTrue(
+            SocialAccount.objects.filter(
+                provider=PROVIDER, uid=SUB, user=user
+            ).exists()
+        )
+
+    def test_google_registration_is_audited(self):
+        _callback(self.client, _start(self.client, intent="register"))
+        user = User.objects.get(email=EMAIL)
+        actions = set(
+            AuditLog.objects.filter(actor=user).values_list("action", flat=True)
+        )
+        self.assertIn(AuditLog.Action.REGISTER, actions)
+        self.assertIn(AuditLog.Action.GOOGLE_FIRST_ACCOUNT, actions)
+
+    def test_new_google_identity_on_login_is_still_refused(self):
+        response = _callback(self.client, _start(self.client))  # login intent
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
+        self.assertIn("google_error=no_account_found", response.url)
+        self.assertNotIn("access=", response.url)
+        self.assertFalse(User.objects.filter(email=EMAIL).exists())
+        self.assertFalse(SocialAccount.objects.exists())
+
+    def test_login_intent_cannot_be_turned_into_registration_by_a_query_param(self):
+        # The intent comes from the signed state only; a client-supplied
+        # ``intent`` parameter is ignored.
+        state = _start(self.client)  # login intent
+        response = _callback(self.client, state, intent="register")
+        self.assertIn("google_error=no_account_found", response.url)
+        self.assertFalse(User.objects.filter(email=EMAIL).exists())
+
+    def test_registered_google_account_signs_in_with_google(self):
+        _callback(self.client, _start(self.client, intent="register"))
+
+        response = _callback(self.client, _start(self.client))  # login intent
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/auth/callback", response.url)
+        self.assertIn("access", _tokens(response))
         self.assertEqual(User.objects.filter(email=EMAIL).count(), 1)
         self.assertEqual(SocialAccount.objects.count(), 1)
 
-    def test_google_identity_signs_in_repeatedly_without_duplicates(self):
-        User.objects.create_user(username="googlereq", email=EMAIL)
-        _callback(self.client, _start(self.client))
-        second = _callback(self.client, _start(self.client))
-        self.assertIn("access", _tokens(second))
+    def test_repeated_registration_requests_do_not_duplicate_the_account(self):
+        first = _callback(self.client, _start(self.client, intent="register"))
+        self.assertIn("registered=google", first.url)
+
+        second = _callback(self.client, _start(self.client, intent="register"))
+        self.assertIn("google_error=account_exists", second.url)
+        self.assertNotIn("access=", second.url)
         self.assertEqual(User.objects.filter(email=EMAIL).count(), 1)
         self.assertEqual(SocialAccount.objects.count(), 1)
 
-    def test_existing_password_account_is_never_auto_linked(self):
+    def test_username_collision_gets_a_unique_username(self):
+        User.objects.create_user(username="new.grad", password="pass1234!")
+        _callback(self.client, _start(self.client, intent="register"))
+
+        user = User.objects.get(email=EMAIL)
+        self.assertNotEqual(user.username, "new.grad")
+        self.assertEqual(User.objects.filter(username=user.username).count(), 1)
+
+    def test_existing_password_account_is_never_auto_linked_on_register(self):
         existing = User.objects.create_user(
             username="existing", email=EMAIL, password="pass1234!"
         )
-        # Registration must not duplicate or silently link the account.
         response = _callback(self.client, _start(self.client, intent="register"))
         self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
         self.assertIn("google_error=email_registered", response.url)
@@ -227,7 +283,7 @@ class GoogleRegistrationFlowTests(APITestCase):
             SocialAccount.objects.filter(provider=PROVIDER, user=existing).exists()
         )
 
-    def test_login_with_unlinked_password_email_is_also_refused(self):
+    def test_existing_password_account_is_never_auto_linked_on_login(self):
         User.objects.create_user(username="existing", email=EMAIL, password="pass1234!")
         response = _callback(self.client, _start(self.client))  # login intent
         self.assertTrue(response.url.startswith(f"{ORIGIN}/login"))
@@ -238,7 +294,7 @@ class GoogleRegistrationFlowTests(APITestCase):
     def test_legacy_passwordless_google_account_can_still_sign_in(self):
         # An account originally created through Google (no usable password)
         # may adopt the verified identity on sign-in so its owner is not
-        # locked out by the new no-email-linking rule.
+        # locked out by the no-email-linking rule.
         user = User.objects.create_user(username="legacy", email=EMAIL)
         self.assertFalse(user.has_usable_password())
 
@@ -273,7 +329,11 @@ class GoogleRegistrationFlowTests(APITestCase):
         response = _callback(
             self.client,
             state,
-            userinfo={"email": "unverified@gmail.com", "email_verified": False},
+            userinfo={
+                "sub": "google-sub-unverified",
+                "email": "unverified@gmail.com",
+                "email_verified": False,
+            },
         )
         self.assertTrue(response.url.startswith(f"{ORIGIN}/register"))
         self.assertIn("google_error=email_unverified", response.url)
@@ -291,19 +351,18 @@ class GoogleRegistrationFlowTests(APITestCase):
 
 
 class GoogleRegistrationApprovalTests(APITestCase):
-    """Google sign-up never bypasses organization verification or authorization."""
+    """Google sign-up follows the existing approval/authorization workflow."""
 
     def setUp(self):
         self.client = APIClient()
 
     def _register_google_user(self) -> str:
-        # An existing, registered SAS RESERVE account reachable through
-        # Google: created via registration (password-less), then signed in
-        # through the login flow so the identity is associated and JWTs are
-        # issued. Google sign-in itself never creates the account.
-        User.objects.create_user(username="googlereq", email=EMAIL)
-        response = _callback(self.client, _start(self.client))
-        access = _tokens(response)["access"]
+        """Register through Google, then sign in through Google for JWTs."""
+        registered = _callback(self.client, _start(self.client, intent="register"))
+        self.assertIn("registered=google", registered.url)
+
+        signed_in = _callback(self.client, _start(self.client))
+        access = _tokens(signed_in)["access"]
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
         return access
 
@@ -323,12 +382,36 @@ class GoogleRegistrationApprovalTests(APITestCase):
             format="json",
         )
 
-    def test_external_organization_stays_pending_and_blocks_reservations(self):
+    def test_new_google_account_is_view_only_until_approved(self):
         self._register_google_user()
+
+        me = self.client.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 200)
+        self.assertFalse(me.data["is_approved"])
+        self.assertTrue(me.data["is_view_only"])
+
+        # A state-changing request is refused by the existing permission class.
+        response = self._register_external_organization()
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data.get("code"), "account_not_approved")
+        # Only the seeded internal organizations exist — nothing was registered.
+        self.assertFalse(
+            Organization.objects.filter(
+                organization_type="SCHOOL_UNIVERSITY"
+            ).exists()
+        )
+
+    def test_approved_google_account_can_complete_its_affiliation(self):
+        self._register_google_user()
+        user = User.objects.get(email=EMAIL)
+        user.is_active = True
+        user.save(update_fields=["is_active"])
+        self.client.force_authenticate(user)
+
         response = self._register_external_organization()
         self.assertEqual(response.status_code, 200, response.data)
 
-        user = User.objects.get(email=EMAIL)
+        user.refresh_from_db()
         self.assertEqual(user.affiliation, "EXTERNAL_ORGANIZATION")
         organization = user.organization_ref
         self.assertIsNotNone(organization)
@@ -337,13 +420,13 @@ class GoogleRegistrationApprovalTests(APITestCase):
         )
         self.assertFalse(user.can_create_reservations)
 
-        me = self.client.get("/api/auth/me/")
-        self.assertEqual(me.status_code, 200)
-        self.assertFalse(me.data["can_create_reservations"])
-        self.assertTrue(me.data["reservation_block_reason"])
-
     def test_google_user_cannot_self_approve_organization(self):
         self._register_google_user()
+        user = User.objects.get(email=EMAIL)
+        user.is_active = True
+        user.save(update_fields=["is_active"])
+        self.client.force_authenticate(user)
+
         self.assertEqual(self._register_external_organization().status_code, 200)
         organization = User.objects.get(email=EMAIL).organization_ref
 

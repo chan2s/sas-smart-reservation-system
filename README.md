@@ -73,6 +73,12 @@ The frontend should be available at `http://localhost:5173`.
 
 The Vite development server proxies `/api` and `/media` requests to Django. Both services must be running for the complete application to work.
 
+> **Run one workflow at a time.** The Docker Compose stack below publishes the
+> same ports (`8000` and `5173`). While it is running, Docker keeps those ports
+> and the browser reaches the containers instead of the processes started above;
+> Vite then answers `502 Bad Gateway` for `/api/...` and the app shows its
+> offline banner. Stop it with `docker compose down` before using this workflow.
+
 ---
 
 ## 2. Docker Development Setup

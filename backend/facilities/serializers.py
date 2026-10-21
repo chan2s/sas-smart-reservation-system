@@ -129,7 +129,7 @@ class FacilitySerializer(serializers.ModelSerializer):
     built_ins = TokenListField(
         child=serializers.CharField(max_length=40, allow_blank=True),
         required=False,
-        help_text='Items the space already provides, e.g. ["tables", "chairs"].',
+        help_text='Requested built-in amenities, e.g. ["tables", "chairs", "projector"]. A token becomes a configured built-in amenity only when it matches an active facility resource.',
     )
     availability = serializers.SerializerMethodField()
     # Operating hours are needed by facility cards and the reservation wizard
@@ -141,6 +141,12 @@ class FacilitySerializer(serializers.ModelSerializer):
     has_history = serializers.SerializerMethodField()
     reservation_count = serializers.SerializerMethodField()
     is_active = serializers.BooleanField(required=False)
+    #: Built-in amenity tokens that are backed by an active facility resource.
+    #: A ``built_ins`` token only becomes an effective built-in amenity when the
+    #: facility has an active ``FacilityResource`` whose equipment name matches
+    #: the token. This keeps the reservation wizard in sync with the configured
+    #: inventory instead of a static list typed on the facility record.
+    built_in_amenities = serializers.SerializerMethodField()
 
     class Meta:
         model = Facility
@@ -166,6 +172,7 @@ class FacilitySerializer(serializers.ModelSerializer):
             "reservation_count",
             "availability",
             "operating_hours",
+            "built_in_amenities",
         )
         read_only_fields = (
             "availability",
@@ -244,3 +251,9 @@ class FacilitySerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         date = request.query_params.get("date") if request else None
         return facility_availability_summary(obj, date)
+
+    def get_built_in_amenities(self, obj):
+        """Tokens from ``built_ins`` that map to an active facility resource."""
+        from equipment.services import configured_builtin_tokens_for_facility
+
+        return configured_builtin_tokens_for_facility(obj.id)

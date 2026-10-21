@@ -25,7 +25,12 @@ export interface FacilityFormValues {
   is_active: boolean
   /** Multi-line guidelines, one per line. */
   rules: string
-  /** Comma-separated built-in amenities (drives the wizard's suggestions). */
+  /** Built-in amenities.
+   *
+   * Comma-separated tokens drive the wizard's suggestions, and any token that
+   * matches an active facility resource becomes a configured built-in amenity
+   * (it is no longer suggested as extra equipment and it is not reservable).
+   */
   built_ins: string
   seating_type: SeatingType | ''
   built_in_seats: string
@@ -324,7 +329,7 @@ export function FacilityFormModal({
           label="Built-in amenities"
           htmlFor="facility-built-ins"
           className="sm:col-span-2"
-          hint="Comma-separated, e.g. tables, chairs, projector, sound_system. These are not suggested as extra equipment."
+          hint="Comma-separated tokens such as tables, chairs, projector, sound_system. A token that matches an active facility resource becomes a configured built-in amenity — it is not suggested as extra equipment and it is not reservable as add-on equipment."
         >
           <Input
             id="facility-built-ins"

@@ -13,7 +13,7 @@ from datetime import datetime, time as time_cls, timedelta
 from django.db.models import Sum
 
 from equipment.models import Equipment, MaintenanceRecord
-from equipment.services import facility_has_resources, facility_resource_limits
+from equipment.services import configured_builtin_tokens_for_facility, facility_has_resources, facility_resource_limits
 from facilities.models import Facility, OperatingHour
 from reservations.models import Reservation
 
@@ -170,6 +170,40 @@ def check_availability(facility_id, target_date, start, end, items=None, exclude
             )
             continue
         eq = Equipment.objects.filter(pk=eq_id).first()
+        # A configured built-in amenity must not be requested as extra equipment.
+        # Built-in amenities derive from the facility's own equipment
+        # configuration, so they are not part of the extra equipment a requester
+        # can add.
+        if items is not None:
+            configured = configured_builtin_tokens_for_facility(facility_id)
+            try:
+                built_in_token = next(
+                    token
+                    for token in configured
+                    if eq and eq.name.lower() == token.strip().lower()
+                )
+            except StopIteration:
+                built_in_token = None
+        else:
+            built_in_token = None
+
+        if built_in_token:
+            item_results.append(
+                {
+                    "equipment_id": eq_id,
+                    "name": eq.name if eq else None,
+                    "category": eq.category.name if eq else None,
+                    "requested": quantity,
+                    "available": 0,
+                    "status": "UNAVAILABLE",
+                    "message": (
+                        f"{eq.name} is already included as a built-in amenity at this "
+                        f"facility. It is not available as extra equipment."
+                    ),
+                }
+            )
+            continue
+
         if quantity <= info["available"]:
             status = "AVAILABLE"
             message = ""

@@ -33,6 +33,17 @@ services:
     # one-off `docker compose exec backend ...` shell).
     env_file:
       - ./backend/.env
+    environment:
+      # backend/.env points DB_HOST at 127.0.0.1 because that is where the host
+      # workflow finds PostgreSQL. Inside this container 127.0.0.1 is the
+      # container itself, so Django booted, failed every database query, never
+      # bound port 8000 and left the frontend's /api proxy answering 502.
+      # Only the container is redirected; `python manage.py runserver` on the
+      # host keeps using 127.0.0.1 from .env.
+      DB_HOST: ${DEV_DB_HOST:-host.docker.internal}
+    extra_hosts:
+      # Docker Desktop defines this automatically; Linux engines do not.
+      - "host.docker.internal:host-gateway"
     volumes:
       # The whole backend directory is bind-mounted: code edits reload the dev
       # server, and db.sqlite3 / media/ / staticfiles/ stay as host files.

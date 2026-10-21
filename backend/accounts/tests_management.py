@@ -350,6 +350,10 @@ class GoogleCallbackRecordsLoginTests(APITestCase):
 
     def test_callback_records_google_login(self):
         client = APIClient()
+        # "Log in with Google" only authenticates an existing account (it never
+        # registers one), so start from the account registration would create:
+        # a password-less REQUESTER whose Google identity is linked on sign-in.
+        User.objects.create_user(username="recorded", email="recorded@gmail.com")
         userinfo = {
             "sub": "google-sub-recorded",
             "email": "recorded@gmail.com",

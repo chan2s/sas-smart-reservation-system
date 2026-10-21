@@ -188,6 +188,11 @@ export function builtInLabel(token: string): string {
  * Seating rules use the facility's own seat count (only "tables and chairs"
  * and "fixed rows" imply seating; an open floor provides none). Everything
  * else is all-or-nothing: one token in `built_ins` covers the whole rule.
+ *
+ * The ``builtIns`` passed in here are expected to already be the configured
+ * built-in amenities (facility resources whose equipment name matches a
+ * ``built_ins`` token). When they come from a stale ``built_ins`` list without
+ * that matching, the allowance falls through to zero for that token.
  */
 export function builtInAllowance(
   rule: ResourceSuggestionRule,
@@ -201,6 +206,14 @@ export function builtInAllowance(
   }
   if (!rule.builtInTokens?.length) return 0
   return rule.builtInTokens.some((token) => facility.builtIns.includes(token)) ? 1 : 0
+}
+
+/**
+ * Token comparison used by the suggestion engine and the configured-built-in
+ * derivation. Kept explicit so the same normalization is used in one place.
+ */
+export function tokenMatchesToken(candidate: string, token: string): boolean {
+  return candidate.trim().toLowerCase() === token.trim().toLowerCase()
 }
 
 /**

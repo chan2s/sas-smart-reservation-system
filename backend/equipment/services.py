@@ -111,6 +111,135 @@ def facility_resource_limits(facility_id) -> dict:
     return limits
 
 
+def configured_builtin_tokens_for_facility(facility_id) -> set:
+    """Tokens from ``Facility.built_ins`` that map to an active facility resource.
+
+    These are the built-in amenities whose existence is backed by a real
+    ``FacilityResource`` row. A ``built_ins`` token without a matching active
+    resource is still stored on the facility, but it is not an effective
+    built-in amenity for reservation purposes — it is a free-form facility
+    attribute (kept for backward compatibility and for items that are physically
+    installed but not tracked as reservable inventory).
+
+    Only active resources whose ``status`` is AVAILABLE contribute a configured
+    built-in amenity, because a resource that is under maintenance or otherwise
+    unavailable is not effectively provided by the facility right now.
+    """
+    if not facility_id:
+        return set()
+    if not facility_has_resources(facility_id):
+        return set()
+    from facilities.models import Facility
+
+    facility = Facility.objects.filter(pk=facility_id).first()
+    if not facility:
+        return set()
+
+    declared = set(facility.built_ins or ())
+    if not declared:
+        return set()
+
+    # Map each configured equipment name to the tokens that should make it a
+    # built-in amenity. Right now this is 1:1 (token == lowered equipment name),
+    # but the mapping is explicit so the rule can be refined later without
+    # touching callers.
+    limits = facility_resource_limits(facility_id)
+    configured: set[str] = set()
+    if not limits:
+        return configured
+
+    for token in declared:
+        normalized = token.strip().lower()
+        if not normalized:
+            continue
+        # A token matches when it equals the equipment name (already
+        # normalized) — the existing suggestion config already keys off the
+        # same normalized tokens, so this keeps the two systems consistent.
+        for eq_id, limit in limits.items():
+            if limit <= 0:
+                continue
+            equipment = Equipment.objects.filter(pk=eq_id, is_active=True).first()
+            if equipment is None:
+                continue
+            if equipment.name.lower() == normalized:
+                configured.add(token)
+                break
+    return configured
+
+
+_effective_builtin_token_cache: dict[int, set[str]] = {}
+
+
+def configured_builtin_tokens_for_facility_cached(facility_id: int) -> set[str]:
+    """Cached variant used by tests that call the helper twice in one case."""
+    cached = _effective_builtin_token_cache.get(facility_id)
+    if cached is not None:
+        return cached
+    result = configured_builtin_tokens_for_facility(facility_id)
+    _effective_builtin_token_cache[facility_id] = result
+    return result
+
+#: Allow the helper to be toggled off during tests that exercise the older
+#: global-equipment behavior before any facility resource is configured.
+_configured_builtin_enabled = True
+
+
+def configured_builtin_tokens_for_facility(facility_id: int) -> set[str]:
+    """Tokens from ``Facility.built_ins`` that map to an active facility resource.
+
+    These are the built-in amenities whose existence is backed by a real
+    ``FacilityResource`` row. A ``built_ins`` token without a matching active
+    resource is still stored on the facility, but it is not an effective
+    built-in amenity for reservation purposes — it is a free-form facility
+    attribute (kept for backward compatibility and for items that are physically
+    installed but not tracked as reservable inventory).
+
+    Only active resources whose ``status`` is AVAILABLE contribute a configured
+    built-in amenity, because a resource that is under maintenance or otherwise
+    unavailable is not effectively provided by the facility right now.
+    """
+    if not _configured_builtin_enabled or not facility_id:
+        return set()
+    if not facility_has_resources(facility_id):
+        return set()
+    from facilities.models import Facility
+
+    facility = Facility.objects.filter(pk=facility_id).first()
+    if not facility:
+        return set()
+
+    declared = set(facility.built_ins or ())
+    if not declared:
+        return set()
+
+    # Map each configured equipment name to the tokens that should make it a
+    # built-in amenity. Right now this is 1:1 (token == lowered equipment name),
+    # but the mapping is explicit so the rule can be refined later without
+    # touching callers.
+    limits = facility_resource_limits(facility_id)
+    configured: set[str] = set()
+    if not limits:
+        return configured
+
+    for token in declared:
+        normalized = token.strip().lower()
+        if not normalized:
+            continue
+        # A token matches when it equals the equipment name (already
+        # normalized) — the existing suggestion config already keys off the
+        # same normalized tokens, so this keeps the two systems consistent.
+        for eq_id, limit in limits.items():
+            if limit <= 0:
+                continue
+            equipment = Equipment.objects.filter(pk=eq_id, is_active=True).first()
+            if equipment is None:
+                continue
+            if equipment.name.lower() == normalized:
+                configured.add(token)
+                break
+    return configured
+
+
 def unassigned_equipment_for_facility(facility_id, items) -> list:
     """Selected items that do NOT belong to the facility.
 
