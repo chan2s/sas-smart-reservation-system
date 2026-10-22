@@ -12,10 +12,13 @@ Sent emails never include:
 
 import logging
 import smtplib
+import socket
+import ssl
+import time
 from typing import Optional
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.exceptions import TemplateDoesNotExist, TemplateSyntaxError
 from django.template.loader import render_to_string
 
@@ -77,13 +80,14 @@ def send_reservation_email(
             )
             return True
         return False
-    except Exception as e:
+    except Exception as exc:
         if not fail_silently:
             raise
         logger.error(
-            "Email delivery failed for %s: %s",
+            "Email delivery failed for %s (%s): %s",
             recipient_email,
-            str(e)[:200],  # Truncate to avoid logging sensitive data
+            type(exc).__name__,
+            str(exc)[:200],  # Truncate to avoid logging sensitive data
         )
         return False
 
@@ -103,6 +107,81 @@ def _classify_email_error(exc: Exception) -> str:
     if isinstance(exc, OSError):
         return "connection"
     return "unknown"
+
+
+#: How long to wait between SMTP connection attempts. Gmail (and other relay
+#: hosts) briefly drop connections when the same IP opens several sessions in
+#: rapid succession; a short pause lets that throttle clear.
+SMTP_CONNECT_RETRY_DELAY_SECONDS = 2
+#: Upper bound for attempts. Total added latency in the total-failure case is
+#: bounded by (attempts - 1) * delay, independent of EMAIL_TIMEOUT per try.
+SMTP_CONNECT_MAX_ATTEMPTS = 3#: Exceptions that can only occur while the session is being established
+#: (connect / DNS / TLS / login) — i.e. before ANY message bytes have
+#: been transmitted. Retrying them is safe: a retry can never duplicate a
+#: delivery. NOTE: this set must stay NARROW — including plain "OSError"
+#: would also catch every ``smtplib.SMTPException`` (they subclass OSError),
+#: silently retrying bad credentials and SMTP protocol errors on every
+#: reconnect. ``SMTPAuthenticationError`` and ``SMTPRecipientsRefused`` are
+#: deliberately NOT in this set: a reconnect cannot fix bad credentials, and
+#: a refused recipient is permanent.
+_TRANSIENT_CONNECTION_ERRORS = (
+    ConnectionError,  # reset / aborted / refused / broken pipe
+    TimeoutError,  # includes socket timeouts (connect and read)
+    socket.gaierror,  # transient DNS resolution failure
+    ssl.SSLError,  # transient TLS handshake drops
+    smtplib.SMTPServerDisconnected,
+    smtplib.SMTPConnectError,
+)
+
+
+def _deliver(message: "EmailMultiAlternatives") -> tuple[bool, Optional[Exception]]:
+    """Deliver ``message`` through Django's configured SMTP backend.
+
+    The connection is opened explicitly (via the configured backend, so every
+    setting — EMAIL_HOST, EMAIL_PORT, EMAIL_USE_TLS, credentials — still comes
+    from the project's email configuration). A transient close during that
+    establishment phase is retried up to :data:`SMTP_CONNECT_MAX_ATTEMPTS`
+    times because nothing has been sent yet.    A disconnect DURING the message transmission (DATA) phase is never retried
+    automatically: Gmail may already have accepted the message, so an
+    immediate retry could deliver it twice. The ambiguous failure is returned
+    to the caller for exact, type-level logging instead.
+
+    Returns ``(sent, exception)`` — ``exception`` is ``None`` on success, an
+    exception instance for a retried-out or transmit-phase failure, or ``None``
+    together with ``sent=False`` when the backend refused without raising.
+    """
+    last_open_exc: Optional[Exception] = None
+    for attempt in range(1, SMTP_CONNECT_MAX_ATTEMPTS + 1):
+        if attempt > 1:
+            time.sleep(SMTP_CONNECT_RETRY_DELAY_SECONDS)
+        connection = get_connection()
+        try:
+            connection.open()
+        except _TRANSIENT_CONNECTION_ERRORS as exc:
+            last_open_exc = exc
+            logger.warning(
+                "SMTP connection attempt %d/%d failed before any message was "
+                "sent (%s: %s).",
+                attempt,
+                SMTP_CONNECT_MAX_ATTEMPTS,
+                type(exc).__name__,
+                str(exc)[:200],  # truncated; never includes credentials
+            )
+            continue
+        # Routing the message through THIS opened connection reproduces
+        # Django's normal ``message.send()`` path (EmailMessage.send() uses
+        # ``self.connection``); it just skips throwing the freshly opened,
+        # unusable connection away on a transient handshake drop.
+        message.connection = connection
+        try:
+            sent = bool(message.send(fail_silently=False))
+        finally:
+            try:
+                connection.close()
+            except Exception:  # noqa: BLE001 — a failed close is harmless
+                logger.debug("SMTP connection close failed (ignored).")
+        return (bool(sent), None)
+    return (False, last_open_exc)
 
 
 def build_reservation_context(
@@ -204,9 +283,10 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
     except Exception as exc:  # noqa: BLE001 — delivery must never break approval
         reason = _classify_email_error(exc)
         logger.error(
-            "Approval email FAILED for reservation %s to %s: %s",
+            "Approval email FAILED for reservation %s to %s (%s): %s",
             reservation.reservation_id,
             email,
+            type(exc).__name__,
             str(exc)[:200],
         )
         return False, reason
@@ -301,7 +381,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
             to=[email],
         )
         message.attach_alternative(html_message, "text/html")
-        sent = message.send(fail_silently=False)
+        sent, send_exc = _deliver(message)
         if sent:
             logger.info(
                 "Booking confirmation email sent for reservation %s to %s "
@@ -312,13 +392,29 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
                 email.split("@")[1] if "@" in email else "unknown",
             )
             return True, None
+        if send_exc is not None:
+            # A connect/TLS/login drop that survived all retry attempts, or a
+            # disconnect during the transmission phase (ambiguous, never
+            # retried automatically to avoid a duplicate delivery).
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "Booking confirmation email FAILED for reservation %s to %s "
+                "(%s: %s) after %d connection attempts.",
+                reservation.reservation_id,
+                email,
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+                SMTP_CONNECT_MAX_ATTEMPTS,
+            )
+            return False, reason
         return False, "smtp"
     except Exception as exc:  # noqa: BLE001 — delivery must never break creation
         reason = _classify_email_error(exc)
         logger.error(
-            "Booking confirmation email FAILED for reservation %s to %s: %s",
+            "Booking confirmation email FAILED for reservation %s to %s (%s): %s",
             reservation.reservation_id,
             email,
+            type(exc).__name__,
             str(exc)[:200],
         )
         return False, reason
@@ -388,9 +484,10 @@ def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
     except Exception as exc:  # noqa: BLE001 — delivery must never break the sweep
         reason = _classify_email_error(exc)
         logger.error(
-            "Reminder email FAILED for reservation %s to %s: %s",
+            "Reminder email FAILED for reservation %s to %s (%s): %s",
             reservation.reservation_id,
             email,
+            type(exc).__name__,
             str(exc)[:200],
         )
         return False, reason

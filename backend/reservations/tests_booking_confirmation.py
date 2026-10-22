@@ -9,10 +9,11 @@ never send a real email.
 
 import smtplib
 from datetime import time, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.mail import EmailMultiAlternatives
 from django.template.defaultfilters import date as format_date
 from django.test import TestCase
 from django.utils import timezone
@@ -310,3 +311,117 @@ class BookingConfirmationEmailTests(TestCase):
             self.client.get("/api/reservations/")
             self.client.get("/api/reservations/counts/")
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_confirmation_survives_a_transient_connect_drop(self):
+        """Full flow: a dropped first connect still yields exactly one email.
+
+        Reproduces the intermittent "Connection unexpectedly closed" failure:
+        the first SMTP connection attempt is refused, and the (safe) retry
+        inside ``_deliver`` must still deliver exactly one confirmation.
+        """
+        from notifications import email_service
+
+        failing_conn = MagicMock()
+        failing_conn.open.side_effect = smtplib.SMTPServerDisconnected("reset")
+        real_conn = mail.get_connection()  # test runner's locmem backend
+        self.client.force_authenticate(self.requester)
+        with patch(
+            "notifications.email_service.get_connection",
+            side_effect=[failing_conn, real_conn],
+        ), patch("time.sleep"):
+            response = self._create()
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(len(mail.outbox), 1)  # exactly one email
+        sent = mail.outbox[0]
+        self.assertEqual(sent.to, [self.requester.email])
+        reservation = Reservation.objects.get(pk=response.json()["id"])
+        self.assertIsNotNone(reservation.confirmation_email_sent_at)
+        self.assertIsNone(reservation.confirmation_email_claimed_at)
+
+
+# ----------------------------------------------------------------------
+# SMTP connection resilience (notifications.email_service._deliver)
+# ----------------------------------------------------------------------
+# The manual smtplib handshake works, but Gmail occasionally closes a
+# connection mid-handshake ("Connection unexpectedly closed").
+# ``_deliver`` opens the connection explicitly and retries such drops —
+# safely: they happen before any message bytes were transmitted, so a
+# retry can never duplicate a delivery.
+
+
+class DeliverConnectionResilienceTests(TestCase):
+    def _message(self):
+        return EmailMultiAlternatives(
+            subject=SUBJECT,
+            body="plain body",
+            from_email="SAS RESERVE <noreply@localhost>",
+            to=["to@campus.edu"],
+        )
+
+    def test_connect_drop_is_retried_and_message_is_sent_once(self):
+        from notifications import email_service
+
+        conn = MagicMock()
+        conn.open.side_effect = [smtplib.SMTPServerDisconnected("reset"), None]
+        conn.send_messages.return_value = 1
+        with patch.object(
+            email_service, "get_connection", return_value=conn
+        ), patch("time.sleep"):
+            sent, exc = email_service._deliver(self._message())
+
+        self.assertTrue(sent)
+        self.assertIsNone(exc)
+        self.assertEqual(conn.open.call_count, 2)
+        # Exactly one send for one reservation — no duplicate from the retry.
+        self.assertEqual(conn.send_messages.call_count, 1)
+        self.assertEqual(conn.close.call_count, 1)
+
+    def test_persistent_connect_drop_reports_the_targeted_exception(self):
+        from notifications import email_service
+
+        conn = MagicMock()
+        conn.open.side_effect = smtplib.SMTPServerDisconnected("reset")
+        with patch.object(
+            email_service, "get_connection", return_value=conn
+        ), patch("time.sleep"):
+            sent, exc = email_service._deliver(self._message())
+
+        self.assertFalse(sent)
+        self.assertIsInstance(exc, smtplib.SMTPServerDisconnected)
+        self.assertEqual(conn.open.call_count, email_service.SMTP_CONNECT_MAX_ATTEMPTS)
+        self.assertEqual(conn.send_messages.call_count, 0)
+
+    def test_bad_credentials_are_never_retried(self):
+        """Auth failures cannot be fixed by reconnecting — fail immediately."""
+        from notifications import email_service
+
+        conn = MagicMock()
+        conn.open.side_effect = smtplib.SMTPAuthenticationError(535, b"denied")
+        with patch.object(
+            email_service, "get_connection", return_value=conn
+        ), patch("time.sleep"):
+            with self.assertRaises(smtplib.SMTPAuthenticationError):
+                email_service._deliver(self._message())
+
+        self.assertEqual(conn.open.call_count, 1)
+        self.assertEqual(conn.send_messages.call_count, 0)
+
+    def test_disconnect_during_transmission_is_never_retried(self):
+        """A mid-DATA drop may mean Gmail already accepted the message.
+
+        Automatically retrying could deliver the confirmation twice, so the
+        ambiguous failure is surfaced for exact logging instead.
+        """
+        from notifications import email_service
+
+        conn = MagicMock()
+        conn.send_messages.side_effect = smtplib.SMTPServerDisconnected("mid-DATA")
+        with patch.object(
+            email_service, "get_connection", return_value=conn
+        ), patch("time.sleep"):
+            with self.assertRaises(smtplib.SMTPServerDisconnected):
+                email_service._deliver(self._message())
+
+        self.assertEqual(conn.send_messages.call_count, 1)
+        self.assertEqual(conn.close.call_count, 1)

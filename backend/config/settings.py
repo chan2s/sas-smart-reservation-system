@@ -1,10 +1,18 @@
 """
 Django settings for the SAS Smart Facility & Resource Reservation System.
 
-Target database architecture is PostgreSQL. During local development the
-database can be selected through the ``DATABASE_URL`` environment variable
-(e.g. ``postgres://user:pass@localhost:5432/sas_reserve``). When it is not
-set, the project falls back to SQLite so the app can be run out of the box.
+Target database architecture is PostgreSQL. The connection is taken from
+the ``.env`` file, in priority order:
+
+1. ``DATABASE_URL`` — a complete ``postgres://user:pass@host:port/db`` URL.
+2. ``DB_*`` variables — the existing configuration set in ``backend/.env``
+   (``DB_CONNECTION``, ``DB_HOST``, ``DB_PORT``, ``DB_DATABASE``,
+   ``DB_USERNAME``, ``DB_PASSWORD``).
+3. SQLite fallback (``backend/db.sqlite3``) so the app can still run out of
+   the box with neither set.
+
+No credentials are ever hardcoded here; everything comes from the
+environment loaded by python-dotenv below.
 """
 
 import os
@@ -181,6 +189,20 @@ def _database_config() -> dict:
             "PASSWORD": unquote(parsed.password or ""),
             "HOST": parsed.hostname or "localhost",
             "PORT": parsed.port or 5432,
+        }
+
+    # The existing host/db configuration set in backend/.env. ``DB_CONNECTION``
+    # uses driver-style values (pgsql/postgres); anything else keeps SQLite.
+    db_connection = (os.environ.get("DB_CONNECTION") or "").strip().lower()
+
+    if db_connection in {"pgsql", "postgres", "postgresql"}:
+        return {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("DB_DATABASE", ""),
+            "USER": os.environ.get("DB_USERNAME", ""),
+            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+            "HOST": os.environ.get("DB_HOST", "localhost"),
+            "PORT": int(os.environ.get("DB_PORT", "5432")),
         }
 
     return {

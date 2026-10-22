@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import IntegrityError, models, transaction
 
 
@@ -228,6 +228,52 @@ class Organization(models.Model):
         return f"{self.organization_code} — {self.organization_name}"
 
 
+class UserManager(BaseUserManager):
+    """Custom manager so ``create_superuser()`` assigns the ADMIN role.
+
+    Django's built-in ``UserManager.create_superuser()`` only sets
+    ``is_staff``/``is_superuser``/``is_active`` — it never touches this
+    project's ``role`` field, so a bare ``User.objects.create_superuser()``
+    (and ``manage.py createsuperuser``) would leave the user on the default
+    ``Role.REQUESTER``. That makes the account a regular requester despite
+    having ``is_superuser == True``.
+
+    The application's administrator surface (``is_admin``, ``IsAdmin``, the
+    frontend ``isStaff`` check, Django Admin) all key off ``role == ADMIN``,
+    so a superuser created without this manager cannot access the
+    administrator workflows.
+    """
+
+    def create_user(self, username, email=None, password=None, **extra_fields):
+        """Create a regular user — keeps the existing ``Role.REQUESTER`` default."""
+        if not username:
+            raise ValueError("The Username field must be set.")
+        email = self.normalize_email(email) if email else ""
+        user = self.model(username=username, email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        """Create a superuser with the application administrator role.
+
+        This is the code path hit by ``manage.py createsuperuser`` and by
+        explicit ``User.objects.create_superuser(...)`` calls (e.g. the seed
+        command). It must never silently produce a requester.
+        """
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_active", True)
+        if extra_fields.get("is_staff") is not True:
+            raise ValueError("Superuser must have is_staff=True.")
+        if extra_fields.get("is_superuser") is not True:
+            raise ValueError("Superuser must have is_superuser=True.")
+        extra_fields.setdefault("role", User.Role.ADMIN)
+        if extra_fields.get("role") != User.Role.ADMIN:
+            raise ValueError("Superuser must have role=USER.Role.ADMIN.")
+        return self.create_user(username, email, password, **extra_fields)
+
+
 class User(AbstractUser):
     """Application user with institutional roles.
 
@@ -270,6 +316,11 @@ class User(AbstractUser):
             for value, label in cls.Affiliation.choices
             if value in cls.SELECTABLE_AFFILIATIONS
         ]
+
+    #: Default manager. Uses ``UserManager`` so that ``create_superuser()``
+    #: (including ``manage.py createsuperuser``) assigns ``Role.ADMIN`` rather
+    #: than inheriting the ``Role.REQUESTER`` model default.
+    objects = UserManager()
 
     role = models.CharField(
         max_length=16, choices=Role.choices, default=Role.REQUESTER
