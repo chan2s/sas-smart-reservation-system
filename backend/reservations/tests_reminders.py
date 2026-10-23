@@ -116,14 +116,14 @@ class ReminderTestCase(TestCase):
         message = mail.outbox[0]
         self.assertEqual(
             message.subject,
-            "Reminder: Your SAS RESERVE Booking Is Coming Up",
+            "Check-In Reminder - SAS RESERVE",
         )
         self.assertEqual(message.to, [self.requester.email])
         self.assertIn("Maria Santos", message.body)
         self.assertIn(reservation.reservation_id, message.body)
         self.assertIn("Science Fair", message.body)
         self.assertIn("Reminder Hall", message.body)
-        self.assertIn("2× Projector", message.body)
+        self.assertIn("2x Projector", message.body)
         self.assertIn("9:00 AM", message.body)
         self.assertIn("11:00 AM", message.body)
         self.assertIn("within the next three days", message.body)
@@ -133,7 +133,7 @@ class ReminderTestCase(TestCase):
         html = message.alternatives[0][0]
         self.assertIn("SAS RESERVE", html)
         self.assertIn("Reminder Hall", html)
-        self.assertIn("2× Projector", html)
+        self.assertIn("2x Projector", html)
 
         reservation.refresh_from_db()
         self.assertIsNotNone(reservation.reminder_email_sent_at)
@@ -366,7 +366,7 @@ class ReminderTestCase(TestCase):
             reminders._claim_email(reservation, now + timedelta(seconds=2))
         )
 
-    # -- failure / retry ---------------------------------------------------
+    # -- failure / retry -------------------------------------------------
 
     def test_notification_failure_is_logged_and_retried(self):
         reservation = self.make_reservation()
@@ -461,7 +461,7 @@ class ReminderTestCase(TestCase):
         self.assertIsNotNone(first.reminder_email_sent_at)
         self.assertIsNotNone(second.reminder_email_sent_at)
 
-    # -- scheduler ---------------------------------------------------------
+    # -- scheduler --------------------------------------------------------
 
     def test_management_command_sends_due_reminders(self):
         self.make_reservation()

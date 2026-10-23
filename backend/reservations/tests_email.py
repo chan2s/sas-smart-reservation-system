@@ -1,17 +1,10 @@
-"""Tests for reservation approval email behavior.
-
-Product decision: automatic approval emails are DISABLED. Approving a
-reservation notifies the requester through the in-app notification system
-only; no email is sent, and SMTP problems can never affect the approval
-itself. Staff can still send an approval email manually via the retry
-action (``workflow.resend_approval_email``), whose delivery state is
-tracked on the ``Reservation.approval_email_status`` field.
-"""
+"""Tests for reservation approval email delivery and its staff-visible status."""
 
 from datetime import date, time
 
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.db import transaction
 from django.test import TestCase
 
 from facilities.models import Facility, OperatingHour
@@ -49,7 +42,7 @@ class ApprovalEmailFlowTests(TestCase):
         defaults = dict(
             requester=self.requester,
             requester_type=Reservation.RequesterType.CAMPUS,
-            contact_email=self.requester.email,
+            contact_email="incorrect-contact@example.com",
             event_name="Guest Lecture",
             event_type=Reservation.EventType.ACADEMIC,
             facility=self.facility,
@@ -64,28 +57,85 @@ class ApprovalEmailFlowTests(TestCase):
         reservation.save(update_fields=["created_by"])
         return reservation
 
-    # ------------------------------------------------------------------
-    # Approval itself: no email, always succeeds
-    # ------------------------------------------------------------------
+    def approve_and_run_callbacks(self, reservation):
+        with self.captureOnCommitCallbacks(execute=True):
+            result = workflow.approve_reservation(reservation, self.admin)
+        result.refresh_from_db()
+        return result
 
-    def test_approval_sends_no_email(self):
+    def test_approval_sends_once_to_registered_requester_with_reservation_details(self):
         reservation = self.make_reservation()
-        result = workflow.approve_reservation(reservation, self.admin)
+        result = self.approve_and_run_callbacks(reservation)
 
         self.assertEqual(result.status, Reservation.Status.APPROVED)
-        self.assertEqual(reservation.approval_email_status, "NOT_SENT")
-        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(result.approval_email_status, Reservation.ApprovalEmailStatus.SENT)
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [self.requester.email])
+        self.assertEqual(message.subject, "Reservation Approved - SAS RESERVE")
+        self.assertIn(reservation.reservation_id, message.body)
+        self.assertIn("Email Test AVR", message.body)
+        self.assertIn("November 2, 2026", message.body)
+        self.assertIn("9:00 AM", message.body)
+        self.assertIn("11:00 AM", message.body)
+        self.assertIn("Approved", message.body)
 
-    def test_auto_approve_sends_no_email(self):
+    def test_administrator_approve_endpoint_delivers_and_exposes_status(self):
+        from rest_framework.test import APIClient
+
         reservation = self.make_reservation()
-        result = workflow.auto_approve(reservation, self.admin)
+        client = APIClient()
+        client.force_authenticate(self.admin)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.post(
+                f"/api/reservations/{reservation.pk}/approve/", {}, format="json"
+            )
+
+        reservation.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(
+            reservation.approval_email_status, Reservation.ApprovalEmailStatus.SENT
+        )
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.requester.email])
+
+    def test_auto_approval_sends_after_commit(self):
+        reservation = self.make_reservation()
+        with self.captureOnCommitCallbacks(execute=True):
+            result = workflow.auto_approve(reservation, self.admin)
+        result.refresh_from_db()
 
         self.assertEqual(result.status, Reservation.Status.APPROVED)
-        self.assertEqual(reservation.approval_email_status, "NOT_SENT")
+        self.assertEqual(result.approval_email_status, Reservation.ApprovalEmailStatus.SENT)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_already_approved_reservation_does_not_send_another_approval_email(self):
+        reservation = self.make_reservation()
+        self.approve_and_run_callbacks(reservation)
+
+        with self.assertRaises(ValueError):
+            self.approve_and_run_callbacks(reservation)
+        workflow.resend_approval_email(reservation, self.admin)
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_rolled_back_approval_does_not_send_email(self):
+        reservation = self.make_reservation()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            with self.assertRaises(RuntimeError):
+                with transaction.atomic():
+                    workflow.approve_reservation(reservation, self.admin)
+                    raise RuntimeError("rollback")
+
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.PENDING)
+        self.assertEqual(reservation.approval_email_status, Reservation.ApprovalEmailStatus.NOT_SENT)
         self.assertEqual(len(mail.outbox), 0)
 
-    def test_smtp_failure_never_breaks_approval(self):
-        """Even with a completely invalid SMTP configuration, approval works."""
+    def test_smtp_failure_keeps_approval_and_records_failed_state(self):
         reservation = self.make_reservation()
         original = workflow.send_reservation_approved
 
@@ -94,64 +144,45 @@ class ApprovalEmailFlowTests(TestCase):
 
         workflow.send_reservation_approved = explode
         try:
-            result = workflow.approve_reservation(reservation, self.admin)
+            with self.captureOnCommitCallbacks(execute=True):
+                result = workflow.approve_reservation(reservation, self.admin)
         finally:
             workflow.send_reservation_approved = original
 
+        result.refresh_from_db()
         self.assertEqual(result.status, Reservation.Status.APPROVED)
+        self.assertEqual(result.approval_email_status, Reservation.ApprovalEmailStatus.FAILED)
         self.assertEqual(len(mail.outbox), 0)
 
-    def test_rejection_sends_no_approval_email(self):
+    def test_email_service_failure_result_is_recorded(self):
         reservation = self.make_reservation()
-        workflow.reject_reservation(reservation, self.admin, reason="No room")
-        self.assertEqual(reservation.status, Reservation.Status.REJECTED)
-        self.assertEqual(reservation.approval_email_status, "NOT_SENT")
-        self.assertNotIn(
-            "Your SAS RESERVE reservation has been approved",
-            [message.subject for message in mail.outbox],
-        )
+        original = workflow.send_reservation_approved
 
-    # ------------------------------------------------------------------
-    # Manual staff resend: still works, idempotent, tracked
-    # ------------------------------------------------------------------
+        def fail(*args, **kwargs):
+            return False, "smtp_authentication"
 
-    def test_manual_resend_sends_email_to_requester(self):
-        reservation = self.make_reservation()
-        workflow.approve_reservation(reservation, self.admin)
-        self.assertEqual(len(mail.outbox), 0)
+        workflow.send_reservation_approved = fail
+        try:
+            with self.captureOnCommitCallbacks(execute=True):
+                workflow.approve_reservation(reservation, self.admin)
+        finally:
+            workflow.send_reservation_approved = original
 
-        status_code = workflow.resend_approval_email(reservation, self.admin)
-        self.assertEqual(status_code, "SENT")
-        self.assertEqual(reservation.approval_email_status, "SENT")
-        self.assertEqual(len(mail.outbox), 1)
-        message = mail.outbox[0]
-        self.assertEqual(message.to, [self.requester.email])
-        self.assertEqual(message.subject, "Your SAS RESERVE reservation has been approved")
-        self.assertIn("Guest Lecture", message.body)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(reservation.approval_email_status, Reservation.ApprovalEmailStatus.FAILED)
 
-    def test_manual_resend_requires_approved_reservation(self):
-        reservation = self.make_reservation()
-        with self.assertRaises(ValueError):
-            workflow.resend_approval_email(reservation, self.admin)
-        self.assertEqual(len(mail.outbox), 0)
-
-    def test_manual_resend_skipped_when_already_sent(self):
-        reservation = self.make_reservation()
-        workflow.approve_reservation(reservation, self.admin)
-        workflow.resend_approval_email(reservation, self.admin)
-        status_code = workflow.resend_approval_email(reservation, self.admin)
-        self.assertEqual(status_code, "SENT")
-        self.assertEqual(len(mail.outbox), 1)
-
-    def test_manual_resend_records_no_email_for_missing_recipient(self):
+    def test_missing_recipient_is_recorded_without_sending(self):
         reservation = self.make_reservation(
             requester=None,
             requester_type=Reservation.RequesterType.EXTERNAL,
             contact_email="",
         )
-        workflow.approve_reservation(reservation, self.admin)
-        status_code = workflow.resend_approval_email(reservation, self.admin)
-        self.assertEqual(status_code, "NO_EMAIL")
+        with self.captureOnCommitCallbacks(execute=True):
+            workflow.approve_reservation(reservation, self.admin)
+
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.approval_email_status, Reservation.ApprovalEmailStatus.NO_EMAIL)
         self.assertEqual(len(mail.outbox), 0)
 
     def test_external_fallback_never_targets_staff_account(self):
@@ -160,41 +191,20 @@ class ApprovalEmailFlowTests(TestCase):
             requester_type=Reservation.RequesterType.EXTERNAL,
             contact_email=self.admin.email,
         )
-        workflow.approve_reservation(reservation, self.admin)
-        status_code = workflow.resend_approval_email(reservation, self.admin)
-        # Staff address is rejected as an external fallback recipient.
-        self.assertEqual(status_code, "NO_EMAIL")
+        with self.captureOnCommitCallbacks(execute=True):
+            workflow.approve_reservation(reservation, self.admin)
+
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.approval_email_status, Reservation.ApprovalEmailStatus.NO_EMAIL)
         self.assertEqual(len(mail.outbox), 0)
 
-    def test_manual_resend_failure_marks_failed_but_returns(self):
-        reservation = self.make_reservation()
-        workflow.approve_reservation(reservation, self.admin)
-        original = workflow.send_reservation_approved
-
-        def fake_send(*args, **kwargs):
-            return False, "smtp"
-
-        workflow.send_reservation_approved = fake_send
-        try:
-            status_code = workflow.resend_approval_email(reservation, self.admin)
-        finally:
-            workflow.send_reservation_approved = original
-
-        self.assertEqual(status_code, "FAILED")
-        self.assertEqual(reservation.approval_email_status, "FAILED")
-
-    # ------------------------------------------------------------------
-    # Serialization: delivery state stays a staff-only diagnostic
-    # ------------------------------------------------------------------
-
-    def test_approval_email_status_exposed_to_staff_only(self):
+    def test_approval_email_status_exposed_to_staff_only_and_maps_display_label(self):
         from rest_framework.test import APIRequestFactory
 
         from reservations.serializers import ReservationDetailSerializer
 
         reservation = self.make_reservation()
-        workflow.approve_reservation(reservation, self.admin)
-        workflow.resend_approval_email(reservation, self.admin)
+        self.approve_and_run_callbacks(reservation)
 
         factory = APIRequestFactory()
         staff_request = factory.get(f"/api/reservations/{reservation.id}/")
@@ -203,6 +213,7 @@ class ApprovalEmailFlowTests(TestCase):
             reservation, context={"request": staff_request}
         ).data
         self.assertEqual(staff_data["approval_email_status"], "SENT")
+        self.assertEqual(staff_data["approval_email_status_label"], "Sent")
 
         user_request = factory.get(f"/api/reservations/{reservation.id}/")
         user_request.user = self.requester
@@ -210,3 +221,4 @@ class ApprovalEmailFlowTests(TestCase):
             reservation, context={"request": user_request}
         ).data
         self.assertEqual(user_data["approval_email_status"], "")
+        self.assertEqual(user_data["approval_email_status_label"], "")

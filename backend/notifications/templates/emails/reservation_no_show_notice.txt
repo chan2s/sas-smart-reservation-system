@@ -1,0 +1,26 @@
+SAS RESERVE - Reservation No-Show Notice
+===========================================
+
+Hello, {{ requester_name }},
+
+Your reservation has been marked as a no-show.
+
+Reference number: {{ reservation_id }}
+Event: {{ event_name }}
+Facility: {{ facility_name }}
+Date: {{ date }}
+Time: {{ start_time }} - {{ end_time }}
+{% if resources %}Requested resources: {{ resources|join:", " }}{% endif %}
+Recorded by: {{ marked_by }}
+
+Notice
+-------
+{{ message }}
+
+Next Steps
+----------
+{{ next_action }}
+
+---
+This is an automated notification from {{ site_name }}.
+If you have questions, please contact the SAS Office.

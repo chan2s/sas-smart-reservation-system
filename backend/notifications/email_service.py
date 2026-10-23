@@ -36,6 +36,12 @@ CHECK_IN_INSTRUCTIONS = (
     "SAS Office or check-in desk."
 )
 
+#: Email subjects used across reservation notifications.
+APPROVAL_SUBJECT = "Reservation Approved - SAS RESERVE"
+REMINDER_SUBJECT = "Check-In Reminder - SAS RESERVE"
+NO_SHOW_SUBJECT = "Reservation No-Show Notice - SAS RESERVE"
+BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
+
 
 def send_reservation_email(
     recipient_email: str,
@@ -116,9 +122,9 @@ SMTP_CONNECT_RETRY_DELAY_SECONDS = 2
 #: Upper bound for attempts. Total added latency in the total-failure case is
 #: bounded by (attempts - 1) * delay, independent of EMAIL_TIMEOUT per try.
 SMTP_CONNECT_MAX_ATTEMPTS = 3#: Exceptions that can only occur while the session is being established
-#: (connect / DNS / TLS / login) — i.e. before ANY message bytes have
+#: (connect / DNS / TLS / login) - i.e. before ANY message bytes have
 #: been transmitted. Retrying them is safe: a retry can never duplicate a
-#: delivery. NOTE: this set must stay NARROW — including plain "OSError"
+#: delivery. NOTE: this set must stay NARROW - including plain "OSError"
 #: would also catch every ``smtplib.SMTPException`` (they subclass OSError),
 #: silently retrying bad credentials and SMTP protocol errors on every
 #: reconnect. ``SMTPAuthenticationError`` and ``SMTPRecipientsRefused`` are
@@ -138,7 +144,7 @@ def _deliver(message: "EmailMultiAlternatives") -> tuple[bool, Optional[Exceptio
     """Deliver ``message`` through Django's configured SMTP backend.
 
     The connection is opened explicitly (via the configured backend, so every
-    setting — EMAIL_HOST, EMAIL_PORT, EMAIL_USE_TLS, credentials — still comes
+    setting - EMAIL_HOST, EMAIL_PORT, EMAIL_USE_TLS, credentials - still comes
     from the project's email configuration). A transient close during that
     establishment phase is retried up to :data:`SMTP_CONNECT_MAX_ATTEMPTS`
     times because nothing has been sent yet.    A disconnect DURING the message transmission (DATA) phase is never retried
@@ -146,7 +152,7 @@ def _deliver(message: "EmailMultiAlternatives") -> tuple[bool, Optional[Exceptio
     immediate retry could deliver it twice. The ambiguous failure is returned
     to the caller for exact, type-level logging instead.
 
-    Returns ``(sent, exception)`` — ``exception`` is ``None`` on success, an
+    Returns ``(sent, exception)`` - ``exception`` is ``None`` on success, an
     exception instance for a retried-out or transmit-phase failure, or ``None``
     together with ``sent=False`` when the backend refused without raising.
     """
@@ -200,7 +206,7 @@ def build_reservation_context(
             else requester_name
         )
     resources = [
-        f"{item.quantity}× {item.equipment.name}" for item in reservation.items.all()
+        f"{item.quantity}x {item.equipment.name}" for item in reservation.items.all()
     ]
     return {
         "site_name": SAS_RESERVE_SITE_NAME,
@@ -223,11 +229,12 @@ def build_reservation_context(
 def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
     """Send the branded approval notification to the reservation requester.
 
-    The recipient is resolved from the reservation's own requester
-    relationship (never from client-supplied data). Returns
-    ``(success, error_category)`` where ``error_category`` is one of
-    ``no_email``, ``smtp``, ``smtp_authentication``, ``invalid_recipient``,
-    ``template``, ``connection``, or ``unknown`` (``None`` on success).
+    Uses the reliable ``_deliver`` path so a transient ``Connection unexpectedly
+    closed`` / mid-handshake drop from Gmail is retried safely (before any message
+    bytes are transmitted). Returns ``(success, error_category)`` where
+    ``error_category`` is one of ``no_email``, ``smtp``, ``smtp_authentication``,
+    ``invalid_recipient``, ``template``, ``connection``, or ``unknown``
+    (``None`` on success).
     """
     context = build_reservation_context(
         reservation,
@@ -237,14 +244,13 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
             f"Your reservation {reservation.event_name} has been approved and is "
             f"confirmed for {reservation.date}."
         ),
-        next_action="Check in at the facility at least 3 hours before your event start time.",
+        next_action=CHECK_IN_INSTRUCTIONS,
     )
     if actor and getattr(actor, "pk", None):
         context["approved_by"] = actor.display_name or "SAS Office"
     else:
         context["approved_by"] = "SAS Office"
 
-    subject = "Your SAS RESERVE reservation has been approved"
     try:
         html_message = render_to_string("emails/reservation_approved.html", context)
         plain_message = render_to_string("emails/reservation_approved.txt", context)
@@ -262,7 +268,7 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
 
     try:
         message = EmailMultiAlternatives(
-            subject=subject,
+            subject=APPROVAL_SUBJECT,
             body=plain_message,
             from_email=getattr(
                 settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
@@ -270,7 +276,7 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
             to=[email],
         )
         message.attach_alternative(html_message, "text/html")
-        sent = message.send(fail_silently=False)
+        sent, send_exc = _deliver(message)
         if sent:
             logger.info(
                 "Approval email sent for reservation %s to %s (domain: %s)",
@@ -279,11 +285,219 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
                 email.split("@")[1] if "@" in email else "unknown",
             )
             return True, None
+        if send_exc is not None:
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "Approval email FAILED for reservation %s to %s "
+                "(%s: %s) after %d connection attempts.",
+                reservation.reservation_id,
+                email,
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+                SMTP_CONNECT_MAX_ATTEMPTS,
+            )
+            return False, reason
         return False, "smtp"
     except Exception as exc:  # noqa: BLE001 — delivery must never break approval
         reason = _classify_email_error(exc)
         logger.error(
             "Approval email FAILED for reservation %s to %s (%s): %s",
+            reservation.reservation_id,
+            email,
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        return False, reason
+
+
+def send_reservation_checkin_reminder(
+    reservation,
+) -> tuple[bool, Optional[str]]:
+    """Send the branded check-in reminder to the requester of an approved
+
+    reservation. The message includes the scheduled start time and the existing
+    check-in instructions (3-hour window; present the reservation reference and a
+    valid ID at the SAS Office or check-in desk). It does not invent new
+    check-in procedures.
+
+    Returns ``(success, error_category)`` with the same categories as
+    :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
+    ``smtp_authentication``, ``invalid_recipient``, ``connection``,
+    ``unknown``; ``None`` on success). Delivery never raises into the caller.
+    """
+    email = resolve_requester_email(reservation)
+    if not email:
+        return False, "no_email"
+
+    context = build_reservation_context(
+        reservation,
+        status=reservation.Status.APPROVED,
+        status_label="Approved",
+        message=(
+            f"This is a reminder that your reservation {reservation.event_name} "
+            f"at {reservation.facility.name} is scheduled for "
+            f"{reservation.date}. Please arrive on time for check-in."
+        ),
+        next_action=CHECK_IN_INSTRUCTIONS,
+    )
+    context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
+    context["scheduled_check_in"] = (
+        f"{reservation.start_datetime:%I:%M %p}".lstrip("0")
+        if reservation.start_datetime is not None
+        else None
+    )
+
+    try:
+        html_message = render_to_string(
+            "emails/reservation_checkin_reminder.html", context
+        )
+        plain_message = render_to_string(
+            "emails/reservation_checkin_reminder.txt", context
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never crash the sweep
+        logger.error(
+            "Check-in reminder email template render failed for %s: %s",
+            reservation.reservation_id,
+            str(exc)[:200],
+        )
+        return False, _classify_email_error(exc)
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=REMINDER_SUBJECT,
+            body=plain_message,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+            ),
+            to=[email],
+        )
+        message.attach_alternative(html_message, "text/html")
+        sent, send_exc = _deliver(message)
+        if sent:
+            logger.info(
+                "Check-in reminder email sent for reservation %s to %s "
+                "(domain: %s)",
+                reservation.reservation_id,
+                email.split("@")[0] if "@" in email else "unknown",
+                email.split("@")[1] if "@" in email else "unknown",
+            )
+            return True, None
+        if send_exc is not None:
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "Check-in reminder email FAILED for reservation %s to %s "
+                "(%s: %s) after %d connection attempts.",
+                reservation.reservation_id,
+                email,
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+                SMTP_CONNECT_MAX_ATTEMPTS,
+            )
+            return False, reason
+        return False, "smtp"
+    except Exception as exc:  # noqa: BLE001 — delivery must never break the sweep
+        reason = _classify_email_error(exc)
+        logger.error(
+            "Check-in reminder email FAILED for reservation %s to %s (%s): %s",
+            reservation.reservation_id,
+            email,
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        return False, reason
+
+
+def send_reservation_no_show_notice(
+    reservation,
+    actor,
+) -> tuple[bool, Optional[str]]:
+    """Send the branded no-show notice to the requester of a reservation that was
+
+    marked as a no-show. The notice is intentionally plain and factual and does not
+    invent penalties, fines, or restrictions that are not part of the existing
+    application policy.
+
+    Returns ``(success, error_category)`` with the same categories as
+    :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
+    ``smtp_authentication``, ``invalid_recipient``, ``connection``,
+    ``unknown``; ``None`` on success). Delivery never raises into the caller.
+    """
+    email = resolve_requester_email(reservation, actor)
+    if not email:
+        return False, "no_email"
+
+    context = build_reservation_context(
+        reservation,
+        status=reservation.Status.NO_SHOW,
+        status_label="No-show",
+        message=(
+            f"Your reservation {reservation.reservation_id} for {reservation.event_name} "
+            f"at {reservation.facility.name} on {reservation.date} "
+            f"({reservation.start_time:%H:%M}-{reservation.end_time:%H:%M}) "
+            "was marked as a no-show because check-in was not recorded within the "
+            "allowed period."
+        ),
+        next_action=(
+            "If you believe this was recorded in error, please contact the SAS Office "
+            "as soon as possible."
+        ),
+    )
+    context["marked_by"] = (
+        actor.display_name if actor and getattr(actor, "pk", None) else "SAS Office"
+    )
+
+    try:
+        html_message = render_to_string(
+            "emails/reservation_no_show_notice.html", context
+        )
+        plain_message = render_to_string(
+            "emails/reservation_no_show_notice.txt", context
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never break the action
+        logger.error(
+            "No-show notice email template render failed for %s: %s",
+            reservation.reservation_id,
+            str(exc)[:200],
+        )
+        return False, _classify_email_error(exc)
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=NO_SHOW_SUBJECT,
+            body=plain_message,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+            ),
+            to=[email],
+        )
+        message.attach_alternative(html_message, "text/html")
+        sent, send_exc = _deliver(message)
+        if sent:
+            logger.info(
+                "No-show notice email sent for reservation %s to %s "
+                "(domain: %s)",
+                reservation.reservation_id,
+                email.split("@")[0] if "@" in email else "unknown",
+                email.split("@")[1] if "@" in email else "unknown",
+            )
+            return True, None
+        if send_exc is not None:
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "No-show notice email FAILED for reservation %s to %s "
+                "(%s: %s) after %d connection attempts.",
+                reservation.reservation_id,
+                email,
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+                SMTP_CONNECT_MAX_ATTEMPTS,
+            )
+            return False, reason
+        return False, "smtp"
+    except Exception as exc:  # noqa: BLE001 — delivery must never break the action
+        reason = _classify_email_error(exc)
+        logger.error(
+            "No-show notice email FAILED for reservation %s to %s (%s): %s",
             reservation.reservation_id,
             email,
             type(exc).__name__,
@@ -298,7 +512,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
     The wording follows the reservation's SAVED status: a pending reservation
     is explicitly described as awaiting administrator approval, while an
     auto-approved one is described as confirmed. This function never changes
-    the reservation and never raises into the caller — a failed delivery is
+    the reservation and never raises into the caller - a failed delivery is
     reported so the caller can log it while the reservation remains intact.
 
     Returns ``(success, error_category)`` with the same categories as
@@ -393,9 +607,6 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
             )
             return True, None
         if send_exc is not None:
-            # A connect/TLS/login drop that survived all retry attempts, or a
-            # disconnect during the transmission phase (ambiguous, never
-            # retried automatically to avoid a duplicate delivery).
             reason = _classify_email_error(send_exc)
             logger.error(
                 "Booking confirmation email FAILED for reservation %s to %s "
@@ -408,6 +619,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
             )
             return False, reason
         return False, "smtp"
+
     except Exception as exc:  # noqa: BLE001 — delivery must never break creation
         reason = _classify_email_error(exc)
         logger.error(
@@ -422,6 +634,11 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
 
 def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
     """Send the branded three-days-before reminder to the requester.
+
+    Kept for backward compatibility with the in-app reminder Channel's existing
+    email side-effect. New scheduled check-in reminders use
+    :func:`send_reservation_checkin_reminder` so the reminder emails stay on the
+    same reliable ``_deliver`` path.
 
     Returns ``(success, error_category)`` using the same categories as
     :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
@@ -471,7 +688,7 @@ def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
             to=[email],
         )
         message.attach_alternative(html_message, "text/html")
-        sent = message.send(fail_silently=False)
+        sent, send_exc = _deliver(message)
         if sent:
             logger.info(
                 "Reminder email sent for reservation %s to %s (domain: %s)",
@@ -480,6 +697,18 @@ def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
                 email.split("@")[1] if "@" in email else "unknown",
             )
             return True, None
+        if send_exc is not None:
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "Reminder email FAILED for reservation %s to %s "
+                "(%s: %s) after %d connection attempts.",
+                reservation.reservation_id,
+                email,
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+                SMTP_CONNECT_MAX_ATTEMPTS,
+            )
+            return False, reason
         return False, "smtp"
     except Exception as exc:  # noqa: BLE001 — delivery must never break the sweep
         reason = _classify_email_error(exc)

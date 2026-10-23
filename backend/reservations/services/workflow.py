@@ -1,14 +1,4 @@
-"""Reservation workflow actions.
-
-Each transition records a ReservationEvent (timeline + approval history) and
-emits the appropriate notifications (in-app; email for submission, rejection,
-and cancellation only).
-
-Automatic approval emails are intentionally DISABLED: approving a reservation
-notifies the requester through the in-app notification system only. Staff can
-still send the approval email manually via the admin/API retry action
-(``resend_approval_email``).
-"""
+"""Reservation workflow actions and their notifications."""
 
 from __future__ import annotations
 
@@ -24,8 +14,11 @@ from notifications.services import notify, notify_staff
 from notifications.email_service import (
     send_reservation_approved,
     send_reservation_cancelled,
+    send_reservation_checkin_reminder,
+    send_reservation_no_show_notice,
     send_reservation_notification,
     send_reservation_rejected,
+    send_reservation_reminder,
     send_reservation_submitted,
     resolve_requester_email,
 )
@@ -83,26 +76,32 @@ def _get_requester_email(reservation) -> str:
     return reservation.contact_email or ""
 
 
-def _schedule_approval_email(reservation, actor):
-    """Intentionally a no-op: automatic approval emails are disabled.
+def _send_approval_email_after_commit(reservation_id, actor):
+    """Deliver and record an approval email after its approval transaction commits."""
+    try:
+        reservation = Reservation.objects.select_related(
+            "requester", "facility", "created_by"
+        ).get(pk=reservation_id)
+        resend_approval_email(reservation, actor)
+    except Exception as exc:  # Delivery bookkeeping must not undo an approval.
+        logger.error(
+            "Approval email callback failed for reservation id %s (%s).",
+            reservation_id,
+            type(exc).__name__,
+        )
 
-    Product decision: when an admin approves a reservation, the requester is
-    notified through the in-app notification only (created by
-    ``approve_reservation``/``auto_approve``); no automatic email is sent.
-    Requesters see the updated APPROVED status in the application. The
-    delivery-state field is kept for the staff-only manual resend helper.
-    """
-    return
+
+def _schedule_approval_email(reservation, actor):
+    """Queue exactly one delivery for a newly approved reservation."""
+    transaction.on_commit(
+        lambda reservation_id=reservation.pk, actor=actor: (
+            _send_approval_email_after_commit(reservation_id, actor)
+        )
+    )
 
 
 def resend_approval_email(reservation, actor) -> str:
-    """Manually send the approval email for an approved reservation.
-
-    Staff-only (Django admin action / API retry action). Automatic sending on
-    approval is disabled; this is the only path that can deliver an approval
-    email, and it runs immediately rather than being scheduled. Returns the
-    delivery status after the attempt.
-    """
+    """Send an approval email once for an approved reservation, recording outcome."""
     if reservation.status != Reservation.Status.APPROVED:
         raise ValueError("Only approved reservations can receive an approval email.")
     if reservation.approval_email_status == Reservation.ApprovalEmailStatus.SENT:
@@ -126,7 +125,15 @@ def resend_approval_email(reservation, actor) -> str:
         reservation.reservation_id,
         email,
     )
-    ok, reason = send_reservation_approved(reservation, actor)
+    try:
+        ok, reason = send_reservation_approved(reservation, actor)
+    except Exception as exc:  # noqa: BLE001 - email failures never undo approval
+        ok, reason = False, type(exc).__name__
+        logger.error(
+            "Approval email delivery FAILED for reservation %s (%s).",
+            reservation.reservation_id,
+            type(exc).__name__,
+        )
     if ok:
         reservation.approval_email_status = Reservation.ApprovalEmailStatus.SENT
         logger.info(
@@ -157,7 +164,7 @@ def _send_reservation_email(
     email = _get_requester_email(reservation)
     if not email:
         return
-    
+
     send_reservation_notification(
         user_email=email,
         reservation_id=reservation.reservation_id,
@@ -181,88 +188,88 @@ def auto_approve(reservation, actor, message=""):
     immediately confirmed. Records an APPROVED timeline event and notifies the
     requester via email (dispatched after commit).
     """
-    # Defence in depth: an already-expired reservation is never auto-approved,
-    # even if a caller reaches this helper directly.
-    expiration.refresh_reservation_status(reservation)
-    if reservation.status == Reservation.Status.EXPIRED:
-        raise ValueError(
-            "This reservation has expired and can no longer be approved."
-        )
-    from_status = reservation.status
     with transaction.atomic():
-        reservation.status = Reservation.Status.APPROVED
-        reservation.approved_by = actor
-        reservation.approved_at = timezone.now()
-        reservation.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        expiration.refresh_reservation_status(locked)
+        if locked.status == Reservation.Status.EXPIRED:
+            raise ValueError(
+                "This reservation has expired and can no longer be approved."
+            )
+        from_status = locked.status
+        locked.status = Reservation.Status.APPROVED
+        locked.approved_by = actor
+        locked.approved_at = timezone.now()
+        locked.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
         record_event(
-            reservation,
+            locked,
             ReservationEvent.EventType.APPROVED,
             actor=actor,
             from_status=from_status,
-            to_status=reservation.status,
+            to_status=locked.status,
             message=message or "Automatically approved — created by an administrator.",
         )
         AuditLog.record(
             actor,
             AuditLog.Action.RESERVATION_APPROVED,
             object_type="reservation",
-            object_id=reservation.reservation_id,
-            object_repr=reservation.event_name,
+            object_id=locked.reservation_id,
+            object_repr=locked.event_name,
             detail="Auto-approved (administrator-created reservation)",
         )
         notify(
-            reservation.requester,
+            locked.requester,
             Notification.Type.RESERVATION,
             "Reservation approved",
-            f"{reservation.event_name} on {reservation.date} was automatically approved.",
-            _reservation_link(reservation),
+            f"{locked.event_name} on {locked.date} was automatically approved.",
+            _reservation_link(locked),
         )
         if from_status != Reservation.Status.APPROVED:
-            _schedule_approval_email(reservation, actor)
+            _schedule_approval_email(locked, actor)
+    reservation.refresh_from_db()
     return reservation
 
 
 def approve_reservation(reservation, actor, comment=""):
-    # A pending reservation whose event has already started has expired. Sync
-    # the status first so a stale PENDING record can never be approved after the
-    # event began, then refuse with a clear API error.
-    expiration.refresh_reservation_status(reservation)
-    if reservation.status == Reservation.Status.EXPIRED:
-        raise ValueError(
-            "This reservation has expired and can no longer be approved."
-        )
-    from_status = reservation.status
-    if reservation.status != Reservation.Status.PENDING:
-        raise ValueError("Only pending reservations can be approved.")
     with transaction.atomic():
-        reservation.status = Reservation.Status.APPROVED
-        reservation.approved_by = actor
-        reservation.approved_at = timezone.now()
-        reservation.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        # A stale PENDING record whose event has already started must never be approved.
+        expiration.refresh_reservation_status(locked)
+        if locked.status == Reservation.Status.EXPIRED:
+            raise ValueError(
+                "This reservation has expired and can no longer be approved."
+            )
+        from_status = locked.status
+        if locked.status != Reservation.Status.PENDING:
+            raise ValueError("Only pending reservations can be approved.")
+        locked.status = Reservation.Status.APPROVED
+        locked.approved_by = actor
+        locked.approved_at = timezone.now()
+        locked.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
         record_event(
-            reservation,
+            locked,
             ReservationEvent.EventType.APPROVED,
             actor=actor,
             from_status=from_status,
-            to_status=reservation.status,
+            to_status=locked.status,
             message=comment,
         )
         AuditLog.record(
             actor,
             AuditLog.Action.RESERVATION_APPROVED,
             object_type="reservation",
-            object_id=reservation.reservation_id,
-            object_repr=reservation.event_name,
+            object_id=locked.reservation_id,
+            object_repr=locked.event_name,
             detail=comment,
         )
         notify(
-            reservation.requester,
+            locked.requester,
             Notification.Type.RESERVATION,
             "Reservation approved",
-            f"{reservation.event_name} on {reservation.date} has been approved.",
-            _reservation_link(reservation),
+            f"{locked.event_name} on {locked.date} has been approved.",
+            _reservation_link(locked),
         )
-        _schedule_approval_email(reservation, actor)
+        _schedule_approval_email(locked, actor)
+    reservation.refresh_from_db()
     return reservation
 
 
@@ -319,10 +326,10 @@ def resubmit_reservation(reservation, actor, message=""):
 
     Called after the updated details (and resources) have been saved and
     revalidated. The status does NOT change: a resubmitted reservation is
-    still PENDING, so it simply re-enters the administrators' review queue —
-    it is never auto-approved. The administrator's original change request
-    stays untouched in the timeline (events are append-only); this appends
-    the revision entry and notifies staff so somebody picks it up.
+    still PENDING, so it simply re-enters the administrators' review queue — it
+    is never auto-approved. The administrator's original change request stays
+    untouched in the timeline (events are append-only); this appends the
+    revision entry and notifies staff so somebody picks it up.
     """
     if reservation.status != Reservation.Status.PENDING:
         raise ValueError(
@@ -593,8 +600,10 @@ def mark_no_show(reservation, actor, now=None):
     loser gets a clear error), and the original schedule remains available in
     the event/audit history.
 
-    The requester is deliberately NOT notified: no no-show notification
-    workflow exists in the application.
+    The requester IS notified with the same reliable email pipeline used for
+    approval, reminders, and booking confirmations. The email is dispatched via
+    ``transaction.on_commit`` so it only runs after the no-show transition has
+    actually committed, and a failure is logged without undoing the status change.
     """
     if not getattr(actor, "is_sas_staff", False):
         raise PermissionDenied(
@@ -647,6 +656,12 @@ def mark_no_show(reservation, actor, now=None):
             detail=detail,
         )
 
+        # Notify the requester once the transition has committed. A delivery
+        # failure is logged and retried later; it never undoes the no-show.
+        transaction.on_commit(
+            lambda: _send_no_show_notice_after_commit(locked, actor)
+        )
+
     # Keep the caller's in-memory instance in sync with the persisted write.
     reservation.status = locked.status
     reservation.no_show_marked_at = locked.no_show_marked_at
@@ -663,13 +678,6 @@ def check_in_reservation(reservation, actor, override=False):
     explicitly confirms the override (``override=True``) is allowed — the
     backend verifies the role itself; a regular user cannot bypass the window
     by sending the flag.
-
-    Check-in is refused once the reservation's calendar date is in the past
-    (the reservation is then in its no-show window), and for cancelled,
-    no-show, rejected, completed, or expired reservations. The status re-check
-    and the write run in one transaction under a row lock, so a concurrent
-    check-in / no-show pair can never both succeed: whichever commits first
-    makes the other ineligible.
     """
     now = timezone.now()
     with transaction.atomic():
@@ -799,3 +807,26 @@ def check_out_reservation(reservation, actor, data):
         object_repr=reservation.event_name,
     )
     return reservation
+
+
+def _send_no_show_notice_after_commit(reservation, actor):
+    """Send the no-show notice after the no-show transition has committed.
+
+    This runs via ``transaction.on_commit`` from ``mark_no_show`` so the email
+    is only dispatched when the database write has actually succeeded. A
+    delivery failure is logged and never raises back into the committing
+    transaction.
+    """
+    ok, reason = send_reservation_no_show_notice(reservation, actor)
+    if ok:
+        logger.info(
+            "No-show notice email recorded as sent for reservation %s.",
+            reservation.reservation_id,
+        )
+    else:
+        logger.error(
+            "No-show notice email delivery FAILED for reservation %s (reason: %s). "
+            "The no-show transition has already committed.",
+            reservation.reservation_id,
+            reason,
+        )

@@ -1,5 +1,6 @@
 {% autoescape off %}
 SAS RESERVE
+Reservation Approved - SAS RESERVE
 ========================================
 
 Hello, {{ requester_name }},

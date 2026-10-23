@@ -1,0 +1,36 @@
+{% autoescape off %}
+SAS RESERVE
+Smart Facility and Resource Reservation System
+Check-In Reminder - SAS RESERVE
+========================================
+
+Hello, {{ requester_name }},
+
+This is a reminder that your SAS RESERVE booking is scheduled soon.
+Please arrive on time for check-in.
+
+RESERVATION DETAILS
+-------------------
+Reference number: {{ reservation_id }}
+Event: {{ event_name }}
+Facility: {{ facility_name }}
+{% if resources %}Equipment / resources: {{ resources|join:", " }}
+{% endif %}Date: {{ date|date:"F j, Y" }}
+Time: {{ start_time|time:"g:i A" }} - {{ end_time|time:"g:i A" }}
+{% if scheduled_check_in %}Scheduled check-in: {{ scheduled_check_in }}
+{% endif %}
+
+CHECK-IN REMINDER
+-----------------
+{{ check_in_instructions }}
+
+View your reservation in SAS RESERVE:
+{{ view_url }}
+
+If you can no longer attend, please contact the SAS Office as soon as
+possible so the facility and resources can be released.
+
+---
+This is an automated reminder from {{ site_name }}.
+Please do not reply to this email.
+{% endautoescape %}

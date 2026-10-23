@@ -169,6 +169,23 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+describe('ReservationDetailPage approval email status', () => {
+  it.each([
+    ['NOT_SENT', 'Not sent'],
+    ['SENT', 'Sent'],
+    ['FAILED', 'Failed'],
+  ])('shows the backend delivery state %s as %s', (status, label) => {
+    state.reservation = reservation({
+      approval_email_status: status,
+      approval_email_status_label: label,
+    })
+    renderPage()
+
+    expect(screen.getByText('Approval email')).toBeTruthy()
+    expect(screen.getByText(label)).toBeTruthy()
+  })
+})
+
 describe('ReservationDetailPage no-show action', () => {
   it('hides the action when the backend says the reservation is not eligible', () => {
     state.reservation = reservation({ can_mark_no_show: false })
