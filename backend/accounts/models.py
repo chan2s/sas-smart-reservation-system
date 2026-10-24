@@ -325,6 +325,19 @@ class User(AbstractUser):
     role = models.CharField(
         max_length=16, choices=Role.choices, default=Role.REQUESTER
     )
+    # Designated approval-letter signatory (the Assistant Campus Director for
+    # Administration and Finance). Granted ONLY by an administrator through
+    # Django admin / the seed command; it never broadens any other permission —
+    # it only allows signing pending approval letters (and only together with
+    # ``is_sas_staff``, checked by the API's permission class).
+    is_approval_signatory = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            "May sign reservation approval letters as the designated campus "
+            "signatory. Granted only by an administrator."
+        ),
+    )
     # Free-text NORSU unit / department (legacy field, still used by the
     # profile form and shown in the UI). For external requesters the resolved
     # organization name comes from ``organization_ref`` instead.
@@ -528,6 +541,12 @@ class AuditLog(models.Model):
         RESERVATION_CANCELLED = "RESERVATION_CANCELLED", "Reservation cancelled"
         RESERVATION_NO_SHOW = "RESERVATION_NO_SHOW", "Reservation marked no-show"
         RESERVATION_STATUS = "RESERVATION_STATUS", "Reservation status changed"
+        # Approval-letter workflow (designation-granted signatory only).
+        APPROVAL_LETTER_SIGNED = "APPROVAL_LETTER_SIGNED", "Approval letter signed"
+        APPROVAL_LETTER_EMAIL_RETRIED = (
+            "APPROVAL_LETTER_EMAIL_RETRIED",
+            "Approval letter email retried",
+        )
         EARLY_CHECK_IN = "EARLY_CHECK_IN", "Early check-in performed"
         CHECK_IN = "CHECK_IN", "Checked in"
         CHECK_OUT = "CHECK_OUT", "Checked out"

@@ -1,0 +1,22 @@
+Dear {{ requester_name }},
+
+Your reservation approval letter {{ letter_id }} has been signed and is
+attached to this email as a PDF document{% if has_docx %} (with an editable
+DOCX copy){% endif %}.
+
+Letter No.:     {{ letter_id }}
+Reservation:    {{ reservation_id }} — {{ event_name }}
+Facility:       {{ facility_name }}
+Date:           {{ date }}
+Time:           {{ start_time }} – {{ end_time }}
+
+You can also download the signed letter any time from your reservation page
+in SAS RESERVE: {{ view_url }}
+{% if signatory_name %}
+
+Signed{% if signed_at %} on {{ signed_at }}{% endif %} by {{ signatory_name }}
+(test signature — demonstration only; not a verified digital signature).
+{% endif %}
+
+This is an automated message from SAS RESERVE. Please do not reply directly
+to this email.

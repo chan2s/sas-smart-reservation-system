@@ -42,6 +42,109 @@ REMINDER_SUBJECT = "Check-In Reminder - SAS RESERVE"
 NO_SHOW_SUBJECT = "Reservation No-Show Notice - SAS RESERVE"
 BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
 
+#: Subject of the signed approval-letter delivery email.
+APPROVAL_LETTER_SUBJECT = "Approved Reservation Letter - {reference}"
+
+
+def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Optional[str]]:
+    """Email the SIGNED approval letter (PDF attached) to the requester.
+
+    Reuses the project's reliable ``_deliver`` SMTP path and error
+    classification. The PDF produced at signing time is attached; the DOCX is
+    attached as well when one was generated. Returns
+    ``(success, error_category)`` with the same categories as
+    :func:`send_reservation_approved`; never raises into the caller, and never
+    touches the letter itself (bookkeeping is the letters service's job).
+    """
+    reference = letter.reservation.reservation_id
+    subject = APPROVAL_LETTER_SUBJECT.format(reference=reference)
+
+    context = {
+        "site_name": SAS_RESERVE_SITE_NAME,
+        "requester_name": letter.requester_name
+        or letter.reservation.requester_display_name,
+        "letter_id": letter.letter_id,
+        "reservation_id": reference,
+        "event_name": letter.reservation.event_name,
+        "facility_name": letter.reservation.facility.name,
+        "date": letter.reservation.date,
+        "start_time": letter.reservation.start_time,
+        "end_time": letter.reservation.end_time,
+        "signed_at": letter.signed_at,
+        "signatory_name": letter.signatory.display_name if letter.signatory else "",
+        "view_url": (
+            f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}"
+            f"/reservations/{letter.reservation.pk}"
+        ),
+        "has_docx": bool(letter.docx_file),
+    }
+
+    try:
+        html_message = render_to_string("emails/approval_letter_signed.html", context)
+        plain_message = render_to_string("emails/approval_letter_signed.txt", context)
+    except Exception as exc:
+        logger.error(
+            "Signed-letter email template render failed for %s: %s",
+            letter.letter_id,
+            str(exc)[:200],
+        )
+        return False, _classify_email_error(exc)
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=plain_message,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+            ),
+            to=[recipient_email],
+        )
+        message.attach_alternative(html_message, "text/html")
+        # Attach the finalized documents generated at signing time.
+        with letter.pdf_file.open("rb") as pdf_handle:
+            message.attach(
+                letter.pdf_file.name.rsplit("/", 1)[-1], pdf_handle.read(), "application/pdf"
+            )
+        if letter.docx_file:
+            with letter.docx_file.open("rb") as docx_handle:
+                message.attach(
+                    letter.docx_file.name.rsplit("/", 1)[-1],
+                    docx_handle.read(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+        sent, send_exc = _deliver(message)
+        if sent:
+            logger.info(
+                "Signed approval letter %s emailed for reservation %s (domain: %s).",
+                letter.letter_id,
+                reference,
+                recipient_email.split("@")[1] if "@" in recipient_email else "unknown",
+            )
+            return True, None
+        if send_exc is not None:
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "Signed approval letter %s email FAILED for reservation %s "
+                "(%s: %s) after %d connection attempts.",
+                letter.letter_id,
+                reference,
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+                SMTP_CONNECT_MAX_ATTEMPTS,
+            )
+            return False, reason
+        return False, "smtp"
+    except Exception as exc:  # noqa: BLE001 — delivery must never break signing
+        reason = _classify_email_error(exc)
+        logger.error(
+            "Signed approval letter %s email FAILED for reservation %s (%s): %s",
+            letter.letter_id,
+            reference,
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        return False, reason
+
 
 def send_reservation_email(
     recipient_email: str,

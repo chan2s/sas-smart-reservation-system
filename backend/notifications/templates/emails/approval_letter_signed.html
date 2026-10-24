@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Approved Reservation Letter - SAS RESERVE</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #1a56db;
+            letter-spacing: 0.02em;
+        }
+        .tagline {
+            margin: 4px 0 0;
+            color: #6c757d;
+            font-size: 12px;
+        }
+        .greeting {
+            font-size: 16px;
+            color: #1a1a1a;
+            margin: 16px 0 4px;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #1a1a1a;
+            margin: 8px 0;
+        }
+        .notice {
+            background-color: #e8f5ec;
+            border-left: 4px solid #2e9e5b;
+            padding: 16px;
+            margin: 20px 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .notice p {
+            margin: 0;
+            color: #1d5c37;
+        }
+        .details {
+            background-color: #f8f9fb;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        .details p {
+            margin: 6px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        .details .label {
+            color: #6c757d;
+            font-weight: 600;
+        }
+        .button {
+            display: inline-block;
+            background-color: #1a56db;
+            color: #ffffff;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 15px;
+            margin: 16px 0;
+        }
+        .footer {
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid #e0e0e0;
+            font-size: 12px;
+            color: #6c757d;
+            text-align: center;
+        }
+        .signature-note {
+            margin-top: 16px;
+            font-size: 12px;
+            color: #6c757d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <span class="logo">SAS RESERVE</span>
+            <p class="tagline">Smart Facility &amp; Resource Reservation System</p>
+        </div>
+
+        <p class="greeting">Dear {{ requester_name }},</p>
+        <h2 class="title">Your Reservation Approval Letter Is Ready</h2>
+
+        <div class="notice">
+            <p>
+                Your reservation approval letter <strong>{{ letter_id }}</strong> has
+                been signed and is attached to this email as a PDF document
+                {% if has_docx %}(with an editable DOCX copy){% endif %}.
+            </p>
+        </div>
+
+        <div class="details">
+            <p><span class="label">Letter No.:</span> {{ letter_id }}</p>
+            <p><span class="label">Reservation:</span> {{ reservation_id }} — {{ event_name }}</p>
+            <p><span class="label">Facility:</span> {{ facility_name }}</p>
+            <p><span class="label">Date:</span> {{ date }}</p>
+            <p><span class="label">Time:</span> {{ start_time }} – {{ end_time }}</p>
+        </div>
+
+        <p style="font-size: 14px; color: #333;">
+            You can also download the signed letter any time from your reservation
+            page in SAS RESERVE.
+        </p>
+
+        <p style="text-align: center;">
+            <a class="button" href="{{ view_url }}">View my reservation</a>
+        </p>
+
+        {% if signatory_name %}
+        <p class="signature-note">
+            Signed{% if signed_at %} on {{ signed_at }}{% endif %} by
+            {{ signatory_name }} (test signature — demonstration only; not a
+            verified digital signature).
+        </p>
+        {% endif %}
+
+        <div class="footer">
+            <p>This is an automated message from SAS RESERVE. Please do not reply directly to this email.</p>
+        </div>
+    </div>
+</body>
+</html>

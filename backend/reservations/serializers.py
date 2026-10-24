@@ -362,6 +362,10 @@ class ReservationDetailSerializer(ReservationListSerializer):
     # The reservation a rebook / new-schedule request created, if any. Lets an
     # expired reservation link forward to its replacement.
     rescheduled_to = serializers.SerializerMethodField()
+    # The approval letter issued for this reservation (null until approved).
+    # Requester-facing summary — download URLs resolve server-side only for the
+    # letter's own requester or SAS staff.
+    approval_letter = serializers.SerializerMethodField()
 
     class Meta(ReservationListSerializer.Meta):
         fields = ReservationListSerializer.Meta.fields + (
@@ -381,6 +385,7 @@ class ReservationDetailSerializer(ReservationListSerializer):
             "inspection",
             "availability",
             "rescheduled_to",
+            "approval_letter",
         )
 
     def get_approved_by_name(self, obj):
@@ -403,6 +408,16 @@ class ReservationDetailSerializer(ReservationListSerializer):
             "status": latest.status,
             "status_label": latest.get_status_display(),
         }
+
+    def get_approval_letter(self, obj):
+        letter = getattr(obj, "approval_letter", None)
+        if letter is None:
+            return None
+        from approval_letters.serializers import ReservationApprovalLetterSummarySerializer
+
+        return ReservationApprovalLetterSummarySerializer(
+            letter, context=self.context
+        ).data
 
     def get_availability(self, obj):
         """Availability snapshot around this reservation's own window."""

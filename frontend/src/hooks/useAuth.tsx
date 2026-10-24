@@ -25,6 +25,11 @@ interface AuthContextValue {
   updateUser: (user: User) => void
   isStaff: boolean
   /**
+   * True for the designated approval-letter signatory (granted server-side by
+   * an administrator). Only shapes the UI — the backend verifies every sign.
+   */
+  isApprovalSignatory: boolean
+  /**
    * True while the signed-in account has not been approved by an
    * administrator: the interface must hide/disable every state-changing
    * action. Backend enforcement is authoritative — this only shapes the UI.
@@ -103,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         updateUser,
         isStaff: user?.role === 'ADMIN' || user?.role === 'STAFF',
+        isApprovalSignatory: user?.is_approval_signatory ?? false,
         isViewOnly: user?.is_view_only ?? false,
       }}
     >

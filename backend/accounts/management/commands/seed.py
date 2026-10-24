@@ -211,6 +211,22 @@ class Command(BaseCommand):
                 organization="Student Affairs",
             )
             self.stdout.write("  + requester (Requester)")
+        # The designated approval-letter signatory (Assistant Campus Director
+        # for Administration and Finance). The letter's printed name/position
+        # come from approval_letters' signatory constants; this account is the
+        # authenticated person allowed to sign.
+        if not User.objects.filter(username="signatory").exists():
+            User.objects.create_user(
+                username="signatory",
+                email="signatory@school.edu",
+                password="signatory1234",
+                first_name="Francis M.",
+                last_name="Galon",
+                role=User.Role.STAFF,
+                organization="Office of the Campus Director",
+                is_approval_signatory=True,
+            )
+            self.stdout.write("  + signatory (Approval Letter Signatory)")
 
     def seed_facilities(self):
         for index, data in enumerate(FACILITIES):

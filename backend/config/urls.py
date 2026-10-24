@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/", include("notifications.urls")),
     path("api/", include("analytics.urls")),
     path("api/", include("chatbot.urls")),
+    path("api/", include("approval_letters.urls")),
 ]
 
 if settings.DEBUG:

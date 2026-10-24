@@ -6,6 +6,7 @@ import {
   Building2,
   CalendarCheck,
   CalendarDays,
+  FileSignature,
   History,
   LayoutDashboard,
   LifeBuoy,
@@ -45,12 +46,25 @@ export const staffPrimaryNavigation: NavigationItem[] = [
 
 /**
  * Primary navigation for a signed-in role. Only administrators and SAS staff
- * receive the Analytics entry — requesters never see it.
+ * receive the Analytics entry — requesters never see it. The designated
+ * approval-letter signatory additionally receives the Approval Letters entry
+ * (the backend verifies the designation on every sign; this only shapes the
+ * navigation).
  */
-export function primaryNavigationFor(isStaff: boolean): NavigationItem[] {
-  return isStaff
+export function primaryNavigationFor(
+  isStaff: boolean,
+  isApprovalSignatory = false,
+): NavigationItem[] {
+  const items = isStaff
     ? [...primaryNavigation, ...staffPrimaryNavigation]
     : primaryNavigation
+  if (isApprovalSignatory) {
+    return [
+      ...items,
+      { to: '/approval-letters', label: 'Approval Letters', icon: FileSignature },
+    ]
+  }
+  return items
 }
 
 /** Secondary pages, reachable from the user menu and mobile drawer. */

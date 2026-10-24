@@ -921,3 +921,61 @@ export function useVerifyOrganization() {
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// Approval letters (Reservation Approval Letter & Digital Signature workflow)
+// ---------------------------------------------------------------------------
+
+export function useApprovalLetters(
+  params: { status?: string; search?: string } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['approval-letters', params],
+    queryFn: () => endpoints.approvalLetters(params),
+    placeholderData: keepPreviousData,
+    enabled,
+  })
+}
+
+export function useApprovalLetter(id: number | null) {
+  return useQuery({
+    queryKey: ['approval-letter', id],
+    queryFn: () => endpoints.approvalLetter(id as number),
+    enabled: id != null,
+  })
+}
+
+export function useApprovalLetterPreview(id: number | null) {
+  return useQuery({
+    queryKey: ['approval-letter-preview', id],
+    queryFn: () => endpoints.approvalLetterPreview(id as number),
+    enabled: id != null,
+  })
+}
+
+export function useSignApprovalLetter(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.signApprovalLetter(id as number),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['approval-letters'] })
+      void queryClient.invalidateQueries({ queryKey: ['approval-letter', id] })
+      // The reservation detail embeds the letter summary.
+      void queryClient.invalidateQueries({ queryKey: ['reservation'] })
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
+    },
+  })
+}
+
+export function useRetryLetterEmail(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.retryLetterEmail(id as number),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['approval-letters'] })
+      void queryClient.invalidateQueries({ queryKey: ['approval-letter', id] })
+    },
+  })
+}

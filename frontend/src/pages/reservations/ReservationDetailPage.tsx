@@ -6,6 +6,9 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock3,
+  Download,
+  FileSignature,
+  MailWarning,
   MessageSquareWarning,
   QrCode,
   UserX,
@@ -16,8 +19,9 @@ import {
   useReservation,
   useReservationAction,
   useRetryApprovalEmail,
+  useRetryLetterEmail,
 } from '@/hooks/queries'
-import { ApiError } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
@@ -29,7 +33,7 @@ import { Field, Textarea } from '@/components/ui/Form'
 import { draftFromReservation, saveDraft } from '@/lib/reservationDraft'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
-import type { ReservationDetail, ReservationEvent, ReservationFee } from '@/lib/types'
+import type { ApprovalLetterSummary, ReservationDetail, ReservationEvent, ReservationFee } from '@/lib/types'
 
 export function ReservationDetailPage() {
   const { id } = useParams()
@@ -503,6 +507,13 @@ export function ReservationDetailPage() {
 
         {/* Right column */}
         <div className="space-y-6">
+          {/* Approval letter — issued automatically once the reservation was
+              approved. The letter's own status is independent of the
+              reservation status. */}
+          {reservation.approval_letter && (isOwner || isStaff) && (
+            <ApprovalLetterCard letter={reservation.approval_letter} />
+          )}
+
           <Card>
             <CardHeader
               title="Requester"
@@ -802,6 +813,147 @@ export function ReservationDetailPage() {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Approval-letter status card for the requester (and staff).
+ *
+ * Pending letters show that the formal letter is awaiting the designated
+ * signatory; signed letters expose the PDF/DOCX downloads. The download
+ * endpoints re-verify ownership server-side — a requester can never fetch
+ * another user's letter by id.
+ */
+function ApprovalLetterCard({ letter }: { letter: ApprovalLetterSummary }) {
+  const { toast } = useToast()
+  const { isStaff } = useAuth()
+  const retryEmail = useRetryLetterEmail(letter.id)
+  const [busy, setBusy] = useState<'pdf' | 'docx' | null>(null)
+
+  const isSigned = letter.status !== 'PENDING_SIGNATURE'
+
+  async function download(kind: 'pdf' | 'docx') {
+    setBusy(kind)
+    try {
+      await api.downloadFile(
+        kind === 'pdf' ? letter.pdf_url : letter.docx_url,
+        `Approval-Letter-${letter.letter_id}.${kind}`,
+      )
+    } catch (error) {
+      toast(
+        error instanceof ApiError && error.message
+          ? error.message
+          : 'The document could not be downloaded.',
+        'error',
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function runRetryEmail() {
+    retryEmail.mutate(undefined, {
+      onSuccess: (result) => {
+        if (result.email_status === 'SENT') {
+          toast('Approval letter email sent to the requester.')
+        } else {
+          toast('The email could not be delivered yet. You can retry.', 'error')
+        }
+      },
+      onError: (error) => {
+        toast(
+          error instanceof ApiError && error.message
+            ? error.message
+            : 'Could not retry the approval letter email.',
+          'error',
+        )
+      },
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Approval letter"
+        description={
+          isSigned
+            ? 'Signed by the designated campus signatory'
+            : 'Issued automatically after approval — awaiting signature'
+        }
+      />
+      <div className="mt-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={isSigned ? 'emerald' : 'amber'}>{letter.status_label}</Badge>
+          <span className="text-[13px] font-medium text-ink">{letter.letter_id}</span>
+        </div>
+        <dl className="space-y-2 text-sm">
+          <DetailItem label="Signatory" value={`${letter.signatory_name} — ${letter.signatory_position}`} />
+          {letter.signed_at && (
+            <DetailItem label="Signed on" value={formatDateTime(letter.signed_at)} />
+          )}
+          {letter.emailed_at && (
+            <DetailItem label="Emailed to requester" value={formatDateTime(letter.emailed_at)} />
+          )}
+          {isStaff && letter.email_status === 'FAILED' && (
+            <DetailItem
+              label="Email delivery"
+              wide
+              value={
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700">
+                    <MailWarning className="size-3.5" aria-hidden />
+                    {letter.email_status_label}
+                    {letter.email_error ? ` · ${letter.email_error}` : ''}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={runRetryEmail}
+                    loading={retryEmail.isPending}
+                  >
+                    Retry email
+                  </Button>
+                </span>
+              }
+            />
+          )}
+        </dl>
+        {isSigned && letter.has_signed_pdf && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Download className="size-3.5" />}
+              onClick={() => void download('pdf')}
+              loading={busy === 'pdf'}
+            >
+              Download PDF
+            </Button>
+            {letter.has_signed_docx && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Download className="size-3.5" />}
+                onClick={() => void download('docx')}
+                loading={busy === 'docx'}
+              >
+                Download DOCX
+              </Button>
+            )}
+          </div>
+        )}
+        {!isSigned && (
+          <p className="flex items-start gap-2 rounded-xl border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-[13px] text-status-pending">
+            <FileSignature className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              The formal approval letter is being prepared for the Assistant Campus
+              Director for Administration and Finance. Once signed, it will be emailed
+              to you and available here as a PDF download.
+            </span>
+          </p>
+        )}
+      </div>
+    </Card>
+  )
+}
 
 function approvalEmailBadgeClass(status: string) {
   switch (status) {

@@ -5,6 +5,7 @@ import {
   Building2,
   CalendarDays,
   ClipboardList,
+  FileSignature,
   Package,
   Plus,
   RefreshCw,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import { format } from 'date-fns'
 import {
+  useApprovalLetters,
   useDashboardSummary,
   useFacilities,
   useNoShowAlerts,
@@ -22,7 +24,7 @@ import { StageBadge, alertDateTime } from '@/components/notifications/NoShowAler
 import { useAuth } from '@/hooks/useAuth'
 import { PageHeader, Skeleton } from '@/components/ui/Misc'
 import { Card, CardHeader } from '@/components/ui/Card'
-import { StatusBadge } from '@/components/ui/Badge'
+import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import {
   ResponsiveTable,
@@ -49,7 +51,7 @@ const upcomingColumns: ResponsiveTableColumn[] = [
 
 export function DashboardPage() {
   const navigate = useNavigate()
-  const { isStaff, isViewOnly } = useAuth()
+  const { isStaff, isViewOnly, isApprovalSignatory } = useAuth()
   const {
     data: summary,
     isLoading: summaryLoading,
@@ -99,6 +101,9 @@ export function DashboardPage() {
 
       {/* Persistent administrator alert section, immediately below the heading. */}
       {isStaff && <PossibleNoShowSection />}
+
+      {/* Designated signatory: approval letters awaiting signature. */}
+      {isApprovalSignatory && <ApprovalLettersSection />}
 
       {/* Error state — never fake numbers when the API fails. */}
       {summaryError && (
@@ -478,6 +483,95 @@ function PossibleNoShowSection() {
               >
                 Review reservation
                 <ArrowRight className="size-3.5" aria-hidden />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Designated signatory summary: approval letters awaiting signature.
+ *
+ * Compact companion to the full /approval-letters workspace — pending count,
+ * the three oldest letters, and a link through. Rendered only for the
+ * designated signatory (the backend re-verifies every request).
+ */
+const MAX_PENDING_LETTERS = 3
+
+function ApprovalLettersSection() {
+  const { data, isLoading, isError, refetch, isFetching } = useApprovalLetters(
+    { status: 'PENDING_SIGNATURE' },
+    true,
+  )
+  const pending = data?.results.slice(0, MAX_PENDING_LETTERS) ?? []
+  const count = data?.count ?? 0
+
+  return (
+    <Card className="mt-4">
+      <CardHeader
+        title="Approval Letters"
+        description={
+          isLoading
+            ? 'Checking letters awaiting your signature…'
+            : `${count} letter${count === 1 ? '' : 's'} awaiting signature`
+        }
+        action={<SectionLink to="/approval-letters">Open workspace</SectionLink>}
+      />
+
+      {isError ? (
+        <div className="mt-4 flex flex-col items-start gap-3 rounded-xl border border-status-rejected/30 bg-status-rejected-bg/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] text-body">
+            Couldn't load approval letters — the request failed. Nothing is mocked here.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetch()}
+            loading={isFetching}
+            icon={<RefreshCw className="size-3.5" />}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : isLoading ? (
+        <div className="mt-4 space-y-3" aria-busy="true" aria-label="Loading approval letters">
+          <Skeleton className="h-14" />
+          <Skeleton className="h-14" />
+        </div>
+      ) : pending.length === 0 ? (
+        <div className="mt-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-body">
+          No letters are awaiting your signature right now.
+        </div>
+      ) : (
+        <ul className="mt-3 divide-y divide-line">
+          {pending.map((letter) => (
+            <li key={letter.id}>
+              <Link
+                to={`/approval-letters?letter=${letter.id}`}
+                className="-mx-2 flex flex-col gap-0.5 rounded-lg px-2 py-3 transition-colors hover:bg-soft"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-semibold text-ink">
+                    {letter.letter_id} · {letter.event_name}
+                  </p>
+                  <Badge tone="amber" className="shrink-0">
+                    <FileSignature className="size-3" aria-hidden />
+                    Awaiting signature
+                  </Badge>
+                </div>
+                <p className="truncate text-[13px] text-body">
+                  {letter.facility_name} · {letter.requester_name} ·{' '}
+                  {letter.reservation_reference}
+                </p>
+                <p className="text-xs tabular-nums text-muted">
+                  {format(new Date(letter.reservation_date), 'MMM d, yyyy')} ·{' '}
+                  {formatTime(letter.start_time)} – {formatTime(letter.end_time)}
+                </p>
               </Link>
             </li>
           ))}

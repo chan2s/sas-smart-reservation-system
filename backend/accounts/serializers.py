@@ -267,6 +267,9 @@ class UserSerializer(serializers.ModelSerializer):
     # can never set its own approval state.
     is_approved = serializers.BooleanField(read_only=True)
     is_view_only = serializers.BooleanField(read_only=True)
+    # Approval-letter signing designation. Read-only: an administrator grants
+    # it server-side (Django admin / seed command); a client can never set it.
+    is_approval_signatory = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -288,6 +291,7 @@ class UserSerializer(serializers.ModelSerializer):
             "reservation_block_reason",
             "is_approved",
             "is_view_only",
+            "is_approval_signatory",
         )
         read_only_fields = (
             "role",

@@ -2,6 +2,8 @@ import type {
   AdminUser,
   AdminUserStatusResult,
   Affiliation,
+  ApprovalLetter,
+  ApprovalLetterPreview,
   AvailabilityCheck,
   CalendarEvent,
   CampusUserOption,
@@ -244,6 +246,27 @@ export const api = {
   patchForm: <T>(path: string, form: FormData) =>
     request<T>(path, { method: 'PATCH', body: form }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+
+  // Binary downloads (approval letters, and any future Content-Disposition
+  // endpoint that must carry the Authorization header — <embed>/<iframe> and
+  // plain anchors cannot).
+  /** Fetch a document as a Blob and return an object URL for embed/new-tab use. */
+  fileUrl: async (path: string): Promise<string> => {
+    const blob = await requestBlob(path)
+    return URL.createObjectURL(blob)
+  },
+  /** Download a document as an attachment with the given filename. */
+  downloadFile: async (path: string, filename: string): Promise<void> => {
+    const blob = await requestBlob(path)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  },
 
   // Auth ---------------------------------------------------------------
   /** Email/username + password sign-in: authenticates in a single step. */
@@ -815,4 +838,53 @@ export const endpoints = {
 
   chatbot: (message: string) =>
     api.post<ChatbotResponse>('/api/chatbot/', { message }),
+
+  // Approval letters (Reservation Approval Letter & Digital Signature workflow)
+  /** Signatory dashboard lists — filter by letter status, search, page. */
+  approvalLetters: (
+    params: { status?: string; search?: string; page?: number } = {},
+  ) => {
+    const qs = new URLSearchParams()
+    if (params.status) qs.set('status', params.status)
+    if (params.search) qs.set('search', params.search)
+    if (params.page) qs.set('page', String(params.page))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return api.get<Paginated<ApprovalLetter>>(`/api/approval-letters/${suffix}`)
+  },
+  approvalLetter: (id: number) =>
+    api.get<ApprovalLetter>(`/api/approval-letters/${id}/`),
+  approvalLetterPreview: (id: number) =>
+    api.get<ApprovalLetterPreview>(`/api/approval-letters/${id}/preview/`),
+  /** Applies the test signature. Backend verifies the signatory designation. */
+  signApprovalLetter: (id: number) =>
+    api.post<ApprovalLetter>(`/api/approval-letters/${id}/sign/`, {}),
+  retryLetterEmail: (id: number) =>
+    api.post<ApprovalLetter>(`/api/approval-letters/${id}/retry-email/`, {}),
+}
+
+/**
+ * Authenticated binary GET: same token + refresh handling as `request`, but
+ * resolves the raw body (used for letter PDF/DOCX downloads and previews —
+ * an <embed>/<iframe> cannot attach an Authorization header itself).
+ */
+async function requestBlob(path: string, retry = true): Promise<Blob> {
+  const headers = new Headers()
+  const access = tokenStore.access
+  if (access) headers.set('Authorization', `Bearer ${access}`)
+  const response = await fetch(path, { headers })
+  if (response.status === 401 && tokenStore.refresh && retry) {
+    const refreshed = await refreshAccessToken()
+    if (refreshed) return requestBlob(path, false)
+  }
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`
+    try {
+      const data = (await response.json()) as { detail?: string }
+      if (data.detail) message = data.detail
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(response.status, message)
+  }
+  return response.blob()
 }

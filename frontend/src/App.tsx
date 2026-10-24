@@ -95,6 +95,11 @@ const FacilityResourcesPage = lazy(() =>
     default: module.FacilityResourcesPage,
   })),
 )
+const ApprovalLettersPage = lazy(() =>
+  import('@/pages/approval/ApprovalLettersPage').then((module) => ({
+    default: module.ApprovalLettersPage,
+  })),
+)
 const AffiliationPage = lazy(() =>
   import('@/pages/onboarding/AffiliationPage').then((module) => ({
     default: module.AffiliationPage,
@@ -261,6 +266,17 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
+          {/* Approval-letter signatory workspace. The page itself renders a
+              "not authorized" state for non-signatories; the backend verifies
+              the designation on every sign/list request regardless. */}
+          <Route
+            path="/approval-letters"
+            element={
+              <RequireStaff>
+                <ApprovalLettersPage />
+              </RequireStaff>
+            }
+          />
           <Route
             path="/organizations"
             element={

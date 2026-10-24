@@ -109,10 +109,15 @@ class SuperuserRoleTests(APITestCase):
         custom user manager, so this exercises the same ``UserManager.
         create_superuser()`` path as the direct manager call above.
         """
-        def _input(_prompt):
-            return "mgmt-created"
+        # ``createsuperuser`` prompts for the USERNAME_FIELD (username) and
+        # then every REQUIRED_FIELDS entry (email). Each prompt reads one
+        # answer in order; a repeated invalid answer would loop forever.
+        answers = iter(["mgmt-created", "mgmt-created@school.edu"])
 
-        def _prompt(_msg):
+        def _input(_prompt):
+            return next(answers)
+
+        def _prompt(_msg=None):
             return "MgmtPass1!"
 
         with mock.patch("builtins.input", side_effect=_input), mock.patch(

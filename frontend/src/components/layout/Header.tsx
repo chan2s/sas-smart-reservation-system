@@ -48,13 +48,13 @@ export function Brand() {
 // ---------------------------------------------------------------------------
 
 export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
-  const { isStaff } = useAuth()
+  const { isStaff, isApprovalSignatory } = useAuth()
   return (
     <nav
       aria-label="Primary"
       className="hidden items-center rounded-full border border-line bg-soft p-1 lg:inline-flex"
     >
-      {primaryNavigationFor(isStaff).map((item) => (
+      {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -82,7 +82,7 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
 // ---------------------------------------------------------------------------
 
 function HeaderActions() {
-  const { user, logout, isStaff } = useAuth()
+  const { user, logout, isStaff, isApprovalSignatory } = useAuth()
   const { data: unread } = useUnreadCount()
   const navigate = useNavigate()
   const isAdmin = user?.role === 'ADMIN'
@@ -176,7 +176,7 @@ function HeaderActions() {
               </p>
             </div>
             <div className="my-1 h-px bg-line md:hidden" aria-hidden />
-            {primaryNavigationFor(isStaff).map((item) => (
+            {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
               <MenuItem key={`m-${item.to}`} onClick={() => { close(); navigate(item.to) }}>
                 <item.icon className="size-4" />
                 {item.label}
@@ -237,7 +237,7 @@ function HeaderActions() {
 // ---------------------------------------------------------------------------
 
 function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, isStaff } = useAuth()
+  const { user, isStaff, isApprovalSignatory } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
   useEffect(() => {
     if (!open) return
@@ -269,7 +269,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav aria-label="Mobile" className="space-y-1 border-t border-line pt-3">
-          {primaryNavigationFor(isStaff).map((item) => (
+          {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
