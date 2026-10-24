@@ -150,10 +150,26 @@ def release_lease(owner: str) -> None:
 
 
 def run_sweep_once() -> dict:
-    """Run one reminder sweep; imported lazily so Django is fully initialized."""
+    """Run one reminder sweep; imported lazily so Django is fully initialized.
+
+    The same tick also refreshes the administrator possible-no-show alerts, so a
+    running backend keeps them current even when nobody has the dashboard open.
+    The two sweeps are independent: an alert failure never blocks reminders and
+    vice versa. Fine-grained 15-minute accuracy comes from the staff API and the
+    five-minute ``process_reservation_notifications`` command; this hourly pass
+    is only a safety net.
+    """
+    from notifications import no_show_alerts
     from reservations.services import reminders
 
-    return reminders.send_due_reminders()
+    summary = reminders.send_due_reminders()
+    try:
+        no_show_alerts.refresh_alerts()
+    except Exception:  # noqa: BLE001 — keep the reminder sweep result
+        logger.exception(
+            "Possible no-show refresh failed during the scheduled sweep."
+        )
+    return summary
 
 
 def run_loop(

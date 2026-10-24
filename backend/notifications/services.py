@@ -12,11 +12,13 @@ def notify(user, notification_type, title, message="", link=""):
     )
 
 
-def notify_staff(notification_type, title, message="", link=""):
-    """Notify every administrator and SAS staff member."""
+def notify_staff(notification_type, title, message="", link="", exclude_user=None):
+    """Notify administrators and SAS staff, optionally excluding the actor."""
     from notifications.models import Notification
 
     recipients = User.objects.filter(role__in=[User.Role.ADMIN, User.Role.STAFF])
+    if getattr(exclude_user, "pk", None):
+        recipients = recipients.exclude(pk=exclude_user.pk)
     created = []
     for recipient in recipients:
         created.append(

@@ -12,6 +12,7 @@ import type { ReservationDetail } from '@/lib/types'
 
 const state = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
+  retryMutate: vi.fn(),
   toast: vi.fn(),
   reservation: null as unknown as ReservationDetail,
   isStaff: true,
@@ -31,6 +32,10 @@ vi.mock('@/hooks/queries', () => ({
   useReservationAction: () => ({
     mutateAsync: state.mutateAsync,
     mutate: vi.fn(),
+    isPending: false,
+  }),
+  useRetryApprovalEmail: () => ({
+    mutate: state.retryMutate,
     isPending: false,
   }),
 }))
@@ -161,6 +166,7 @@ function cancelButton() {
 
 beforeEach(() => {
   state.mutateAsync = vi.fn()
+  state.retryMutate = vi.fn()
   state.toast = vi.fn()
   state.isStaff = true
   state.isViewOnly = false
@@ -183,6 +189,27 @@ describe('ReservationDetailPage approval email status', () => {
 
     expect(screen.getByText('Approval email')).toBeTruthy()
     expect(screen.getByText(label)).toBeTruthy()
+  })
+
+  it('offers a resend when the approval email was never sent', () => {
+    state.reservation = reservation({
+      approval_email_status: 'NOT_SENT',
+      approval_email_status_label: 'Not sent',
+    })
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /resend email/i }))
+    expect(state.retryMutate).toHaveBeenCalled()
+  })
+
+  it('does not offer a resend once the email was sent', () => {
+    state.reservation = reservation({
+      approval_email_status: 'SENT',
+      approval_email_status_label: 'Sent',
+    })
+    renderPage()
+
+    expect(screen.queryByRole('button', { name: /resend email/i })).toBeNull()
   })
 })
 

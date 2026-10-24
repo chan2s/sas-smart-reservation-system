@@ -10,7 +10,9 @@ hook keeps this list in sync with the configured inventory so the reservation
 wizard does not suggest equipment the facility already provides as a real,
 admin-configured built-in amenity.
 */
-export function usePreferredBuiltinAmenities(facility: Facility | null): string[] {
+export function usePreferredBuiltinAmenities(
+  facility: Facility | null | undefined,
+): string[] {
   return useMemo(() => {
     if (!facility) return []
     const declared = facility.built_ins ?? []

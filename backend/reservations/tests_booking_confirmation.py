@@ -166,8 +166,16 @@ class BookingConfirmationEmailTests(TestCase):
         reservation = Reservation.objects.get(pk=response.json()["id"])
         self.assertEqual(reservation.status, Reservation.Status.APPROVED)
 
-        self.assertEqual(len(mail.outbox), 1)
-        sent = mail.outbox[0]
+        # An auto-approved reservation now sends TWO emails by design: the
+        # booking confirmation and the approval notification. This test is
+        # about the confirmation's wording, so select it by subject.
+        confirmations = [
+            message
+            for message in mail.outbox
+            if message.subject == "SAS RESERVE - Booking Confirmation"
+        ]
+        self.assertEqual(len(confirmations), 1)
+        sent = confirmations[0]
         self.assertEqual(sent.to, [self.requester.email])
         self.assertIn("Approved", sent.body)
         self.assertIn("Your booking is confirmed", sent.body)

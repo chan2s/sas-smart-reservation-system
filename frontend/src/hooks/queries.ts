@@ -11,7 +11,13 @@ import {
   type ReservationFilters,
   type ResubmitReservationPayload,
 } from '@/lib/api'
-import type { FacilityPayload, FacilityResourcePayload, RequesterType } from '@/lib/types'
+import type {
+  FacilityPayload,
+  FacilityResourcePayload,
+  Notification,
+  Paginated,
+  RequesterType,
+} from '@/lib/types'
 import type {
   AffiliationPayload,
   OrganizationFilters,
@@ -510,6 +516,17 @@ export function useResubmitReservation(id: number | null) {
   })
 }
 
+export function useRetryApprovalEmail(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.retryApprovalEmail(id as number),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reservation', id] })
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+    },
+  })
+}
+
 export function useReservationAction(id: number | null) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -651,6 +668,122 @@ export function useNotifications(params?: { unread?: boolean; page?: number }) {
   return useQuery({
     queryKey: ['notifications', params],
     queryFn: () => endpoints.notifications(params),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient()
+  return useMutation<
+    void,
+    Error,
+    Notification,
+    {
+      previousFeeds: [readonly unknown[], Paginated<Notification> | undefined][]
+      previousCount: { count: number; notifications?: number; alerts?: number } | undefined
+    }
+  >({
+    mutationFn: async (notification) => {
+      if (notification.source === 'possible_no_show') {
+        await endpoints.acknowledgeNoShowAlert(notification.id)
+      } else {
+        await endpoints.markNotificationRead(notification.id)
+      }
+    },
+    onMutate: async (notification) => {
+      await queryClient.cancelQueries({ queryKey: ['notifications'] })
+      await queryClient.cancelQueries({ queryKey: ['unread-count'] })
+      const previousFeeds = queryClient.getQueriesData<Paginated<Notification>>({
+        queryKey: ['notifications'],
+      })
+      const previousCount = queryClient.getQueryData<{
+        count: number
+        notifications?: number
+        alerts?: number
+      }>(['unread-count'])
+      queryClient.setQueriesData<Paginated<Notification>>(
+        { queryKey: ['notifications'] },
+        (feed) => feed && ({
+          ...feed,
+          results: feed.results.map((item) =>
+            item.source === notification.source && item.id === notification.id
+              ? { ...item, read: true }
+              : item,
+          ),
+        }),
+      )
+      if (previousCount && !notification.read) {
+        const isAlert = notification.source === 'possible_no_show'
+        queryClient.setQueryData(['unread-count'], {
+          ...previousCount,
+          count: Math.max(0, previousCount.count - 1),
+          notifications: Math.max(0, (previousCount.notifications ?? 0) - (isAlert ? 0 : 1)),
+          alerts: Math.max(0, (previousCount.alerts ?? 0) - (isAlert ? 1 : 0)),
+        })
+      }
+      return { previousFeeds, previousCount }
+    },
+    onError: (_error, _notification, context) => {
+      context?.previousFeeds.forEach(([key, value]) => {
+        queryClient.setQueryData(key, value)
+      })
+      if (context?.previousCount) {
+        queryClient.setQueryData(['unread-count'], context.previousCount)
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      void queryClient.invalidateQueries({ queryKey: ['unread-count'] })
+      void queryClient.invalidateQueries({ queryKey: ['no-show-alerts'] })
+    },
+  })
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.markAllNotificationsRead(),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['notifications'] })
+      await queryClient.cancelQueries({ queryKey: ['unread-count'] })
+      const previousFeeds = queryClient.getQueriesData<Paginated<Notification>>({
+        queryKey: ['notifications'],
+      })
+      const previousCount = queryClient.getQueryData<{
+        count: number
+        notifications?: number
+        alerts?: number
+      }>(['unread-count'])
+      queryClient.setQueriesData<Paginated<Notification>>(
+        { queryKey: ['notifications'] },
+        (feed) => feed && ({
+          ...feed,
+          results: feed.results.map((item) => ({ ...item, read: true })),
+        }),
+      )
+      if (previousCount) {
+        queryClient.setQueryData(['unread-count'], {
+          ...previousCount,
+          count: 0,
+          notifications: 0,
+          alerts: 0,
+        })
+      }
+      return { previousFeeds, previousCount }
+    },
+    onError: (_error, _variables, context) => {
+      context?.previousFeeds.forEach(([key, value]) => {
+        queryClient.setQueryData(key, value)
+      })
+      if (context?.previousCount) {
+        queryClient.setQueryData(['unread-count'], context.previousCount)
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      void queryClient.invalidateQueries({ queryKey: ['unread-count'] })
+      void queryClient.invalidateQueries({ queryKey: ['no-show-alerts'] })
+    },
   })
 }
 
@@ -659,6 +792,46 @@ export function useUnreadCount() {
     queryKey: ['unread-count'],
     queryFn: () => endpoints.unreadNotifications(),
     refetchInterval: 60_000,
+  })
+}
+
+/**
+ * Active possible-no-show alerts (administrator only).
+ *
+ * The backend refreshes the alert rows before answering, so opening the bell or
+ * the dashboard surfaces reservations that are already inside the warning
+ * window even when no scheduler has run yet. Polled once a minute while mounted
+ * to keep the stage and the count current.
+ */
+export function useNoShowAlerts(enabled = true) {
+  return useQuery({
+    queryKey: ['no-show-alerts'],
+    queryFn: () => endpoints.noShowAlerts(),
+    enabled,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+}
+
+export function useAcknowledgeNoShowAlert() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => endpoints.acknowledgeNoShowAlert(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['no-show-alerts'] })
+      void queryClient.invalidateQueries({ queryKey: ['unread-count'] })
+    },
+  })
+}
+
+export function useAcknowledgeAllNoShowAlerts() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.acknowledgeAllNoShowAlerts(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['no-show-alerts'] })
+      void queryClient.invalidateQueries({ queryKey: ['unread-count'] })
+    },
   })
 }
 // ---------------------------------------------------------------------------

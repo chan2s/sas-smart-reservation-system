@@ -15,8 +15,10 @@ import { format } from 'date-fns'
 import {
   useDashboardSummary,
   useFacilities,
+  useNoShowAlerts,
   useUtilization,
 } from '@/hooks/queries'
+import { StageBadge, alertDateTime } from '@/components/notifications/NoShowAlerts'
 import { useAuth } from '@/hooks/useAuth'
 import { PageHeader, Skeleton } from '@/components/ui/Misc'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -94,6 +96,9 @@ export function DashboardPage() {
           )
         }
       />
+
+      {/* Persistent administrator alert section, immediately below the heading. */}
+      {isStaff && <PossibleNoShowSection />}
 
       {/* Error state — never fake numbers when the API fails. */}
       {summaryError && (
@@ -374,6 +379,111 @@ export function DashboardPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Live possible-no-show warnings for administrators.
+ *
+ * The backend owns the policy: it decides which reservations are eligible, their
+ * stage, and how many minutes have elapsed. This section only renders that
+ * response, shows an explicit empty state, and never invents data when the
+ * request fails.
+ */
+function PossibleNoShowSection() {
+  const { data, isLoading, isError, refetch, isFetching } = useNoShowAlerts(true)
+  const alerts = data?.results ?? []
+  const unread = data?.unread ?? 0
+
+  return (
+    <Card className="mt-4">
+      <CardHeader
+        title="Possible No-Show Alerts"
+        description={
+          isLoading
+            ? 'Checking approved reservations with no recorded check-in…'
+            : `${alerts.length} active alert${alerts.length === 1 ? '' : 's'}${
+                unread > 0 ? ` · ${unread} unread` : ''
+              }`
+        }
+      />
+
+      {isError ? (
+        <div className="mt-4 flex flex-col items-start gap-3 rounded-xl border border-status-rejected/30 bg-status-rejected-bg/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2.5">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-status-rejected" aria-hidden />
+            <div>
+              <p className="text-[13px] font-semibold text-ink">
+                Couldn't load possible no-show alerts
+              </p>
+              <p className="mt-0.5 text-[12.5px] text-body">
+                The request failed, so no alerts are shown — nothing here is mocked.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetch()}
+            loading={isFetching}
+            icon={<RefreshCw className="size-3.5" />}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : isLoading ? (
+        <div className="mt-4 space-y-3" aria-busy="true" aria-label="Loading no-show alerts">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+        </div>
+      ) : alerts.length === 0 ? (
+        <div className="mt-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-body">
+          No reservations currently require no-show attention.
+        </div>
+      ) : (
+        <ul className="mt-3 divide-y divide-line">
+          {alerts.map((alert) => (
+            <li
+              key={alert.id}
+              className={cn(
+                'flex flex-col gap-2 px-1 py-3 sm:flex-row sm:items-center sm:justify-between',
+                !alert.acknowledged && 'bg-brand-soft/20',
+              )}
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    to={alert.link}
+                    className="text-sm font-semibold text-ink hover:text-brand"
+                  >
+                    {alert.reference}
+                  </Link>
+                  <StageBadge stage={alert.stage} label={alert.stage_label} />
+                  <span className="text-[11px] font-medium text-muted">
+                    {alert.no_check_in_label}
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-[13px] text-body">
+                  {alert.event_name} · {alert.facility} · {alert.requester || 'No requester account'}
+                </p>
+                <p className="text-xs tabular-nums text-muted">
+                  {alertDateTime(alert)} · {alert.time_label}
+                </p>
+              </div>
+              <Link
+                to={alert.link}
+                className="inline-flex shrink-0 items-center gap-1 self-start rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand hover:text-brand sm:self-center"
+              >
+                Review reservation
+                <ArrowRight className="size-3.5" aria-hidden />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   )
 }
 

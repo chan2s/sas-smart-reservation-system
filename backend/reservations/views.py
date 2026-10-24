@@ -345,17 +345,25 @@ class ReservationViewSet(viewsets.ModelViewSet):
         delivered successfully. SMTP details are never returned.
         """
         reservation = self.get_object()
+        already_sent = (
+            reservation.approval_email_status
+            == Reservation.ApprovalEmailStatus.SENT
+        )
         try:
             status_code = workflow.resend_approval_email(reservation, request.user)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if status_code == Reservation.ApprovalEmailStatus.SENT:
+            detail = (
+                "Approval email already sent."
+                if already_sent
+                else "Approval email sent."
+            )
+        else:
+            detail = "Approval email not sent."
         return Response(
             {
-                "detail": (
-                    "Approval email sent."
-                    if status_code == Reservation.ApprovalEmailStatus.SENT
-                    else "Approval email not sent."
-                ),
+                "detail": detail,
                 "approval_email_status": status_code,
                 "approval_email_status_label": reservation.get_approval_email_status_display(),
             }

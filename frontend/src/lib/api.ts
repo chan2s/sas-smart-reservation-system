@@ -25,6 +25,7 @@ import type {
   LoginActivity,
   MaintenanceRecord,
   MyAffiliation,
+  NoShowAlert,
   Notification,
   Organization,
   OrganizationType,
@@ -703,6 +704,13 @@ export const endpoints = {
     api.post<ReservationDetail>(`/api/reservations/${id}/resubmit/`, payload),
   reservationAction: (id: number, action: string, body: Record<string, unknown> = {}) =>
     api.post<ReservationDetail>(`/api/reservations/${id}/${action}/`, body),
+  /** Staff-only: resend the approval email for an approved reservation. */
+  retryApprovalEmail: (id: number) =>
+    api.post<{
+      detail: string
+      approval_email_status: string
+      approval_email_status_label: string
+    }>(`/api/reservations/${id}/retry_approval_email/`, {}),
   reservationActionForm: (id: number, action: string, form: FormData) =>
     api.postForm<ReservationDetail>(`/api/reservations/${id}/${action}/`, form),
   reservationByCheckinCode: (code: string) =>
@@ -792,6 +800,18 @@ export const endpoints = {
   markNotificationRead: (id: number) =>
     api.post<Notification>(`/api/notifications/${id}/mark_read/`),
   markAllNotificationsRead: () => api.post<{ count: number }>('/api/notifications/mark_all_read/'),
+
+  /** Staff-only: active possible-no-show alerts (refreshed by the backend). */
+  noShowAlerts: () =>
+    api.get<{ count: number; unread: number; results: NoShowAlert[] }>(
+      '/api/notifications/no-show-alerts/',
+    ),
+  acknowledgeNoShowAlert: (id: number) =>
+    api.post<NoShowAlert>(`/api/notifications/no-show-alerts/${id}/acknowledge/`),
+  acknowledgeAllNoShowAlerts: () =>
+    api.post<{ acknowledged: number; unread: number }>(
+      '/api/notifications/no-show-alerts/acknowledge-all/',
+    ),
 
   chatbot: (message: string) =>
     api.post<ChatbotResponse>('/api/chatbot/', { message }),

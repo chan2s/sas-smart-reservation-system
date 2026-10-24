@@ -140,7 +140,7 @@ _TRANSIENT_CONNECTION_ERRORS = (
 )
 
 
-def _deliver(message: "EmailMultiAlternatives") -> tuple[bool, Optional[Exception]]:
+def _deliver(message: "EmailMultiAlternatives") -> tuple[int, Optional[Exception]]:
     """Deliver ``message`` through Django's configured SMTP backend.
 
     The connection is opened explicitly (via the configured backend, so every
@@ -152,9 +152,10 @@ def _deliver(message: "EmailMultiAlternatives") -> tuple[bool, Optional[Exceptio
     immediate retry could deliver it twice. The ambiguous failure is returned
     to the caller for exact, type-level logging instead.
 
-    Returns ``(sent, exception)`` - ``exception`` is ``None`` on success, an
+    Returns ``(accepted, exception)`` - ``accepted`` is the number of messages
+    the backend accepted (0 or 1), and ``exception`` is ``None`` on success, an
     exception instance for a retried-out or transmit-phase failure, or ``None``
-    together with ``sent=False`` when the backend refused without raising.
+    together with ``accepted=0`` when the backend refused without raising.
     """
     last_open_exc: Optional[Exception] = None
     for attempt in range(1, SMTP_CONNECT_MAX_ATTEMPTS + 1):
@@ -180,14 +181,18 @@ def _deliver(message: "EmailMultiAlternatives") -> tuple[bool, Optional[Exceptio
         # unusable connection away on a transient handshake drop.
         message.connection = connection
         try:
-            sent = bool(message.send(fail_silently=False))
+            accepted = int(message.send(fail_silently=False) or 0)
         finally:
             try:
                 connection.close()
             except Exception:  # noqa: BLE001 — a failed close is harmless
                 logger.debug("SMTP connection close failed (ignored).")
-        return (bool(sent), None)
-    return (False, last_open_exc)
+        logger.info(
+            "Django email backend attempted delivery and accepted %d message(s).",
+            accepted,
+        )
+        return (accepted, None)
+    return (0, last_open_exc)
 
 
 def build_reservation_context(
@@ -276,22 +281,28 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
             to=[email],
         )
         message.attach_alternative(html_message, "text/html")
+        logger.info(
+            "Approval email handed to the configured Django backend for "
+            "reservation %s.",
+            reservation.reservation_id,
+        )
         sent, send_exc = _deliver(message)
         if sent:
             logger.info(
-                "Approval email sent for reservation %s to %s (domain: %s)",
+                "Approval email accepted (%d message) for reservation %s "
+                "(recipient present, domain: %s).",
+                sent,
                 reservation.reservation_id,
-                email.split("@")[0] if "@" in email else "unknown",
                 email.split("@")[1] if "@" in email else "unknown",
             )
             return True, None
         if send_exc is not None:
             reason = _classify_email_error(send_exc)
             logger.error(
-                "Approval email FAILED for reservation %s to %s "
-                "(%s: %s) after %d connection attempts.",
+                "Approval email FAILED for reservation %s (recipient present, "
+                "domain: %s; %s: %s) after %d connection attempts.",
                 reservation.reservation_id,
-                email,
+                email.split("@")[1] if "@" in email else "unknown",
                 type(send_exc).__name__,
                 str(send_exc)[:200],
                 SMTP_CONNECT_MAX_ATTEMPTS,
@@ -301,9 +312,10 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
     except Exception as exc:  # noqa: BLE001 — delivery must never break approval
         reason = _classify_email_error(exc)
         logger.error(
-            "Approval email FAILED for reservation %s to %s (%s): %s",
+            "Approval email FAILED for reservation %s (recipient present, "
+            "domain: %s; %s): %s",
             reservation.reservation_id,
-            email,
+            email.split("@")[1] if "@" in email else "unknown",
             type(exc).__name__,
             str(exc)[:200],
         )

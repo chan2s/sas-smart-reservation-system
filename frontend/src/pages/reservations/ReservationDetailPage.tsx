@@ -12,7 +12,11 @@ import {
   XCircle,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { useReservation, useReservationAction } from '@/hooks/queries'
+import {
+  useReservation,
+  useReservationAction,
+  useRetryApprovalEmail,
+} from '@/hooks/queries'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/ui/Toast'
@@ -35,6 +39,7 @@ export function ReservationDetailPage() {
   const { toast } = useToast()
   const { data: reservation, isLoading } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
+  const retryEmail = useRetryApprovalEmail(reservationId)
 
   const [modal, setModal] = useState<
     null | 'reject' | 'changes' | 'cancel' | 'checkin-override' | 'no-show'
@@ -101,6 +106,32 @@ export function ReservationDetailPage() {
         'error',
       )
     }
+  }
+
+  /**
+   * Staff-only retry for a reservation whose approval email was never sent
+   * (legacy approvals) or failed. The backend still owns the decision: it
+   * refuses unless the reservation is APPROVED and not already SENT, and it
+   * records the real delivery result.
+   */
+  function runRetryApprovalEmail() {
+    retryEmail.mutate(undefined, {
+      onSuccess: (result) => {
+        if (result.approval_email_status === 'SENT') {
+          toast(result.detail || 'Approval email sent to the requester.')
+        } else {
+          toast(result.detail || 'Approval email not sent.', 'error')
+        }
+      },
+      onError: (error) => {
+        toast(
+          error instanceof ApiError && error.message
+            ? error.message
+            : 'Could not retry the approval email.',
+          'error',
+        )
+      },
+    })
   }
 
   const canApprove = !isViewOnly && isStaff && reservation.status === 'PENDING'
@@ -539,14 +570,29 @@ export function ReservationDetailPage() {
                   label="Approval email"
                   wide
                   value={
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
-                        approvalEmailBadgeClass(reservation.approval_email_status)
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
+                          approvalEmailBadgeClass(reservation.approval_email_status),
+                        )}
+                      >
+                        <span className="size-1.5 rounded-full bg-current" />
+                        {reservation.approval_email_status_label ||
+                          reservation.approval_email_status}
+                      </span>
+                      {['NOT_SENT', 'FAILED'].includes(
+                        reservation.approval_email_status,
+                      ) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={runRetryApprovalEmail}
+                          loading={retryEmail.isPending}
+                        >
+                          Resend email
+                        </Button>
                       )}
-                    >
-                      <span className="size-1.5 rounded-full bg-current" />
-                      {reservation.approval_email_status_label || reservation.approval_email_status}
                     </span>
                   }
                 />

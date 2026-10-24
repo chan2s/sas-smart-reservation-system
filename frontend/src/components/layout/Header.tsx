@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useUnreadCount } from '@/hooks/queries'
+import { NotificationCenter } from '@/components/notifications/NoShowAlerts'
 import { Avatar } from '@/components/ui/Misc'
 import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
 import { cn } from '@/lib/utils'
@@ -124,10 +125,9 @@ function HeaderActions() {
         }
       >
         {(close) => (
-          <MenuItem onClick={() => { close(); navigate('/notifications') }}>
-            <Bell className="size-4" />
-            View notifications
-          </MenuItem>
+          <>
+            <NotificationCenter onNavigate={close} />
+          </>
         )}
       </Dropdown>
 

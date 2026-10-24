@@ -76,81 +76,149 @@ def _get_requester_email(reservation) -> str:
     return reservation.contact_email or ""
 
 
-def _send_approval_email_after_commit(reservation_id, actor):
-    """Deliver and record an approval email after its approval transaction commits."""
+def _mask_email(email: str) -> str:
+    """Mask a recipient address for logs — never log the full address."""
+    local, _, domain = (email or "").partition("@")
+    if not domain:
+        return "invalid"
+    return f"{local[:1]}***@{domain}"
+
+
+def _send_approval_email_after_commit(reservation_id, actor, force=False):
+    """Deliver and record an approval email after its approval transaction commits.
+
+    ``force`` is set only by a genuine PENDING -> APPROVED transition: a
+    reservation that was approved once, reopened through "request changes"
+    and approved again must notify the requester again. Retry callers never
+    force, so an already-delivered approval can never be sent twice.
+    """
+    logger.info(
+        "Approval email on_commit callback EXECUTED for reservation id %s (force=%s).",
+        reservation_id,
+        force,
+    )
     try:
         reservation = Reservation.objects.select_related(
             "requester", "facility", "created_by"
         ).get(pk=reservation_id)
-        resend_approval_email(reservation, actor)
+        resend_approval_email(reservation, actor, force=force)
     except Exception as exc:  # Delivery bookkeeping must not undo an approval.
-        logger.error(
-            "Approval email callback failed for reservation id %s (%s).",
+        logger.exception(
+            "Approval email callback FAILED for reservation id %s (%s). "
+            "The approval itself is already committed and remains unchanged.",
             reservation_id,
             type(exc).__name__,
         )
+        # Never leave the diagnostic claiming delivery when it could not be
+        # recorded. This is best-effort: if the database is also unavailable
+        # the failure is logged and nothing is corrupted.
+        try:
+            Reservation.objects.filter(pk=reservation_id).update(
+                approval_email_status=Reservation.ApprovalEmailStatus.FAILED
+            )
+            logger.info(
+                "Approval email status persisted as FAILED for reservation id %s.",
+                reservation_id,
+            )
+        except Exception:  # noqa: BLE001 - logging must not raise either
+            logger.exception(
+                "Could not persist FAILED approval-email status for reservation id %s.",
+                reservation_id,
+            )
 
 
 def _schedule_approval_email(reservation, actor):
     """Queue exactly one delivery for a newly approved reservation."""
+    logger.info(
+        "Approval email scheduled after commit for reservation %s (status=%s).",
+        reservation.reservation_id,
+        reservation.status,
+    )
     transaction.on_commit(
         lambda reservation_id=reservation.pk, actor=actor: (
-            _send_approval_email_after_commit(reservation_id, actor)
+            _send_approval_email_after_commit(reservation_id, actor, force=True)
         )
     )
 
 
-def resend_approval_email(reservation, actor) -> str:
-    """Send an approval email once for an approved reservation, recording outcome."""
-    if reservation.status != Reservation.Status.APPROVED:
-        raise ValueError("Only approved reservations can receive an approval email.")
-    if reservation.approval_email_status == Reservation.ApprovalEmailStatus.SENT:
-        return reservation.approval_email_status
-    email = resolve_requester_email(reservation, actor)
-    if not email:
-        reservation.approval_email_status = Reservation.ApprovalEmailStatus.NO_EMAIL
-        reservation.save(update_fields=["approval_email_status", "updated_at"])
-        logger.warning(
-            "Approval email retry skipped for reservation %s: requester has "
-            "no valid email address.",
-            reservation.reservation_id,
-        )
-        return reservation.approval_email_status
+def resend_approval_email(reservation, actor, force=False) -> str:
+    """Send an approval email once for an approved reservation, recording outcome.
 
-    # Dispatch immediately and record the delivery state. A failure must
-    # never propagate into the caller's transaction — the approval itself is
-    # already committed and is unaffected by SMTP problems.
-    logger.info(
-        "Approval email send attempted for reservation %s to %s.",
-        reservation.reservation_id,
-        email,
-    )
-    try:
-        ok, reason = send_reservation_approved(reservation, actor)
-    except Exception as exc:  # noqa: BLE001 - email failures never undo approval
-        ok, reason = False, type(exc).__name__
-        logger.error(
-            "Approval email delivery FAILED for reservation %s (%s).",
-            reservation.reservation_id,
-            type(exc).__name__,
-        )
-    if ok:
-        reservation.approval_email_status = Reservation.ApprovalEmailStatus.SENT
-        logger.info(
-            "Approval email recorded as SENT for reservation %s.",
-            reservation.reservation_id,
-        )
-    else:
-        reservation.approval_email_status = Reservation.ApprovalEmailStatus.FAILED
-        logger.error(
-            "Approval email delivery FAILED for reservation %s (reason: %s). "
-            "Approval itself remains: %s",
-            reservation.reservation_id,
-            reason,
-            reservation.status,
-        )
-    reservation.save(update_fields=["approval_email_status", "updated_at"])
-    return reservation.approval_email_status
+    The row lock serialises concurrent attempts (a double-clicked retry or two
+    administrators acting at once): the first attempt sends and persists the
+    result, the next re-reads the committed SENT state and sends nothing.
+    ``force`` is reserved for a new approval transition (see
+    ``_send_approval_email_after_commit``); manual retries leave it False.
+    """
+    with transaction.atomic():
+        # Lock ONLY the reservation row: ``requester`` is nullable, and
+        # ``select_for_update`` on PostgreSQL refuses to lock the nullable
+        # side of the outer join that ``select_related("requester")`` creates.
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+
+        if locked.status != Reservation.Status.APPROVED:
+            raise ValueError(
+                "Only approved reservations can receive an approval email."
+            )
+        if (
+            locked.approval_email_status == Reservation.ApprovalEmailStatus.SENT
+            and not force
+        ):
+            logger.info(
+                "Approval email already SENT for reservation %s; nothing sent.",
+                locked.reservation_id,
+            )
+            status = locked.approval_email_status
+        else:
+            email = resolve_requester_email(locked, actor)
+            if not email:
+                locked.approval_email_status = Reservation.ApprovalEmailStatus.NO_EMAIL
+                locked.save(update_fields=["approval_email_status", "updated_at"])
+                logger.warning(
+                    "Approval email skipped for reservation %s: requester has "
+                    "no valid email address.",
+                    locked.reservation_id,
+                )
+                status = locked.approval_email_status
+            else:
+                # Dispatch and record the delivery state. A failure must never
+                # undo the approval: the transition has already committed.
+                logger.info(
+                    "Approval email attempt for reservation %s (recipient: %s).",
+                    locked.reservation_id,
+                    _mask_email(email),
+                )
+                try:
+                    ok, reason = send_reservation_approved(locked, actor)
+                except Exception as exc:  # noqa: BLE001 - never undo approval
+                    ok, reason = False, type(exc).__name__
+                    logger.exception(
+                        "Approval email send raised for reservation %s (%s).",
+                        locked.reservation_id,
+                        type(exc).__name__,
+                    )
+                locked.approval_email_status = (
+                    Reservation.ApprovalEmailStatus.SENT
+                    if ok
+                    else Reservation.ApprovalEmailStatus.FAILED
+                )
+                locked.save(update_fields=["approval_email_status", "updated_at"])
+                status = locked.approval_email_status
+                if ok:
+                    logger.info(
+                        "Approval email status persisted as SENT for reservation %s.",
+                        locked.reservation_id,
+                    )
+                else:
+                    logger.error(
+                        "Approval email status persisted as FAILED for reservation "
+                        "%s (reason: %s). The approval remains %s.",
+                        locked.reservation_id,
+                        reason,
+                        locked.status,
+                    )
+    reservation.approval_email_status = status
+    return status
 
 
 def _send_reservation_email(
@@ -223,6 +291,13 @@ def auto_approve(reservation, actor, message=""):
             f"{locked.event_name} on {locked.date} was automatically approved.",
             _reservation_link(locked),
         )
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "Reservation approved",
+            f"{locked.event_name} on {locked.date} was automatically approved.",
+            _reservation_link(locked),
+            exclude_user=actor,
+        )
         if from_status != Reservation.Status.APPROVED:
             _schedule_approval_email(locked, actor)
     reservation.refresh_from_db()
@@ -245,6 +320,13 @@ def approve_reservation(reservation, actor, comment=""):
         locked.approved_by = actor
         locked.approved_at = timezone.now()
         locked.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        logger.info(
+            "Approval transition for reservation %s: %s -> %s (actor id %s).",
+            locked.reservation_id,
+            from_status,
+            locked.status,
+            getattr(actor, "pk", None),
+        )
         record_event(
             locked,
             ReservationEvent.EventType.APPROVED,
@@ -267,6 +349,13 @@ def approve_reservation(reservation, actor, comment=""):
             "Reservation approved",
             f"{locked.event_name} on {locked.date} has been approved.",
             _reservation_link(locked),
+        )
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "Reservation approved",
+            f"{locked.event_name} on {locked.date} was approved.",
+            _reservation_link(locked),
+            exclude_user=actor,
         )
         _schedule_approval_email(locked, actor)
     reservation.refresh_from_db()
@@ -309,6 +398,13 @@ def reject_reservation(reservation, actor, reason):
         "Reservation rejected",
         f"{reservation.event_name} on {reservation.date} was rejected. Reason: {reason}",
         _reservation_link(reservation),
+    )
+    notify_staff(
+        Notification.Type.RESERVATION,
+        "Reservation rejected",
+        f"{reservation.event_name} on {reservation.date} was rejected. Reason: {reason}",
+        _reservation_link(reservation),
+        exclude_user=actor,
     )
     # Send email notification
     _send_reservation_email(
@@ -396,6 +492,13 @@ def request_changes(reservation, actor, message):
         "Changes requested",
         f"Changes were requested for {reservation.event_name}: {message}",
         _reservation_link(reservation),
+    )
+    notify_staff(
+        Notification.Type.RESERVATION,
+        "Changes requested",
+        f"Changes were requested for {reservation.event_name}: {message}",
+        _reservation_link(reservation),
+        exclude_user=actor,
     )
     return reservation
 
@@ -522,6 +625,13 @@ def cancel_reservation(reservation, actor, reason=""):
                 "Reservation cancelled",
                 f"{locked.event_name} on {locked.date} was cancelled.",
                 _reservation_link(locked),
+            )
+            notify_staff(
+                Notification.Type.RESERVATION,
+                "Reservation cancelled",
+                f"{locked.event_name} on {locked.date} was cancelled by SAS staff.",
+                _reservation_link(locked),
+                exclude_user=actor,
             )
     # Keep the caller's in-memory instance in sync with the persisted write,
     # so the API layer serializes the cancelled state it just recorded.

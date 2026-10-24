@@ -111,6 +111,96 @@ class ApprovalEmailFlowTests(TestCase):
         self.assertEqual(result.approval_email_status, Reservation.ApprovalEmailStatus.SENT)
         self.assertEqual(len(mail.outbox), 1)
 
+    def test_retry_for_previously_approved_reservation_sends_once_and_marks_sent(self):
+        """Legacy approvals recorded while automatic emails were disabled."""
+        from django.utils import timezone
+
+        reservation = self.make_reservation(
+            status=Reservation.Status.APPROVED,
+            approved_by=self.admin,
+            approved_at=timezone.now(),
+            approval_email_status=Reservation.ApprovalEmailStatus.NOT_SENT,
+        )
+
+        status = workflow.resend_approval_email(reservation, self.admin)
+
+        self.assertEqual(status, Reservation.ApprovalEmailStatus.SENT)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.requester.email])
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(
+            reservation.approval_email_status, Reservation.ApprovalEmailStatus.SENT
+        )
+
+        # A second retry must not send the same approval email twice.
+        workflow.resend_approval_email(reservation, self.admin)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_retry_after_failed_delivery_recovers_and_marks_sent(self):
+        from django.utils import timezone
+
+        reservation = self.make_reservation(
+            status=Reservation.Status.APPROVED,
+            approved_by=self.admin,
+            approved_at=timezone.now(),
+            approval_email_status=Reservation.ApprovalEmailStatus.FAILED,
+        )
+
+        status = workflow.resend_approval_email(reservation, self.admin)
+
+        self.assertEqual(status, Reservation.ApprovalEmailStatus.SENT)
+        self.assertEqual(len(mail.outbox), 1)
+        reservation.refresh_from_db()
+        self.assertEqual(
+            reservation.approval_email_status, Reservation.ApprovalEmailStatus.SENT
+        )
+
+    def test_retry_failure_keeps_approval_and_records_failed(self):
+        from django.utils import timezone
+
+        reservation = self.make_reservation(
+            status=Reservation.Status.APPROVED,
+            approved_by=self.admin,
+            approved_at=timezone.now(),
+            approval_email_status=Reservation.ApprovalEmailStatus.NOT_SENT,
+        )
+        original = workflow.send_reservation_approved
+
+        def fail(*args, **kwargs):
+            return False, "smtp_connection"
+
+        workflow.send_reservation_approved = fail
+        try:
+            status = workflow.resend_approval_email(reservation, self.admin)
+        finally:
+            workflow.send_reservation_approved = original
+
+        self.assertEqual(status, Reservation.ApprovalEmailStatus.FAILED)
+        self.assertEqual(len(mail.outbox), 0)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(
+            reservation.approval_email_status, Reservation.ApprovalEmailStatus.FAILED
+        )
+
+    def test_reapproval_after_changes_request_sends_a_fresh_notification(self):
+        reservation = self.make_reservation()
+        self.approve_and_run_callbacks(reservation)
+        self.assertEqual(len(mail.outbox), 1)
+
+        workflow.request_changes(reservation, self.admin, "Please adjust the setup.")
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.PENDING)
+
+        self.approve_and_run_callbacks(reservation)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(
+            reservation.approval_email_status, Reservation.ApprovalEmailStatus.SENT
+        )
+        self.assertEqual(len(mail.outbox), 2)
+
     def test_already_approved_reservation_does_not_send_another_approval_email(self):
         reservation = self.make_reservation()
         self.approve_and_run_callbacks(reservation)
@@ -118,6 +208,16 @@ class ApprovalEmailFlowTests(TestCase):
         with self.assertRaises(ValueError):
             self.approve_and_run_callbacks(reservation)
         workflow.resend_approval_email(reservation, self.admin)
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_resaving_an_approved_reservation_does_not_send_again(self):
+        reservation = self.make_reservation()
+        self.approve_and_run_callbacks(reservation)
+        self.assertEqual(len(mail.outbox), 1)
+
+        reservation.event_name = "Guest Lecture (renamed)"
+        reservation.save()
 
         self.assertEqual(len(mail.outbox), 1)
 

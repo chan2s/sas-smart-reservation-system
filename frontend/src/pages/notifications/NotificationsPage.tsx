@@ -1,5 +1,8 @@
 import { Link } from 'react-router-dom'
+import { useState } from 'react'
 import {
+  ArrowLeft,
+  ArrowRight,
   Bell,
   CheckCheck,
   CircleAlert,
@@ -7,9 +10,12 @@ import {
   Ticket,
   Wrench,
 } from 'lucide-react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { endpoints } from '@/lib/api'
-import { useNotifications } from '@/hooks/queries'
+import {
+  useMarkAllNotificationsRead,
+  useMarkNotificationRead,
+  useNotifications,
+  useUnreadCount,
+} from '@/hooks/queries'
 import { useAuth } from '@/hooks/useAuth'
 import { PageHeader, Skeleton, EmptyState } from '@/components/ui/Misc'
 import { Card } from '@/components/ui/Card'
@@ -25,29 +31,22 @@ const typeMeta: Record<NotificationType, { icon: React.ReactNode; className: str
 }
 
 export function NotificationsPage() {
-  const { data, isLoading } = useNotifications()
+  const [page, setPage] = useState(1)
+  const { data, isLoading, isError, refetch, isFetching } = useNotifications({ page })
   const { isViewOnly } = useAuth()
-  const queryClient = useQueryClient()
-
-  const markAll = useMutation({
-    mutationFn: () => endpoints.markAllNotificationsRead(),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
-      void queryClient.invalidateQueries({ queryKey: ['unread-count'] })
-    },
-  })
-
-  const unread = (data?.results ?? []).filter((notification) => !notification.read).length
+  const markAll = useMarkAllNotificationsRead()
+  const { data: unreadData } = useUnreadCount()
+  const unread = unreadData?.count ?? 0
 
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
         eyebrow="SAS Notifications"
         title="Notifications"
-        description="Updates on your reservations and equipment status."
+        description="Reservation, facility, equipment, and administrator alert updates."
         actions={
           unread > 0 && !isViewOnly ? (
-            <Button variant="outline" size="sm" onClick={() => markAll.mutate()} icon={<CheckCheck className="size-4" />}>
+              <Button variant="outline" size="sm" onClick={() => markAll.mutate()} loading={markAll.isPending} icon={<CheckCheck className="size-4" />}>
               Mark all as read
             </Button>
           ) : undefined
@@ -61,6 +60,12 @@ export function NotificationsPage() {
               <Skeleton key={index} className="h-16" />
             ))}
           </div>
+        ) : isError ? (
+          <div className="p-6 text-center">
+            <p className="text-sm font-semibold text-status-rejected">Couldn't load notifications</p>
+            <p className="mt-1 text-[13px] text-body">The notification service did not return data.</p>
+            <Button className="mt-3" variant="outline" size="sm" onClick={() => void refetch()} loading={isFetching}>Retry</Button>
+          </div>
         ) : (data?.results ?? []).length === 0 ? (
           <EmptyState
             icon={<Bell className="size-5" />}
@@ -70,9 +75,31 @@ export function NotificationsPage() {
         ) : (
           <ul className="divide-y divide-line">
             {(data?.results ?? []).map((notification) => (
-              <NotificationRow key={notification.id} notification={notification} />
+              <NotificationRow key={`${notification.source ?? 'notification'}-${notification.id}`} notification={notification} />
             ))}
           </ul>
+        )}
+        {!!data?.count && (
+          <div className="flex items-center justify-between border-t border-line px-4 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!data.previous || isFetching}
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              icon={<ArrowLeft className="size-3.5" />}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-muted">Page {page} of {Math.max(1, Math.ceil(data.count / 20))}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!data.next || isFetching}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              Next <ArrowRight className="size-3.5" aria-hidden />
+            </Button>
+          </div>
         )}
       </Card>
     </div>
@@ -81,14 +108,7 @@ export function NotificationsPage() {
 
 function NotificationRow({ notification }: { notification: Notification }) {
   const { isViewOnly } = useAuth()
-  const queryClient = useQueryClient()
-  const markRead = useMutation({
-    mutationFn: () => endpoints.markNotificationRead(notification.id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
-      void queryClient.invalidateQueries({ queryKey: ['unread-count'] })
-    },
-  })
+  const markRead = useMarkNotificationRead()
   const meta = typeMeta[notification.type] ?? typeMeta.SYSTEM
   const body = (
     <div className={cn('flex w-full items-start gap-4 p-4 sm:p-5', !notification.read && 'bg-brand-soft/30')}>
@@ -118,7 +138,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
   const content = notification.link ? (
     <Link
       to={notification.link}
-      onClick={() => !notification.read && !isViewOnly && markRead.mutate()}
+      onClick={() => !notification.read && !isViewOnly && markRead.mutate(notification)}
       className="block transition-colors hover:bg-soft/60"
     >
       {body}

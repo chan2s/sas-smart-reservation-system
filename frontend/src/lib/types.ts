@@ -219,6 +219,12 @@ export interface Facility {
   built_in_seats: number | null
   /** Tokens such as `tables`, `chairs`, `projector`, `sound_system`, `stage`. */
   built_ins: string[]
+  /**
+   * Declared built-in tokens backed by an active facility resource.
+   *
+   * Derived server-side; absent on old cached payloads — never assume.
+   */
+  built_in_amenities?: string[]
   status: FacilityStatus
   status_label: string
   is_active: boolean
@@ -246,7 +252,8 @@ export interface FacilityPayload {
   status: FacilityStatus
   is_active: boolean
   seating_type?: SeatingType | null
-  built_in_seats?: number | null   built_ins?: string[]
+  built_in_seats?: number | null
+  built_ins?: string[]
   /** Built-in amenity tokens that are backed by an active facility resource.
    *
    * This mirrors the backend's configured-built-in interpretation: a token is
@@ -801,6 +808,8 @@ export type NotificationType = 'RESERVATION' | 'EQUIPMENT' | 'MAINTENANCE' | 'SY
 
 export interface Notification {
   id: number
+  /** `possible_no_show` rows are backed by the active alert record. */
+  source?: 'notification' | 'possible_no_show'
   type: NotificationType
   type_label: string
   title: string
@@ -809,6 +818,53 @@ export interface Notification {
   read: boolean
   created_at: string
   time_ago: string
+  stage?: NoShowAlertStage
+  stage_label?: string
+  reference?: string
+  event_name?: string
+  facility?: string
+  requester?: string
+  date?: string
+  start_time?: string
+  time_label?: string
+  no_check_in_label?: string
+}
+
+/**
+ * Administrator warning for an APPROVED reservation with no recorded check-in.
+ *
+ * Stage, minutes and labels are computed by the backend; the UI never derives
+ * its own policy from the clock. `acknowledged` is the staff "read" state.
+ */
+export type NoShowAlertStage = 'UPCOMING' | 'START_REACHED' | 'NO_SHOW_RISK'
+
+export interface NoShowAlert {
+  id: number
+  /** Database id of the reservation (used for the detail link). */
+  reservation: number
+  reference: string
+  event_name: string
+  facility: string
+  facility_id: number
+  requester: string
+  requester_id: number | null
+  date: string
+  start_time: string
+  end_time: string
+  status: ReservationStatus
+  status_label: string
+  stage: NoShowAlertStage
+  stage_label: string
+  acknowledged: boolean
+  acknowledged_at: string | null
+  detected_at: string
+  stage_changed_at: string
+  updated_at: string
+  link: string
+  minutes_until_start: number | null
+  minutes_since_start: number | null
+  time_label: string
+  no_check_in_label: string
 }
 
 /** Compact reservation row for server-computed dashboard lists. */
