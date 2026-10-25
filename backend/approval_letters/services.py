@@ -17,13 +17,15 @@ from __future__ import annotations
 import logging
 from io import BytesIO
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
+from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
 
 from accounts.models import AuditLog
 from notifications.models import Notification
-from notifications.services import notify, notify_staff
+from notifications.services import notify
 
 from .documents import render_letter_docx, render_letter_pdf
 from .models import ApprovalLetter
@@ -71,6 +73,37 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
         },
     )
     if created:
+        AuditLog.record(
+            None,
+            AuditLog.Action.APPROVAL_LETTER_CREATED,
+            object_type="approval_letter",
+            object_id=letter.letter_id,
+            object_repr=f"Reservation {reservation.reservation_id}",
+            detail="NORSU reservation approval letter created; pending signature.",
+        )
+    # Generate the template-backed pending DOCX as part of issuance. It stays
+    # private until signing; this same field is replaced with the final signed
+    # DOCX when the signatory confirms.
+    if not letter.docx_file:
+        try:
+            draft = render_letter_docx(letter)
+            letter.docx_file.save(
+                f"{letter.letter_id}-PENDING.docx", BytesIO(draft), save=True
+            )
+            AuditLog.record(
+                None,
+                AuditLog.Action.APPROVAL_LETTER_DOC_GENERATED,
+                object_type="approval_letter",
+                object_id=letter.letter_id,
+                object_repr=f"Reservation {reservation.reservation_id}",
+                detail="Template-backed pending DOCX generated.",
+            )
+        except Exception:  # issuance remains recorded and can be retried safely
+            logger.exception(
+                "Pending DOCX generation failed for approval letter %s.",
+                letter.letter_id,
+            )
+    if created:
         logger.info(
             "Approval letter %s created for reservation %s (status=%s).",
             letter.letter_id,
@@ -81,16 +114,31 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
         # them): a letter is waiting. In-app only — the letter itself is
         # emailed to the requester after signing.
         link = f"/approval-letters?letter={letter.pk}"
-        notify_staff(
-            Notification.Type.RESERVATION,
-            "Approval letter awaiting signature",
-            (
-                f"Letter {letter.letter_id} for {reservation.event_name} "
-                f"({reservation.reservation_id}) is awaiting the designated "
-                f"signatory ({SIGNATORY_NAME})."
-            ),
-            link,
+        user_model = get_user_model()
+        signatories = user_model.objects.filter(
+            is_active=True,
+            is_approval_signatory=True,
+            role__in=(user_model.Role.ADMIN, user_model.Role.STAFF),
         )
+        message = (
+            f"Letter {letter.letter_id} for {reservation.event_name} "
+            f"({reservation.reservation_id}) is awaiting the designated "
+            f"signatory ({SIGNATORY_NAME})."
+        )
+        for signatory in signatories:
+            notify(
+                signatory,
+                Notification.Type.RESERVATION,
+                "Approval letter awaiting signature",
+                message,
+                link,
+            )
+        if not signatories.exists():
+            logger.warning(
+                "Approval letter %s has no active designated signatory account; "
+                "an administrator must configure one.",
+                letter.letter_id,
+            )
     return letter
 
 
@@ -98,8 +146,9 @@ def create_letter_after_commit(reservation_id: int) -> None:
     """on_commit callback: create the letter without ever breaking approval.
 
     The approval has already committed when this runs; a failure here is
-    logged (staff can regenerate through Django admin later) but never raised
-    back into the requester's flow.
+    logged but never raised back into the requester's flow. The
+    ``reconcile_approval_letters`` management command retries missing letters
+    and pending template generation safely.
     """
     from reservations.models import Reservation
 
@@ -183,20 +232,28 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
         locked.signed_at = now
         locked.signatory = actor
         locked.status = ApprovalLetter.Status.SIGNED
-
-        locked.pdf_file.save(
-            f"approval-letter-{reservation.reservation_id}-SIGNED.pdf",
-            BytesIO(render_letter_pdf(locked, signed=True)),
-            save=False,
-        )
+        # Render both finalized files before writing either to storage. A
+        # renderer error therefore leaves the pending letter untouched.
+        pdf_bytes = render_letter_pdf(locked, signed=True)
         docx_bytes = render_letter_docx(locked)
-        if docx_bytes is not None:
-            locked.docx_file.save(
-                f"approval-letter-{reservation.reservation_id}-SIGNED.docx",
-                BytesIO(docx_bytes),
-                save=False,
+        old_docx_name = locked.docx_file.name if locked.docx_file else ""
+        stored_names: list[str] = []
+        try:
+            locked.pdf_file.save(
+                f"{locked.letter_id}.pdf", BytesIO(pdf_bytes), save=False
             )
-        locked.save()
+            stored_names.append(locked.pdf_file.name)
+            locked.docx_file.save(
+                f"{locked.letter_id}.docx", BytesIO(docx_bytes), save=False
+            )
+            stored_names.append(locked.docx_file.name)
+            locked.save()
+        except Exception:
+            for stored_name in stored_names:
+                default_storage.delete(stored_name)
+            raise
+        if old_docx_name and old_docx_name != locked.docx_file.name:
+            transaction.on_commit(lambda name=old_docx_name: default_storage.delete(name))
 
         AuditLog.record(
             actor,
@@ -207,9 +264,17 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
             detail=(
                 "Test signature applied by the designated signatory; finalized "
                 "PDF"
-                + (" and DOCX" if docx_bytes is not None else "")
+                + " and DOCX"
                 + " generated. TEST SIGNATURE — not a verified digital signature."
             ),
+        )
+        AuditLog.record(
+            actor,
+            AuditLog.Action.APPROVAL_LETTER_DOC_GENERATED,
+            object_type="approval_letter",
+            object_id=locked.letter_id,
+            object_repr=f"Reservation {reservation.reservation_id}",
+            detail="Final signed PDF and DOCX generated from the issued letter.",
         )
         logger.info(
             "Approval letter %s signed by user id %s at %s.",
@@ -297,15 +362,28 @@ def deliver_signed_letter(letter_id: int) -> ApprovalLetter:
             return letter
 
         email = resolve_requester_email(letter.reservation)
+        attempted_at = timezone.now()
+        letter.email_attempted_at = attempted_at
         if not email:
             letter.email_status = ApprovalLetter.EmailStatus.NO_EMAIL
             letter.email_error = ""
-            letter.save(update_fields=["email_status", "email_error", "updated_at"])
+            letter.save(update_fields=[
+                "email_status", "email_error", "email_attempted_at", "updated_at",
+            ])
             logger.warning(
                 "Signed-letter email skipped for %s: requester has no valid email.",
                 letter.letter_id,
             )
             return letter
+
+        AuditLog.record(
+            None,
+            AuditLog.Action.APPROVAL_LETTER_EMAIL_TRY,
+            object_type="approval_letter",
+            object_id=letter.letter_id,
+            object_repr=f"Reservation {letter.reservation.reservation_id}",
+            detail="Signed PDF delivery attempted through the configured email service.",
+        )
 
         try:
             ok, reason = send_approval_letter_signed(letter, email)
@@ -321,6 +399,8 @@ def deliver_signed_letter(letter_id: int) -> ApprovalLetter:
             letter.emailed_at = timezone.now()
             letter.status = ApprovalLetter.Status.SENT
             logger.info("Signed-letter email SENT for %s to the requester.", letter.letter_id)
+            audit_action = AuditLog.Action.APPROVAL_LETTER_EMAIL_SENT
+            audit_detail = "Signed PDF accepted by the configured email service."
         else:
             letter.email_status = ApprovalLetter.EmailStatus.FAILED
             letter.email_error = (reason or "unknown")[:100]
@@ -331,9 +411,20 @@ def deliver_signed_letter(letter_id: int) -> ApprovalLetter:
                 letter.letter_id,
                 reason,
             )
+            audit_action = AuditLog.Action.APPROVAL_LETTER_EMAIL_FAILED
+            audit_detail = f"Signed PDF delivery failed ({letter.email_error})."
         letter.save(update_fields=[
-            "email_status", "email_error", "emailed_at", "status", "updated_at",
+            "email_status", "email_error", "email_attempted_at", "emailed_at",
+            "status", "updated_at",
         ])
+        AuditLog.record(
+            None,
+            audit_action,
+            object_type="approval_letter",
+            object_id=letter.letter_id,
+            object_repr=f"Reservation {letter.reservation.reservation_id}",
+            detail=audit_detail,
+        )
         return letter
 
 

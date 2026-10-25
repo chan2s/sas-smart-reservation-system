@@ -18,6 +18,7 @@ class ApprovalLetterSerializer(serializers.ModelSerializer):
     email_status_label = serializers.CharField(
         source="get_email_status_display", read_only=True
     )
+    email_attempted_at = serializers.DateTimeField(read_only=True)
     signatory_name = serializers.SerializerMethodField()
     signatory_position = serializers.SerializerMethodField()
     requester_email = serializers.CharField(read_only=True)
@@ -79,6 +80,7 @@ class ApprovalLetterSerializer(serializers.ModelSerializer):
             # Email delivery.
             "email_status",
             "email_status_label",
+            "email_attempted_at",
             "emailed_at",
             "email_error",
             "can_retry_email",
@@ -129,10 +131,12 @@ class ReservationApprovalLetterSummarySerializer(serializers.ModelSerializer):
     email_status_label = serializers.CharField(
         source="get_email_status_display", read_only=True
     )
+    email_attempted_at = serializers.DateTimeField(read_only=True)
     signatory_name = serializers.SerializerMethodField()
     signatory_position = serializers.SerializerMethodField()
     has_signed_pdf = serializers.BooleanField(read_only=True)
     has_signed_docx = serializers.BooleanField(read_only=True)
+    can_retry_email = serializers.BooleanField(read_only=True)
     pdf_url = serializers.SerializerMethodField()
     docx_url = serializers.SerializerMethodField()
 
@@ -148,10 +152,12 @@ class ReservationApprovalLetterSummarySerializer(serializers.ModelSerializer):
             "signed_at",
             "has_signed_pdf",
             "has_signed_docx",
+            "can_retry_email",
             "pdf_url",
             "docx_url",
             "email_status",
             "email_status_label",
+            "email_attempted_at",
             "emailed_at",
             "email_error",
         )

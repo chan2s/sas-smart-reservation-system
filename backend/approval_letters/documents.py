@@ -5,31 +5,33 @@ so the letter a requester sees in the email is the letter the signatory
 previewed. The letterhead uses the institutional names the system already
 uses; no official logo is invented.
 
-PDF  — reportlab/Platypus (layout flows, so long values paginate safely).
-DOCX — python-docx, mirroring the same sections and embedding the test
-       signature as a PNG (with an italic text fallback when Pillow is
-       unavailable).
+PDF  — reportlab/Platypus, using the NORSU header/footer artwork and shared
+       reservation/signature context.
+DOCX — python-docx populates the supplied template, retaining its text boxes,
+       images, headers, footers, and section layout.
 """
 
 from __future__ import annotations
 
-import logging
 from io import BytesIO
+from zipfile import ZipFile
 
+from django.conf import settings
 from django.utils import timezone
 
 from . import signature
 from .constants import (
+    DOCUMENT_DISCLAIMER,
     INSTITUTION,
     ISSUING_OFFICE,
+    MISSION_STATEMENT,
+    QUALITY_POLICY,
     SIGNATORY_NAME,
     SIGNATORY_POSITION,
     SYSTEM_NAME,
     TEST_SIGNATURE_DISCLAIMER,
+    VISION_STATEMENT,
 )
-
-logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Shared context
@@ -80,11 +82,13 @@ def build_letter_context(letter) -> dict:
 
     return {
         "letter_id": letter.letter_id,
+        "letter_status": letter.get_status_display(),
         "issued_date": issued_at.strftime("%B %d, %Y").replace(" 0", " "),
         "issued_at": issued_at,
         "reservation_reference": reservation.reservation_id,
         "reservation_pk": reservation.pk,
         "requester_name": letter.requester_name or reservation.requester_display_name,
+        "requester_email": letter.requester_email,
         "organization": organization,
         "affiliation_label": reservation.affiliation_label,
         "event_name": reservation.event_name,
@@ -106,6 +110,10 @@ def build_letter_context(letter) -> dict:
         "issuing_office": ISSUING_OFFICE,
         "institution": INSTITUTION,
         "system_name": SYSTEM_NAME,
+        "vision_statement": VISION_STATEMENT,
+        "mission_statement": MISSION_STATEMENT,
+        "quality_policy": QUALITY_POLICY,
+        "document_disclaimer": DOCUMENT_DISCLAIMER,
     }
 
 
@@ -123,6 +131,10 @@ def _detail_rows(context: dict) -> list[tuple[str, str]]:
     ]
     if context["organization"]:
         rows.insert(2, ("Organization", context["organization"]))
+    if context.get("requester_email"):
+        rows.insert(3, ("Requester email", context["requester_email"]))
+    if context.get("facility_location"):
+        rows.insert(5, ("Facility location", context["facility_location"]))
     if context["expected_participants"]:
         rows.append(("Expected participants", str(context["expected_participants"])))
     if context["resources"]:
@@ -143,6 +155,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet  # noqa: E4
 from reportlab.lib.units import mm  # noqa: E402
 from reportlab.platypus import (  # noqa: E402
     Flowable,
+    Image,
     KeepTogether,
     Paragraph,
     SimpleDocTemplate,
@@ -261,15 +274,36 @@ def _unsigned_notice(context: dict) -> list:
 
 def _story(context: dict) -> list:
     styles = _styles()
+    template_path = (
+        settings.BASE_DIR / "templates" / "documents" /
+        "reservation_approval_template.docx"
+    )
+    with ZipFile(template_path) as template_package:
+        header_image = template_package.read("word/media/image2.png")
+        footer_image = template_package.read("word/media/image3.png")
+    header_width = 166 * mm
+    header_height = header_width * 174 / 1050
+    footer_width = 96 * mm
+    footer_height = footer_width * 656 / 2640
     story: list = [
-        Paragraph(context["institution"], styles["institution"]),
+        Image(BytesIO(header_image), width=header_width, height=header_height, hAlign="CENTER"),
         Paragraph(context["issuing_office"], styles["office"]),
         Paragraph(f"{context['system_name']} — Facility & Resource Reservation System", styles["system"]),
+        Paragraph(context["vision_statement"], styles["footer"]),
+        Paragraph(context["mission_statement"], ParagraphStyle(
+            "mission", parent=styles["footer"], fontSize=6.5, leading=8,
+        )),
+        Paragraph(context["quality_policy"], ParagraphStyle(
+            "quality", parent=styles["footer"], fontSize=6.5, leading=8,
+        )),
         _rule(color=_BRAND, width=2.2),
         Paragraph("RESERVATION APPROVAL LETTER", styles["title"]),
-        Paragraph(f"Letter No. {context['letter_id']}", styles["reference"]),
+        Paragraph(f"Correspondence ID: {context['letter_id']}", styles["reference"]),
         Spacer(1, 12),
-        Paragraph(f"Date of issuance: {context['issued_date']}", styles["meta"]),
+        Paragraph(
+            f"Issue date: {context['issued_date']}  |  Status: {context['letter_status']}",
+            styles["meta"],
+        ),
         Spacer(1, 10),
         Paragraph(context["requester_name"], styles["meta"]),
     ]
@@ -320,6 +354,10 @@ def _story(context: dict) -> list:
             + [Spacer(1, 4)]
             + _signature_block(context, styles)
         ),
+        Spacer(1, 8),
+        Paragraph(context["document_disclaimer"], styles["disclaimer"]),
+        Spacer(1, 8),
+        Image(BytesIO(footer_image), width=footer_width, height=footer_height, hAlign="CENTER"),
     ])
     return story
 
@@ -437,8 +475,8 @@ def render_letter_pdf(letter, *, signed: bool | None = None) -> bytes:
             A4[0] / 2,
             12 * mm,
             (
-                f"{context['system_name']} · Letter No. {context['letter_id']} · "
-                "System-generated document"
+                f"{context['system_name']} · Correspondence ID {context['letter_id']} · "
+                f"System-generated document · Page {doc.page}"
             ),
         )
         canvas.restoreState()
@@ -452,145 +490,115 @@ def render_letter_pdf(letter, *, signed: bool | None = None) -> bytes:
 # ---------------------------------------------------------------------------
 
 def render_letter_docx(letter) -> bytes | None:
-    """Render the SIGNED letter as DOCX bytes.
+    """Populate the supplied NORSU template and return a DOCX.
 
-    DOCX generation is best-effort ("if supported"): when python-docx is not
-    installed the function returns ``None`` and the API simply reports no DOCX
-    available. Only a signed letter produces a DOCX — a pending letter has no
-    finalized version.
+    The template's header images, vision/mission/quality statements, footer
+    disclaimer, page-number fields, section geometry, and other package parts
+    are retained by loading it as the starting document. Its main body is an
+    intentionally blank letter canvas, so only blank body paragraphs are
+    removed before inserting the reservation content.
     """
-    if not letter.is_signed:
-        return None
-    try:
-        import docx
-    except ImportError:
-        logger.info("python-docx unavailable; DOCX generation skipped.")
-        return None
+    import docx
+
+    template_path = (
+        settings.BASE_DIR / "templates" / "documents" /
+        "reservation_approval_template.docx"
+    )
+    if not template_path.is_file():
+        raise FileNotFoundError(f"NORSU approval letter template is missing: {template_path}")
 
     context = build_letter_context(letter)
-    document = docx.Document()
+    document = docx.Document(str(template_path))
+    for paragraph in list(document.paragraphs):
+        if not paragraph.text.strip() and not paragraph._p.xpath(".//w:drawing | .//w:br"):
+            paragraph._element.getparent().remove(paragraph._element)
 
-    for section in document.sections:
-        section.top_margin = docx.shared.Mm(18)
-        section.bottom_margin = docx.shared.Mm(18)
-        section.left_margin = docx.shared.Mm(22)
-        section.right_margin = docx.shared.Mm(22)
-
-    def _center(text: str, size: int, bold=False, italic=False, color="212127"):
+    def add_text(text="", *, bold=False, italic=False, size=10, color="212127", after=4):
         paragraph = document.add_paragraph()
-        paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-        run = paragraph.add_run(text)
+        paragraph.paragraph_format.space_after = docx.shared.Pt(after)
+        run = paragraph.add_run(str(text))
         run.font.size = docx.shared.Pt(size)
         run.font.bold = bold
         run.font.italic = italic
         run.font.color.rgb = docx.shared.RGBColor.from_string(color)
         return paragraph
 
-    _center(context["institution"], 15, bold=True)
-    _center(context["issuing_office"], 11, color="6B6B73")
-    _center(
-        f"{context['system_name']} — Facility & Resource Reservation System",
-        8.5, italic=True, color="6B6B73",
-    )
-    _center("RESERVATION APPROVAL LETTER", 12.5, bold=True, color="3B5BDB")
-    _center(f"Letter No. {context['letter_id']}", 9, color="6B6B73")
-
-    def _body(text: str, style=None):
-        paragraph = document.add_paragraph()
-        if style == "justify":
-            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-        paragraph.paragraph_format.space_after = docx.shared.Pt(6)
-        _add_runs_with_bold(paragraph, text)
-        return paragraph
-
-    def _add_runs_with_bold(paragraph, text: str):
-        # Minimal **bold** marker support for the approval statement.
-        parts = text.split("**")
-        for index, part in enumerate(parts):
-            if not part:
-                continue
-            run = paragraph.add_run(part)
-            run.font.bold = index % 2 == 1
-            run.font.size = docx.shared.Pt(10)
-
-    document.add_paragraph(f"Date of issuance: {context['issued_date']}")
-    document.add_paragraph(context["requester_name"])
+    add_text("RESERVATION APPROVAL LETTER", bold=True, size=13, color="1F4E79", after=2)
+    add_text(f"{context['issuing_office']}  |  {context['institution']}", size=9, color="666666")
+    add_text(f"Correspondence ID: {context['letter_id']}", bold=True, size=10)
+    add_text(f"Issue date: {context['issued_date']}    Status: {letter.get_status_display()}", size=9)
+    add_text()
+    add_text(context["requester_name"], bold=True, size=11, after=1)
     if context["organization"]:
-        document.add_paragraph(context["organization"])
-    document.add_paragraph(f"Dear {context['requester_name']},")
-    _body("Greetings from the Student Affairs and Services Office!")
-    _body(
-        "This is to formally inform you that your reservation request detailed "
-        "below has been **reviewed and APPROVED** by the Student Affairs and "
-        "Services Office. The approved schedule is as follows:"
+        add_text(context["organization"], size=10, after=1)
+    if context.get("requester_email"):
+        add_text(context["requester_email"], size=9, color="666666")
+    add_text(f"Dear {context['requester_name']},", after=7)
+    add_text(
+        "This letter confirms that the reservation below has been approved "
+        "through the NORSU facility reservation process.", after=7,
     )
 
     rows = _detail_rows(context)
-    table = document.add_table(rows=len(rows), cols=2)
-    table.style = "Light Grid Accent 1"
-    for row_index, (label, value) in enumerate(rows):
-        label_cell = table.cell(row_index, 0)
-        value_cell = table.cell(row_index, 1)
-        label_cell.text = label.upper()
-        value_cell.text = value
-        for run in label_cell.paragraphs[0].runs:
-            run.font.size = docx.shared.Pt(9.5)
+    if context.get("facility_location"):
+        rows.insert(3, ("Facility location", context["facility_location"]))
+    if context.get("requester_email"):
+        rows.insert(2, ("Requester email", context["requester_email"]))
+    detail_table = document.add_table(rows=0, cols=2)
+    detail_table.style = "Table Grid"
+    for label, value in rows:
+        cells = detail_table.add_row().cells
+        cells[0].text = label
+        cells[1].text = value or "—"
+        for run in cells[0].paragraphs[0].runs:
             run.font.bold = True
-        for run in value_cell.paragraphs[0].runs:
-            run.font.size = docx.shared.Pt(9.5)
+            run.font.size = docx.shared.Pt(9)
+        for run in cells[1].paragraphs[0].runs:
+            run.font.size = docx.shared.Pt(9)
 
-    document.add_paragraph()
     if context["facility_rules"]:
-        _body("Please be reminded of the following conditions governing the use of the facility:")
+        add_text("Approved facility conditions", bold=True, size=10, after=2)
         for rule in context["facility_rules"]:
-            bullet = document.add_paragraph(style="List Bullet")
-            bullet.paragraph_format.space_after = docx.shared.Pt(2)
-            run = bullet.add_run(rule)
-            run.font.size = docx.shared.Pt(10)
-    _body(
-        "Kindly present your reservation reference number and a valid ID at the "
-        "SAS Office during check-in, which opens three (3) hours before your "
-        "event's start time. Should you need to make changes, contact the SAS "
-        "Office as soon as possible."
-    )
-    _body("We wish you a successful and well-coordinated event.")
-    document.add_paragraph("Very truly yours,")
+            p = document.add_paragraph()
+            p.paragraph_format.left_indent = docx.shared.Mm(5)
+            p.paragraph_format.space_after = docx.shared.Pt(1)
+            p.add_run(f"• {rule}").font.size = docx.shared.Pt(9)
+    if context["resources"]:
+        add_text("Approved resources: " + "; ".join(context["resources"]), size=9)
+    if context["estimated_total"]:
+        add_text(f"Estimated fees: {context['estimated_total']}", size=9)
+    add_text("Please refer to the approved schedule and facility conditions above.", after=8)
+    add_text("Very truly yours,", after=2)
 
-    # Signature block: test signature image above the printed name/position.
-    if png := signature.signature_png_bytes(context["signatory_name"]):
+    # The mark is only placed in the finalized version. Pending copies retain
+    # the exact template and signature details but are visibly unsigned.
+    if letter.is_signed and (png := signature.signature_png_bytes(context["signatory_name"])):
         image_paragraph = document.add_paragraph()
-        image_paragraph.add_run().add_picture(
-            BytesIO(png), width=docx.shared.Mm(58)
-        )
+        image_paragraph.add_run().add_picture(BytesIO(png), width=docx.shared.Mm(48))
     else:
-        fallback = document.add_paragraph()
-        run = fallback.add_run(context["signatory_name"])
-        run.font.italic = True
-        run.font.size = docx.shared.Pt(16)
+        add_text("Awaiting signature", italic=True, size=9, color="777777")
+    add_text(context["signatory_name"], bold=True, size=10.5, after=1)
+    add_text(context["signatory_position"], size=9, color="666666", after=1)
+    if context["signed_at"]:
+        add_text(
+            f"Signed on {context['signed_at']:%B %d, %Y at %I:%M %p} (system time)",
+            italic=True, size=8, color="666666",
+        )
+    add_text(context["test_signature_disclaimer"], italic=True, size=8, color="666666")
 
-    name_paragraph = document.add_paragraph()
-    run = name_paragraph.add_run(context["signatory_name"])
-    run.font.bold = True
-    run.font.size = docx.shared.Pt(10.5)
-    position_paragraph = document.add_paragraph()
-    run = position_paragraph.add_run(context["signatory_position"])
-    run.font.size = docx.shared.Pt(9.5)
-    run.font.color.rgb = docx.shared.RGBColor.from_string("6B6B73")
-    signed_line = (
-        f"Signed on {context['signed_at']:%B %d, %Y at %I:%M %p} (system time)"
-        if context["signed_at"]
-        else "Awaiting signature"
-    )
-    signed_paragraph = document.add_paragraph()
-    run = signed_paragraph.add_run(signed_line)
-    run.font.italic = True
-    run.font.size = docx.shared.Pt(8.5)
-    run.font.color.rgb = docx.shared.RGBColor.from_string("6B6B73")
-    disclaimer = document.add_paragraph()
-    run = disclaimer.add_run(context["test_signature_disclaimer"])
-    run.font.italic = True
-    run.font.size = docx.shared.Pt(7.5)
-    run.font.color.rgb = docx.shared.RGBColor.from_string("6B6B73")
+    # Populate the existing correspondence metadata cells in the template's
+    # footer without changing its page-number fields or disclaimer text.
+    for section in document.sections:
+        for footer_table in section.footer.tables:
+            for row in footer_table.rows:
+                for index, cell in enumerate(row.cells[:-1]):
+                    label = cell.text.strip().lower()
+                    if label == "correspondence id":
+                        row.cells[index + 1].text = context["letter_id"]
+                    elif label == "issue date":
+                        row.cells[index + 1].text = context["issued_date"]
+                    elif label == "issue status":
+                        row.cells[index + 1].text = letter.get_status_display()
 
     buffer = BytesIO()
     document.save(buffer)

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
 
 
@@ -370,6 +371,22 @@ class User(AbstractUser):
             self.is_staff = True
         super().save(*args, **kwargs)
 
+    def clean(self):
+        super().clean()
+        if not self.is_approval_signatory:
+            return
+        if not self.is_sas_staff:
+            raise ValidationError({
+                "is_approval_signatory": "Only an administrator or SAS staff account can be designated.",
+            })
+        other_designated = type(self).objects.filter(
+            is_approval_signatory=True
+        ).exclude(pk=self.pk)
+        if other_designated.exists():
+            raise ValidationError({
+                "is_approval_signatory": "Only one active account may hold the approval-letter signatory designation.",
+            })
+
     @property
     def display_name(self) -> str:
         return self.get_full_name() or self.username
@@ -542,7 +559,12 @@ class AuditLog(models.Model):
         RESERVATION_NO_SHOW = "RESERVATION_NO_SHOW", "Reservation marked no-show"
         RESERVATION_STATUS = "RESERVATION_STATUS", "Reservation status changed"
         # Approval-letter workflow (designation-granted signatory only).
+        APPROVAL_LETTER_CREATED = "APPROVAL_LETTER_CREATED", "Approval letter created"
+        APPROVAL_LETTER_DOC_GENERATED = "APPROVAL_LETTER_DOC_GENERATED", "Approval letter document generated"
         APPROVAL_LETTER_SIGNED = "APPROVAL_LETTER_SIGNED", "Approval letter signed"
+        APPROVAL_LETTER_EMAIL_SENT = "APPROVAL_LETTER_EMAIL_SENT", "Approval letter email accepted"
+        APPROVAL_LETTER_EMAIL_FAILED = "APPROVAL_LETTER_EMAIL_FAILED", "Approval letter email failed"
+        APPROVAL_LETTER_EMAIL_TRY = "APPROVAL_LETTER_EMAIL_TRY", "Approval letter email attempted"
         APPROVAL_LETTER_EMAIL_RETRIED = (
             "APPROVAL_LETTER_EMAIL_RETRIED",
             "Approval letter email retried",

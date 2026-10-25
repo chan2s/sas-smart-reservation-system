@@ -16,6 +16,7 @@ Access model:
 import logging
 from io import BytesIO
 
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.files.storage import default_storage
 from django.http import FileResponse
 from rest_framework import status, viewsets
@@ -66,7 +67,21 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = ApprovalLetter.objects.select_related(
             "reservation", "reservation__facility", "reservation__requester", "signatory"
         )
-        if not user.is_sas_staff:
+        if user.is_admin or (user.is_sas_staff and user.is_approval_signatory):
+            pass
+        elif self.action == "sign" and user.is_sas_staff:
+            # Let the sign action reach its server-side authorization check so
+            # unauthorized staff receive 403, without granting list/detail use.
+            pass
+        elif self.action == "retry_email" and user.is_sas_staff:
+            # SAS staff may retry delivery for an already-signed letter; the
+            # action still rechecks signed state and email outcome under lock.
+            pass
+        elif user.is_sas_staff:
+            # General staff and administrators do not get access to the
+            # designated signatory's review workspace by virtue of staff role.
+            queryset = queryset.none()
+        else:
             queryset = queryset.filter(reservation__requester=user)
 
         params = self.request.query_params
@@ -97,23 +112,34 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, IsSasStaff],
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly, IsSasStaff],
     )
     def sign(self, request, pk=None):
         """Apply the test signature. Designated signatory only (server-checked)."""
         letter = self.get_object()
         try:
             letter = sign_letter(letter, request.user)
-        except PermissionDenied as exc:
+        except DjangoPermissionDenied as exc:
             raise PermissionDenied(str(exc))
         except LetterSignError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:  # render/storage failures roll back signing atomically
+            logger.exception("Approval-letter signing failed for letter id %s.", pk)
+            return Response(
+                {
+                    "detail": (
+                        "The documents could not be finalized. No signature was "
+                        "applied; please retry after the issue is resolved."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response(ApprovalLetterSerializer(letter, context={"request": request}).data)
 
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, IsSasStaff],
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly, IsSasStaff],
         url_path="retry-email",
     )
     def retry_email(self, request, pk=None):

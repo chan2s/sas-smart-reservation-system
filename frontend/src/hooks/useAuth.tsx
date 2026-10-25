@@ -108,7 +108,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         updateUser,
         isStaff: user?.role === 'ADMIN' || user?.role === 'STAFF',
-        isApprovalSignatory: user?.is_approval_signatory ?? false,
+        isApprovalSignatory: Boolean(
+          user?.is_approval_signatory &&
+            (user.role === 'ADMIN' || user.role === 'STAFF'),
+        ),
         isViewOnly: user?.is_view_only ?? false,
       }}
     >

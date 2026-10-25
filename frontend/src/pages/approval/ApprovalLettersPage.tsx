@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import {
   BadgeCheck,
+  Building2,
   CalendarDays,
   Clock3,
   Download,
@@ -44,6 +45,11 @@ import type { ApprovalLetter } from '@/lib/types'
  * finalized documents and email delivery state. The Sign Document button is
  * a UX gate only — the backend re-verifies the signatory designation and the
  * letter's pending state on every request.
+ *
+ * Layout: the whole workspace lives inside one centered, max-width container
+ * so the heading, tabs, list and details share a single alignment axis. The
+ * list and the selected letter sit side by side from `lg` (a fixed-feeling
+ * list rail plus a fluid detail column) and stack vertically below it.
  */
 
 type Box = 'pending' | 'signed'
@@ -90,9 +96,9 @@ export function ApprovalLettersPage() {
 
   if (!isApprovalSignatory) {
     return (
-      <div>
+      <div className="mx-auto w-full max-w-[1200px]">
         <PageHeader
-          eyebrow="Approval Letters"
+          eyebrow="Staff workspace"
           title="Approval Letters"
           description="Designated signatory workspace for reservation approval letters."
         />
@@ -108,33 +114,29 @@ export function ApprovalLettersPage() {
   }
 
   return (
-    <div>
+    <div className="mx-auto w-full max-w-[1200px]">
       <PageHeader
-        eyebrow="Approval Letters"
+        eyebrow="Staff workspace"
         title="Approval Letters"
         description="Review approved reservations and sign the formal approval letters. Signing applies the campus test signature, finalizes the documents, and emails the signed PDF to the requester."
       />
 
-      <div className="mt-6">
-        <Tabs
-          items={[
-            { key: 'pending', label: 'Pending Signature', count: pendingCount },
-            { key: 'signed', label: 'Signed', count: signedCount },
-          ]}
-          active={box}
-          onChange={(key) => setBox(key as Box)}
-        />
-      </div>
+      <Tabs
+        className="mt-6"
+        stretch
+        items={[
+          { key: 'pending', label: 'Pending Signature', count: pendingCount },
+          { key: 'signed', label: 'Signed', count: signedCount },
+        ]}
+        active={box}
+        onChange={(key) => setBox(key as Box)}
+      />
 
-      <div className="mt-5 grid items-start gap-5 lg:grid-cols-5 [&>*]:min-w-0">
+      <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         {/* Letter list */}
-        <Card padding="none" className="overflow-hidden lg:col-span-2">
+        <Card padding="none" className="min-w-0 overflow-hidden">
           {activeQuery.isLoading ? (
-            <div className="space-y-3 p-5" aria-busy="true" aria-label="Loading letters">
-              <Skeleton className="h-14" />
-              <Skeleton className="h-14" />
-              <Skeleton className="h-14" />
-            </div>
+            <LetterListSkeleton />
           ) : activeQuery.isError ? (
             <ListError onRetry={() => void activeQuery.refetch()} />
           ) : letters.length === 0 ? (
@@ -148,7 +150,10 @@ export function ApprovalLettersPage() {
               }
             />
           ) : (
-            <ul className="max-h-[36rem] divide-y divide-line overflow-y-auto">
+            <ul
+              aria-label={box === 'pending' ? 'Letters pending signature' : 'Signed letters'}
+              className="max-h-[32rem] divide-y divide-line overflow-y-auto lg:max-h-[calc(100dvh-18rem)]"
+            >
               {letters.map((letter) => (
                 <LetterListItem
                   key={letter.id}
@@ -162,7 +167,7 @@ export function ApprovalLettersPage() {
         </Card>
 
         {/* Detail + preview */}
-        <div className="lg:col-span-3">
+        <div className="min-w-0">
           {selectedId == null ? (
             <Card>
               <EmptyState
@@ -192,13 +197,39 @@ export function ApprovalLettersPage() {
 
 // ---------------------------------------------------------------------------
 
+function LetterListSkeleton() {
+  return (
+    <div className="divide-y divide-line" aria-busy="true" aria-label="Loading letters">
+      {[0, 1, 2].map((row) => (
+        <div key={row} className="space-y-2.5 px-4 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-5 w-20" />
+          </div>
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ListError({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-start gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      role="alert"
+      className="flex flex-col items-start gap-3 p-5 sm:flex-row sm:items-center sm:justify-between"
+    >
       <p className="text-sm text-body">
         The letter list could not be loaded. Nothing is shown until the server responds.
       </p>
-      <Button variant="outline" size="sm" onClick={onRetry} icon={<RefreshCw className="size-3.5" />}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onRetry}
+        icon={<RefreshCw className="size-3.5" aria-hidden />}
+        className="shrink-0"
+      >
         Retry
       </Button>
     </div>
@@ -218,6 +249,17 @@ function letterStatusTone(status: string) {
   }
 }
 
+function emailStatusTone(status: string) {
+  switch (status) {
+    case 'SENT':
+      return 'emerald' as const
+    case 'FAILED':
+      return 'rose' as const
+    default:
+      return 'neutral' as const
+  }
+}
+
 function LetterListItem({
   letter,
   selected,
@@ -230,26 +272,51 @@ function LetterListItem({
   return (
     <li>
       <button
+        type="button"
         onClick={onSelect}
         aria-current={selected || undefined}
         className={cn(
-          'flex w-full flex-col gap-0.5 px-4 py-3 text-left transition-colors',
-          selected ? 'bg-brand-soft/40' : 'hover:bg-soft',
+          'flex w-full min-w-0 flex-col gap-1.5 border-l-2 px-4 py-3.5 text-left transition-colors duration-150',
+          'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand',
+          selected
+            ? 'border-brand bg-brand-soft/50'
+            : 'border-transparent hover:bg-soft',
         )}
       >
-        <span className="flex items-center justify-between gap-3">
-          <span className="truncate text-sm font-semibold text-ink">{letter.letter_id}</span>
+        <span className="flex min-w-0 items-start justify-between gap-2">
+          <span className="min-w-0 text-sm font-semibold break-words text-ink">
+            {letter.letter_id}
+          </span>
           <Badge tone={letterStatusTone(letter.status)} className="shrink-0">
             {letter.status_label}
           </Badge>
         </span>
-        <span className="truncate text-[13px] text-body">
-          {letter.event_name} · {letter.facility_name}
+        <span className="min-w-0 text-sm break-words text-ink">{letter.event_name}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-body">
+          <Building2 className="size-3.5 shrink-0 text-muted" aria-hidden />
+          <span className="min-w-0 break-words">{letter.facility_name}</span>
         </span>
-        <span className="text-xs tabular-nums text-muted">
-          {letter.requester_name} ·{' '}
-          {formatTime(letter.start_time)}–{formatTime(letter.end_time)} ·{' '}
-          {letter.reservation_reference}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted">
+          <CalendarDays className="size-3.5 shrink-0" aria-hidden />
+          <span className="tabular-nums">
+            {format(parseISO(letter.reservation_date), 'MMM d, yyyy')}
+          </span>
+          <span aria-hidden>·</span>
+          <span className="tabular-nums">
+            {formatTime(letter.start_time)}–{formatTime(letter.end_time)}
+          </span>
+        </span>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted">
+          <UserRound className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 break-words">{letter.requester_name}</span>
+          <span aria-hidden>·</span>
+          <span className="min-w-0 break-words tabular-nums">
+            {letter.reservation_reference}
+          </span>
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+          <Clock3 className="size-3.5 shrink-0" aria-hidden />
+          Issued {format(parseISO(letter.created_at), 'MMM d, yyyy')}
         </span>
       </button>
     </li>
@@ -308,8 +375,9 @@ function LetterDetail({
     busy(true)
     try {
       const path = kind === 'pdf' ? letter.pdf_url : letter.docx_url
-      const filename = `Approval-Letter-${letter.reservation_reference}-SIGNED.${kind}`
+      const filename = `${letter.letter_id}.${kind}`
       await api.downloadFile(path, filename)
+      toast(`${kind === 'pdf' ? 'PDF' : 'DOCX'} downloaded.`)
     } catch (error) {
       toast(apiErrorMessage(error, 'The document could not be downloaded.'), 'error')
     } finally {
@@ -333,27 +401,38 @@ function LetterDetail({
 
   return (
     <div className="space-y-5">
-      {/* Header + actions */}
+      {/* Document header + actions */}
       <Card>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+              <p className="text-[11px] font-semibold tracking-[0.14em] break-words text-muted uppercase">
                 {letter.letter_id}
               </p>
               <Badge tone={letterStatusTone(letter.status)}>{letter.status_label}</Badge>
             </div>
-            <h2 className="mt-1 text-xl font-semibold tracking-tight text-ink">
+            <h2 className="mt-1.5 text-xl font-semibold tracking-tight break-words text-ink sm:text-2xl">
               {letter.event_name}
             </h2>
-            <p className="mt-0.5 text-sm text-body">
-              {letter.facility_name} · {letter.reservation_reference}
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-body">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Building2 className="size-3.5 shrink-0 text-muted" aria-hidden />
+                <span className="min-w-0 break-words">{letter.facility_name}</span>
+              </span>
+              <span className="text-faint" aria-hidden>
+                ·
+              </span>
+              <span className="min-w-0 break-words tabular-nums">
+                {letter.reservation_reference}
+              </span>
             </p>
           </div>
-          <div className="flex flex-wrap shrink-0 items-center gap-2">
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:shrink-0 xl:justify-end">
             {letter.can_sign && (
               <Button
-                icon={<FileSignature className="size-4" />}
+                className="w-full sm:w-auto"
+                icon={<FileSignature className="size-4" aria-hidden />}
                 onClick={() => setConfirming(true)}
                 loading={signMutation.isPending}
               >
@@ -363,7 +442,8 @@ function LetterDetail({
             {letter.has_signed_pdf && (
               <Button
                 variant="outline"
-                icon={<Download className="size-4" />}
+                className="w-full sm:w-auto"
+                icon={<Download className="size-4" aria-hidden />}
                 onClick={() => void handleDownload('pdf')}
                 loading={pdfBusy}
               >
@@ -373,7 +453,8 @@ function LetterDetail({
             {letter.has_signed_docx && (
               <Button
                 variant="outline"
-                icon={<Download className="size-4" />}
+                className="w-full sm:w-auto"
+                icon={<Download className="size-4" aria-hidden />}
                 onClick={() => void handleDownload('docx')}
                 loading={docxBusy}
               >
@@ -384,41 +465,41 @@ function LetterDetail({
         </div>
 
         {/* Signature + delivery record */}
-        <dl className="mt-5 grid gap-x-8 gap-y-3 border-t border-line pt-4 text-sm sm:grid-cols-2">
-          <div>
-            <dt className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+        <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-4 border-t border-line pt-4 text-sm sm:grid-cols-2">
+          <div className="min-w-0">
+            <dt className="text-[11px] font-semibold tracking-[0.1em] text-muted uppercase">
               Signatory
             </dt>
-            <dd className="mt-1 text-ink">{letter.signatory_name}</dd>
+            <dd className="mt-1 break-words text-ink">
+              {letter.signatory_name}
+              <span className="block text-xs text-muted">{letter.signatory_position}</span>
+            </dd>
           </div>
-          <div>
-            <dt className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+          <div className="min-w-0">
+            <dt className="text-[11px] font-semibold tracking-[0.1em] text-muted uppercase">
               Signature timestamp
             </dt>
-            <dd className="mt-1 text-ink">
+            <dd className="mt-1 break-words text-ink">
               {letter.signed_at ? formatDateTime(letter.signed_at) : 'Awaiting signature'}
             </dd>
           </div>
-          <div className="sm:col-span-2">
-            <dt className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="text-[11px] font-semibold tracking-[0.1em] text-muted uppercase">
               Email delivery
             </dt>
-            <dd className="mt-1 flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
-                  letter.email_status === 'SENT'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : letter.email_status === 'FAILED'
-                      ? 'border-red-200 bg-red-50 text-red-700'
-                      : 'border-stone-200 bg-stone-50 text-stone-500',
-                )}
-              >
-                <span className="size-1.5 rounded-full bg-current" />
+            <dd className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+              <Badge tone={emailStatusTone(letter.email_status)}>
                 {letter.email_status_label}
-              </span>
+              </Badge>
               {letter.emailed_at && (
-                <span className="text-xs text-muted">{formatDateTime(letter.emailed_at)}</span>
+                <span className="text-xs break-words text-muted">
+                  {formatDateTime(letter.emailed_at)}
+                </span>
+              )}
+              {!letter.emailed_at && letter.email_attempted_at && (
+                <span className="text-xs break-words text-muted">
+                  Last attempt {formatDateTime(letter.email_attempted_at)}
+                </span>
               )}
               {letter.can_retry_email && (
                 <Button
@@ -426,18 +507,21 @@ function LetterDetail({
                   size="sm"
                   onClick={() => void handleRetryEmail()}
                   loading={retryMutation.isPending}
-                  icon={<Send className="size-3.5" />}
+                  icon={<Send className="size-3.5" aria-hidden />}
                 >
                   Retry email
                 </Button>
               )}
               {letter.email_status === 'FAILED' && letter.email_error && (
-                <span className="inline-flex items-center gap-1 text-xs text-status-rejected">
-                  <MailWarning className="size-3.5" aria-hidden />
-                  {letter.email_error}
+                <span className="flex min-w-0 items-start gap-1 text-xs break-words text-status-rejected">
+                  <MailWarning className="mt-px size-3.5 shrink-0" aria-hidden />
+                  <span className="min-w-0">{letter.email_error}</span>
                 </span>
               )}
             </dd>
+            <p className="mt-1 text-xs text-muted">
+              This records acceptance by the configured email service; recipient receipt or opening is not tracked.
+            </p>
           </div>
         </dl>
       </Card>
@@ -448,7 +532,7 @@ function LetterDetail({
           title="Reservation information"
           description="The approved booking this letter certifies"
         />
-        <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+        <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
           <DetailItem
             icon={<FileText className="size-3.5" />}
             label="Reference number"
@@ -461,7 +545,9 @@ function LetterDetail({
               <>
                 {letter.requester_name}
                 {letter.requester_email && (
-                  <span className="block text-xs text-muted">{letter.requester_email}</span>
+                  <span className="block text-xs break-words text-muted">
+                    {letter.requester_email}
+                  </span>
                 )}
               </>
             }
@@ -504,8 +590,8 @@ function LetterDetail({
       <ConfirmDialog
         open={confirming}
         onClose={() => setConfirming(false)}
-        title="Sign this approval letter?"
-        description="Are you sure you want to sign this reservation approval letter?"
+        title="Confirm Digital Signature"
+        description="Are you sure you want to apply the test signature to this reservation approval letter? Please verify the document before proceeding."
         recordName={`${letter.letter_id} · ${letter.reservation_reference}`}
         tone="warning"
         confirmLabel="Confirm Signature"
@@ -536,12 +622,12 @@ function DetailItem({
   wide?: boolean
 }) {
   return (
-    <div className={cn(wide && 'sm:col-span-2')}>
-      <dt className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+    <div className={cn('min-w-0', wide && 'sm:col-span-2')}>
+      <dt className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.1em] text-muted uppercase">
         {icon}
         {label}
       </dt>
-      <dd className="mt-1 text-sm text-ink">{value}</dd>
+      <dd className="mt-1 text-sm break-words text-ink">{value}</dd>
     </div>
   )
 }
@@ -587,34 +673,38 @@ function LetterPreview({ letterId }: { letterId: number }) {
   return (
     <>
       <div className="mt-4 flex justify-end">
-        <Button variant="outline" size="sm" icon={<Eye className="size-3.5" />} onClick={() => void openPdf()} loading={pdfBusy}>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<Eye className="size-3.5" aria-hidden />}
+          onClick={() => void openPdf()}
+          loading={pdfBusy}
+        >
           Open PDF
         </Button>
       </div>
-      <article className="mt-2 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-8">
+      <article className="mt-2 w-full min-w-0 rounded-xl border border-line bg-white p-4 shadow-sm sm:p-8">
         <div className="text-center">
-          <h3 className="text-lg font-bold tracking-tight text-ink sm:text-xl">
+          <h3 className="text-lg font-bold tracking-tight break-words text-ink sm:text-xl">
             {preview.institution}
           </h3>
-          <p className="mt-1 text-sm text-body">{preview.issuing_office}</p>
-          <p className="text-xs text-muted italic">
-            {preview.system_name} — Facility &amp; Resource Reservation System
-          </p>
+          <p className="mt-1 text-sm break-words text-body">{preview.issuing_office}</p>
+          <p className="text-xs break-words text-muted italic">{preview.system_name} — Facility &amp; Resource Reservation System</p>
         </div>
         <div className="mt-4 border-t-2 border-brand" aria-hidden />
         <div className="mt-5 text-center">
-          <p className="text-sm font-bold uppercase tracking-[0.08em] text-brand">
+          <p className="text-sm font-bold tracking-[0.08em] text-brand uppercase">
             Reservation Approval Letter
           </p>
-          <p className="mt-0.5 text-xs text-muted">Letter No. {preview.letter_id}</p>
+          <p className="mt-0.5 text-xs break-words text-muted">Correspondence ID {preview.letter_id}</p>
         </div>
 
-        <p className="mt-6 text-sm text-ink">Date of issuance: {preview.issued_date}</p>
-        <div className="mt-4 text-sm text-ink">
+        <p className="mt-6 text-sm break-words text-ink">Date of issuance: {preview.issued_date}</p>
+        <div className="mt-4 text-sm break-words text-ink">
           <p>{preview.requester_name}</p>
           {preview.organization && <p>{preview.organization}</p>}
         </div>
-        <p className="mt-4 text-sm text-ink">Dear {preview.requester_name},</p>
+        <p className="mt-4 text-sm break-words text-ink">Dear {preview.requester_name},</p>
         <p className="mt-3 text-sm leading-relaxed text-body">
           Greetings from the {preview.issuing_office}!
         </p>
@@ -672,7 +762,7 @@ function LetterPreview({ letterId }: { letterId: number }) {
                   <span className="text-muted" aria-hidden>
                     •
                   </span>
-                  {rule}
+                  <span className="min-w-0 break-words">{rule}</span>
                 </li>
               ))}
             </ul>
@@ -692,20 +782,20 @@ function LetterPreview({ letterId }: { letterId: number }) {
           <div className="mt-5 min-h-[64px]">
             {preview.is_signed ? (
               <p
-                className="text-3xl text-ink"
+                className="text-3xl break-words text-ink"
                 style={{ fontFamily: "'Dancing Script', 'Segoe Script', cursive" }}
               >
                 {preview.signatory_name}
               </p>
             ) : (
               <div className="flex h-14 items-end">
-                <span className="w-56 border-b border-dashed border-line" aria-hidden />
+                <span className="w-full max-w-56 border-b border-dashed border-line" aria-hidden />
               </div>
             )}
           </div>
-          <p className="text-sm font-bold text-ink">{preview.signatory_name}</p>
-          <p className="text-[13px] text-body">{preview.signatory_position}</p>
-          <p className="mt-1 text-xs text-muted italic">
+          <p className="text-sm font-bold break-words text-ink">{preview.signatory_name}</p>
+          <p className="text-[13px] break-words text-body">{preview.signatory_position}</p>
+          <p className="mt-1 text-xs break-words text-muted italic">
             {preview.signed_at
               ? `Signed on ${formatDateTime(preview.signed_at)} (system time)`
               : 'Awaiting signature'}
@@ -731,14 +821,16 @@ function PreviewRow({
   return (
     <div
       className={cn(
-        'grid grid-cols-[minmax(7.5rem,10rem)_1fr] gap-3 px-3.5 py-2',
+        // Label above value on phones so a long label/value pair can never
+        // push the preview wider than the viewport.
+        'grid grid-cols-1 gap-0.5 px-3.5 py-2.5 sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)] sm:gap-3 sm:py-2',
         zebra && 'bg-soft/60',
       )}
     >
-      <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+      <dt className="text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">
         {label}
       </dt>
-      <dd className="break-words text-ink">{value}</dd>
+      <dd className="min-w-0 text-sm break-words text-ink">{value}</dd>
     </div>
   )
 }

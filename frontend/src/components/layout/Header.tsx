@@ -29,13 +29,15 @@ import {
 
 export function Brand() {
   return (
-    <Link to="/" className="flex items-center gap-2.5 focus-ring rounded-lg">
-      <div className="flex size-10 items-center justify-center rounded-xl bg-brand text-white shadow-sm">
+    <Link to="/" className="flex min-w-0 items-center gap-2.5 rounded-lg focus-ring">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm sm:size-10">
         <CalendarDays className="size-5" aria-hidden />
       </div>
-      <div className="leading-tight">
-        <p className="text-base font-bold tracking-tight text-ink">SAS RESERVE</p>
-        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
+      <div className="min-w-0 leading-tight">
+        <p className="truncate text-sm font-bold tracking-tight text-ink sm:text-base">
+          SAS RESERVE
+        </p>
+        <p className="hidden truncate text-[11px] font-medium uppercase tracking-[0.12em] text-muted sm:block">
           Facility &amp; Resources
         </p>
       </div>
@@ -52,7 +54,7 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav
       aria-label="Primary"
-      className="hidden items-center rounded-full border border-line bg-soft p-1 lg:inline-flex"
+      className="hidden min-w-0 items-center gap-0.5 rounded-full border border-line bg-soft p-1 xl:inline-flex"
     >
       {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
         <NavLink
@@ -62,7 +64,7 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13.5px] font-medium whitespace-nowrap transition-colors duration-150',
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors duration-150',
               isActive
                 ? 'bg-brand text-white shadow-sm'
                 : 'text-body hover:bg-softer hover:text-ink',
@@ -88,7 +90,7 @@ function HeaderActions() {
   const isAdmin = user?.role === 'ADMIN'
 
   return (
-    <div className="flex items-center gap-1.5 justify-self-end">
+    <div className="col-start-3 flex min-w-0 items-center justify-end gap-1 sm:gap-1.5">
       {/* Compact search field — never wide enough to push the pill off-center */}
       <div className="relative hidden 2xl:block">
         <Search
@@ -137,7 +139,9 @@ function HeaderActions() {
         trigger={
           <span className="flex items-center gap-2 rounded-full p-1 pr-2 transition-colors duration-150 hover:bg-soft">
             <Avatar name={user?.display_name ?? '?'} size="sm" />
-            <span className="hidden text-left leading-tight xl:block">
+            {/* The name block only appears once the pill nav and the actions
+                both fit comfortably — below 2xl it collapses to the avatar. */}
+            <span className="hidden text-left leading-tight 2xl:block">
               <span className="block text-[13px] font-semibold text-ink">
                 {user?.display_name ?? 'Administrator'}
               </span>
@@ -153,7 +157,7 @@ function HeaderActions() {
                         'Requester'}
               </span>
             </span>
-            <ChevronDown className="hidden size-3.5 text-muted xl:block" aria-hidden />
+            <ChevronDown className="hidden size-3.5 text-muted 2xl:block" aria-hidden />
           </span>
         }
       >
@@ -251,13 +255,13 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-40 lg:hidden">
+    <div id="app-mobile-navigation" className="fixed inset-0 z-40 xl:hidden">
       <div
         className="absolute inset-0 bg-ink/40"
         onClick={onClose}
         aria-hidden
       />
-      <div className="absolute inset-x-3 top-3 rounded-2xl border border-line bg-surface p-3 shadow-float animate-fade-up">
+      <div className="absolute inset-x-3 top-3 max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-2xl border border-line bg-surface p-3 shadow-float animate-fade-up">
         <div className="flex items-center justify-between px-1 pb-2">
           <Brand />
           <button
@@ -350,12 +354,21 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
 /**
  * Sticky top header.
  *
- * Layout is a 3-column CSS grid (`1fr auto 1fr`) so the pill navigation sits
- * at the exact viewport center regardless of brand/actions widths:
+ * Layout is a 3-column CSS grid (`minmax(0,1fr) auto minmax(0,1fr)`) so the
+ * pill navigation sits at the exact viewport center regardless of the brand
+ * and actions widths:
  *
  *   ┌─────────────┬──────────────────────────┬─────────────┐
  *   │ 1fr: Brand  │ auto: PillNavigation     │ 1fr: Actions│
  *   └─────────────┴──────────────────────────┴─────────────┘
+ *
+ * Responsive model: the pill navigation carries one entry per permitted route
+ * (up to eight for a staff signatory), so it is only rendered from `xl` where
+ * it genuinely fits. Below that, the header shows the brand, the actions and
+ * the drawer trigger — the same navigation, in the existing mobile drawer.
+ * The `minmax(0,1fr)` side columns (plus `min-w-0` descendants) are what keep
+ * a long brand or a wide action group from widening the whole document and
+ * producing a page-level horizontal scrollbar.
  *
  * Scroll model: the document itself scrolls (the shell no longer pins the
  * viewport), so `sticky top-0` works naturally and page content can scroll
@@ -367,22 +380,22 @@ export function Header() {
   return (
     <>
       <header className="sticky top-0 z-30 border-b border-line bg-surface/95 backdrop-blur">
-        {/* One row on desktop (grid centers the pill); stacked rows on mobile */}
-        <div className="mx-auto grid h-[72px] w-full max-w-[1600px] grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-1">
+        <div className="mx-auto grid h-16 w-full max-w-[1600px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:h-[72px] lg:px-8">
+          <div className="flex min-w-0 items-center gap-1">
             <button
+              type="button"
               onClick={() => setMobileNavOpen(true)}
-              className="rounded-lg p-2 text-body transition-colors hover:bg-soft hover:text-ink lg:hidden"
+              className="-ml-1.5 shrink-0 rounded-lg p-2 text-body transition-colors hover:bg-soft hover:text-ink xl:hidden"
               aria-label="Open navigation"
+              aria-expanded={mobileNavOpen}
+              aria-controls="app-mobile-navigation"
             >
-              <Menu className="size-5" />
+              <Menu className="size-5" aria-hidden />
             </button>
-            <div className="hidden min-[480px]:block">
-              <Brand />
-            </div>
+            <Brand />
           </div>
 
-          <div className="flex justify-center">
+          <div className="hidden min-w-0 justify-center xl:flex">
             <PillNavigation />
           </div>
 
@@ -412,13 +425,13 @@ export function MobileBottomNav() {
           end={item.end}
           className={({ isActive }) =>
             cn(
-              'flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors',
+              'flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2.5 text-[10px] font-medium transition-colors',
               isActive ? 'text-brand' : 'text-muted',
             )
           }
         >
-          <item.icon className="size-5" aria-hidden />
-          {item.label}
+          <item.icon className="size-5 shrink-0" aria-hidden />
+          <span className="w-full truncate text-center">{item.label}</span>
         </NavLink>
       ))}
     </nav>

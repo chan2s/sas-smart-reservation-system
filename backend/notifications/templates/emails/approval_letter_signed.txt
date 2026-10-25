@@ -4,7 +4,7 @@ Your reservation approval letter {{ letter_id }} has been signed and is
 attached to this email as a PDF document{% if has_docx %} (with an editable
 DOCX copy){% endif %}.
 
-Letter No.:     {{ letter_id }}
+Correspondence ID: {{ letter_id }}
 Reservation:    {{ reservation_id }} — {{ event_name }}
 Facility:       {{ facility_name }}
 Date:           {{ date }}

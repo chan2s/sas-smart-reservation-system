@@ -184,11 +184,13 @@ export interface ApprovalLetterSummary {
   signed_at: string | null
   has_signed_pdf: boolean
   has_signed_docx: boolean
+  can_retry_email: boolean
   pdf_url: string
   docx_url: string
   /** Staff diagnostic: delivery state of the requester email. */
   email_status: string
   email_status_label: string
+  email_attempted_at: string | null
   emailed_at: string | null
   email_error: string
 }
@@ -226,6 +228,7 @@ export interface ApprovalLetter {
   // Email delivery.
   email_status: string
   email_status_label: string
+  email_attempted_at: string | null
   emailed_at: string | null
   email_error: string
   can_retry_email: boolean

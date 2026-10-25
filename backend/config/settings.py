@@ -28,17 +28,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from backend/.env
 ENV_FILE = BASE_DIR / ".env"
 
-# ``override=True`` is deliberate. python-dotenv defaults to NOT overwriting
-# variables that already exist in the process environment, so an exported or
-# inherited variable silently won over .env and `runserver` could be using
-# different SMTP credentials than a fresh `manage.py shell` — the classic
-# "the shell sends mail, the web request fails with 535" trap. backend/.env
-# is gitignored, so it only exists on a developer machine and cannot shadow a
-# real production environment.
+# Process environment values take precedence over backend/.env. This is
+# required by Docker Compose: its service-level DB_HOST override points the
+# backend container at the host PostgreSQL server, while backend/.env keeps
+# DB_HOST=127.0.0.1 for commands run directly on Windows. The .env file remains
+# the local fallback and is gitignored, so it cannot shadow production config.
 #
 # NOTE: .env is read ONCE per process. Django's autoreloader watches Python
 # files only, so an edited .env still requires a full server restart.
-load_dotenv(ENV_FILE, override=True)
+load_dotenv(ENV_FILE, override=False)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

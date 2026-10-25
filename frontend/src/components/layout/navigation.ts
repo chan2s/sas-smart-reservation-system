@@ -58,7 +58,7 @@ export function primaryNavigationFor(
   const items = isStaff
     ? [...primaryNavigation, ...staffPrimaryNavigation]
     : primaryNavigation
-  if (isApprovalSignatory) {
+  if (isStaff && isApprovalSignatory) {
     return [
       ...items,
       { to: '/approval-letters', label: 'Approval Letters', icon: FileSignature },

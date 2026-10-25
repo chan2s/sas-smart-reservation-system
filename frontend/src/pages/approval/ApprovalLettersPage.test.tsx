@@ -85,7 +85,7 @@ import { ApprovalLettersPage } from './ApprovalLettersPage'
 function letter(overrides: Partial<ApprovalLetter> = {}): ApprovalLetter {
   return {
     id: 5,
-    letter_id: 'SAS-AL-2026-00001',
+    letter_id: 'NORSU-AL-2026-00001',
     status: 'PENDING_SIGNATURE',
     status_label: 'Pending signature',
     reservation_pk: 42,
@@ -111,6 +111,7 @@ function letter(overrides: Partial<ApprovalLetter> = {}): ApprovalLetter {
     docx_url: '/api/approval-letters/5/download/docx/',
     email_status: 'NOT_SENT',
     email_status_label: 'Not sent',
+    email_attempted_at: null,
     emailed_at: null,
     email_error: '',
     can_retry_email: false,
@@ -123,7 +124,7 @@ function letter(overrides: Partial<ApprovalLetter> = {}): ApprovalLetter {
 
 function preview(overrides: Partial<ApprovalLetterPreview> = {}): ApprovalLetterPreview {
   return {
-    letter_id: 'SAS-AL-2026-00001',
+    letter_id: 'NORSU-AL-2026-00001',
     status: 'PENDING_SIGNATURE',
     issued_date: 'October 20, 2026',
     requester_name: 'Maria Santos',
@@ -145,7 +146,7 @@ function preview(overrides: Partial<ApprovalLetterPreview> = {}): ApprovalLetter
     signed_at: null,
     is_signed: false,
     test_signature_disclaimer: 'Test signature — demonstration only.',
-    institution: 'Negros Oriental State University – Bais Campus',
+    institution: 'Negros Oriental State University – BSC',
     issuing_office: 'Student Affairs and Services Office',
     system_name: 'SAS RESERVE',
     ...overrides,
@@ -179,7 +180,7 @@ describe('ApprovalLettersPage', () => {
     state.preview = preview()
     render(<ApprovalLettersPage />)
     // The id appears in both the list and the detail header.
-    expect(screen.getAllByText('SAS-AL-2026-00001').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('NORSU-AL-2026-00001').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Francis M. Galon, Ph.D.').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Assistant Campus Director for Administration and Finance/).length).toBeGreaterThan(0)
     expect(screen.getByText('Sign Document')).toBeInTheDocument()
@@ -196,7 +197,9 @@ describe('ApprovalLettersPage', () => {
     fireEvent.click(screen.getByText('Sign Document'))
     // The dialog opens with the mandated wording; nothing signed yet.
     expect(
-      await screen.findByText('Are you sure you want to sign this reservation approval letter?'),
+      await screen.findByText(
+        'Are you sure you want to apply the test signature to this reservation approval letter? Please verify the document before proceeding.',
+      ),
     ).toBeInTheDocument()
     expect(state.signLetter).not.toHaveBeenCalled()
 
@@ -223,7 +226,8 @@ describe('ApprovalLettersPage', () => {
       has_signed_pdf: true,
       has_signed_docx: true,
       email_status: 'SENT',
-      email_status_label: 'Sent',
+      email_status_label: 'Accepted by email service',
+      email_attempted_at: '2026-10-24T10:00:05+08:00',
       emailed_at: '2026-10-24T10:00:05+08:00',
       can_sign: false,
     })

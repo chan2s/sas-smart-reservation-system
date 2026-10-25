@@ -10,6 +10,7 @@ changes its letter.
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from django.db.models import F
 
 from reservations.models import Reservation
 
@@ -20,6 +21,18 @@ def approval_letter_pdf_path(instance, filename: str) -> str:
 
 def approval_letter_docx_path(instance, filename: str) -> str:
     return f"approval_letters/{timezone.localdate():%Y}/{filename}"
+
+
+class ApprovalLetterSequence(models.Model):
+    """Per-year allocator for correspondence IDs.
+
+    The row lock serializes concurrent approvals on databases that support
+    ``SELECT FOR UPDATE``. ``get_or_create`` handles the first allocation of a
+    year safely; the unique year key is the final guard against duplicates.
+    """
+
+    year = models.PositiveSmallIntegerField(primary_key=True)
+    next_number = models.PositiveIntegerField(default=1)
 
 
 class ApprovalLetter(models.Model):
@@ -38,7 +51,7 @@ class ApprovalLetter(models.Model):
 
     class EmailStatus(models.TextChoices):
         NOT_SENT = "NOT_SENT", "Not sent"
-        SENT = "SENT", "Sent"
+        SENT = "SENT", "Accepted by email service"
         FAILED = "FAILED", "Failed"
         NO_EMAIL = "NO_EMAIL", "No requester email"
 
@@ -79,9 +92,9 @@ class ApprovalLetter(models.Model):
     )
     signed_at = models.DateTimeField(null=True, blank=True)
 
-    # Finalized documents, written ONLY when the letter is signed. A pending
-    # letter has no stored documents — its preview is generated on demand and
-    # is always visibly unsigned.
+    # DOCX is populated from the institutional template at issuance, then
+    # replaced with its test-signed final version. PDF is produced when
+    # signed. Pending documents are never exposed by download endpoints.
     pdf_file = models.FileField(
         upload_to=approval_letter_pdf_path, null=True, blank=True
     )
@@ -96,6 +109,7 @@ class ApprovalLetter(models.Model):
         default=EmailStatus.NOT_SENT,
         db_index=True,
     )
+    email_attempted_at = models.DateTimeField(null=True, blank=True)
     emailed_at = models.DateTimeField(null=True, blank=True)
     email_error = models.CharField(
         max_length=100,
@@ -121,21 +135,16 @@ class ApprovalLetter(models.Model):
     @classmethod
     def _next_letter_id(cls) -> str:
         year = timezone.localdate().year
-        prefix = f"SAS-AL-{year}-"
-        last = (
-            cls.objects.filter(letter_id__startswith=prefix)
-            .order_by("-letter_id")
-            .values_list("letter_id", flat=True)
-            .first()
-        )
-        if last:
-            try:
-                seq = int(last.rsplit("-", 1)[1]) + 1
-            except (IndexError, ValueError):
-                seq = 1
-        else:
-            seq = 1
-        return f"{prefix}{seq:05d}"
+        from django.db import transaction
+
+        with transaction.atomic():
+            ApprovalLetterSequence.objects.get_or_create(year=year)
+            sequence = ApprovalLetterSequence.objects.select_for_update().get(year=year)
+            current = sequence.next_number
+            ApprovalLetterSequence.objects.filter(year=year).update(
+                next_number=F("next_number") + 1
+            )
+        return f"NORSU-AL-{year}-{current:05d}"
 
     def save(self, *args, **kwargs):
         if not self.letter_id:
@@ -150,11 +159,11 @@ class ApprovalLetter(models.Model):
 
     @property
     def has_signed_pdf(self) -> bool:
-        return bool(self.pdf_file)
+        return self.is_signed and bool(self.pdf_file)
 
     @property
     def has_signed_docx(self) -> bool:
-        return bool(self.docx_file)
+        return self.is_signed and bool(self.docx_file)
 
     @property
     def can_retry_email(self) -> bool:

@@ -9,6 +9,7 @@ reachable, so it polls ``GET /api/health/``. That endpoint has to be:
 """
 
 from django.test import TestCase
+from django.urls import resolve
 
 
 class HealthEndpointTests(TestCase):
@@ -31,3 +32,14 @@ class HealthEndpointTests(TestCase):
     def test_exposes_no_application_data(self):
         body = self.client.get("/api/health/").json()
         self.assertEqual(set(body), {"status"})
+
+    def test_health_equipment_and_facility_routes_use_the_api_prefix(self):
+        expected_routes = {
+            "/api/health/": "health",
+            "/api/equipment/": "equipment-list",
+            "/api/equipment/stats/": "equipment-stats",
+            "/api/facilities/": "facility-list",
+        }
+        for path, expected_name in expected_routes.items():
+            with self.subTest(path=path):
+                self.assertEqual(resolve(path).url_name, expected_name)

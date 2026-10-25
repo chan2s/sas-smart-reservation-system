@@ -7,6 +7,9 @@ of the existing reservation approval workflow.
 """
 
 import tempfile
+import re
+import xml.etree.ElementTree as ET
+from zipfile import ZipFile
 from datetime import date, time
 
 from django.contrib.auth import get_user_model
@@ -126,8 +129,29 @@ class LetterCreationTests(ApprovalLetterTestBase):
         self.assertEqual(letter.requester, self.requester)
         self.assertEqual(letter.requester_name, "Juan Dela Cruz")
         self.assertEqual(letter.requester_email, "juan@campus.edu")
-        self.assertTrue(letter.letter_id.startswith("SAS-AL-2026-"))
+        self.assertTrue(letter.letter_id.startswith("NORSU-AL-2026-"))
         self.assertFalse(letter.is_signed)
+        self.assertIn("-PENDING", letter.docx_file.name)
+        self.assertEqual(
+            self.signatory.notifications.filter(
+                title="Approval letter awaiting signature"
+            ).count(),
+            1,
+        )
+        self.assertFalse(
+            self.other_staff.notifications.filter(
+                title="Approval letter awaiting signature"
+            ).exists()
+        )
+
+    def test_correspondence_ids_are_unique_across_reservations(self):
+        first = self.approve(self.make_reservation())
+        second = self.approve(
+            self.make_reservation(date=date(2026, 11, 3), event_name="Workshop")
+        )
+        first_id = ApprovalLetter.objects.get(reservation=first).letter_id
+        second_id = ApprovalLetter.objects.get(reservation=second).letter_id
+        self.assertNotEqual(first_id, second_id)
 
     def test_no_duplicate_letter_on_reapproval(self):
         reservation = self.approve(self.make_reservation())
@@ -274,6 +298,42 @@ class DocumentTests(ApprovalLetterTestBase):
     def test_pending_letter_has_no_finalized_documents(self):
         self.assertFalse(self.letter.has_signed_pdf)
         self.assertFalse(self.letter.has_signed_docx)
+        # Issuance generates a private draft from the institutional template;
+        # it is not exposed as a finalized download before signing.
+        self.assertTrue(self.letter.docx_file)
+
+    def test_generated_docx_preserves_template_header_footer_and_populates_body(self):
+        from docx import Document
+
+        with self.letter.docx_file.open("rb") as handle:
+            document = Document(handle)
+        body = "\n".join(
+            [paragraph.text for paragraph in document.paragraphs]
+            + [cell.text for table in document.tables for row in table.rows for cell in row.cells]
+        )
+        with self.letter.docx_file.open("rb") as handle:
+            with ZipFile(handle) as package:
+                header_xml = ET.fromstring(package.read("word/header1.xml"))
+                footer_xml = ET.fromstring(package.read("word/footer1.xml"))
+                w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+                header_text = " ".join(
+                    node.text or "" for node in header_xml.iter(f"{w_ns}t")
+                ).upper()
+                footer_text = " ".join(
+                    node.text or "" for node in footer_xml.iter(f"{w_ns}t")
+                ).lower()
+                package_parts = package.namelist()
+        footer = "\n".join(
+            cell.text for table in document.sections[0].footer.tables
+            for row in table.rows for cell in row.cells
+        )
+        self.assertIn("RESERVATION APPROVAL LETTER", body)
+        self.assertIn(self.letter.letter_id, body + footer)
+        self.assertIn(self.reservation.reservation_id, body)
+        self.assertIn("MISSION", header_text)
+        self.assertIn("QUALITYPOLICY", re.sub(r"\s+", "", header_text))
+        self.assertIn("information transmitted by this document", footer_text)
+        self.assertTrue(any(name.startswith("word/media/") for name in package_parts))
 
     def test_pending_letter_cannot_be_downloaded_as_finalized(self):
         client = APIClient()
@@ -286,6 +346,11 @@ class DocumentTests(ApprovalLetterTestBase):
             client.get(f"/api/approval-letters/{self.letter.pk}/download/docx/").status_code,
             404,
         )
+
+    def test_raw_media_url_does_not_serve_private_letter_files(self):
+        client = APIClient()
+        response = client.get(f"/media/{self.letter.docx_file.name}")
+        self.assertEqual(response.status_code, 404)
 
     def test_pending_pdf_preview_is_rendered_unsigned(self):
         # A pending letter's context has no signature timestamp at all.
@@ -396,6 +461,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
         self.assertEqual(letter.status, ApprovalLetter.Status.SENT)
         self.assertEqual(letter.email_status, ApprovalLetter.EmailStatus.SENT)
         self.assertIsNotNone(letter.emailed_at)
+        self.assertIsNotNone(letter.email_attempted_at)
 
         letter_emails = [
             m for m in mail.outbox if m.subject.startswith("Approved Reservation Letter")
@@ -403,7 +469,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
         self.assertEqual(len(letter_emails), 1)
         message = letter_emails[0]
         self.assertEqual(message.to, [self.requester.email])
-        self.assertIn(self.reservation.reservation_id, message.subject)
+        self.assertIn(self.letter.letter_id, message.subject)
         # PDF + DOCX attachments.
         attachments = {name for name, content, mime in message.attachments}
         self.assertEqual(len(attachments), 2)
@@ -438,6 +504,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
         self.assertEqual(self.letter.email_status, ApprovalLetter.EmailStatus.FAILED)
         self.assertEqual(self.letter.email_error, "smtp_connection")
         self.assertIsNone(self.letter.emailed_at)
+        self.assertIsNotNone(self.letter.email_attempted_at)
 
     def test_retry_failed_email_succeeds_without_new_signature(self):
         from notifications import email_service

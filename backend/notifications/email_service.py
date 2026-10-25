@@ -43,7 +43,7 @@ NO_SHOW_SUBJECT = "Reservation No-Show Notice - SAS RESERVE"
 BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
 
 #: Subject of the signed approval-letter delivery email.
-APPROVAL_LETTER_SUBJECT = "Approved Reservation Letter - {reference}"
+APPROVAL_LETTER_SUBJECT = "Approved Reservation Letter - {letter_id}"
 
 
 def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Optional[str]]:
@@ -56,8 +56,10 @@ def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Opt
     :func:`send_reservation_approved`; never raises into the caller, and never
     touches the letter itself (bookkeeping is the letters service's job).
     """
+    from approval_letters.constants import SIGNATORY_NAME
+
     reference = letter.reservation.reservation_id
-    subject = APPROVAL_LETTER_SUBJECT.format(reference=reference)
+    subject = APPROVAL_LETTER_SUBJECT.format(letter_id=letter.letter_id)
 
     context = {
         "site_name": SAS_RESERVE_SITE_NAME,
@@ -71,7 +73,7 @@ def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Opt
         "start_time": letter.reservation.start_time,
         "end_time": letter.reservation.end_time,
         "signed_at": letter.signed_at,
-        "signatory_name": letter.signatory.display_name if letter.signatory else "",
+        "signatory_name": SIGNATORY_NAME,
         "view_url": (
             f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}"
             f"/reservations/{letter.reservation.pk}"

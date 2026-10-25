@@ -835,7 +835,7 @@ function ApprovalLetterCard({ letter }: { letter: ApprovalLetterSummary }) {
     try {
       await api.downloadFile(
         kind === 'pdf' ? letter.pdf_url : letter.docx_url,
-        `Approval-Letter-${letter.letter_id}.${kind}`,
+        `${letter.letter_id}.${kind}`,
       )
     } catch (error) {
       toast(
@@ -890,9 +890,15 @@ function ApprovalLetterCard({ letter }: { letter: ApprovalLetterSummary }) {
             <DetailItem label="Signed on" value={formatDateTime(letter.signed_at)} />
           )}
           {letter.emailed_at && (
-            <DetailItem label="Emailed to requester" value={formatDateTime(letter.emailed_at)} />
+            <DetailItem label="Email accepted by service" value={formatDateTime(letter.emailed_at)} />
           )}
-          {isStaff && letter.email_status === 'FAILED' && (
+          {isSigned && letter.email_status !== 'NOT_SENT' && (
+            <DetailItem label="Email delivery" value={letter.email_status_label} />
+          )}
+          {letter.email_attempted_at && (
+            <DetailItem label="Last delivery attempt" value={formatDateTime(letter.email_attempted_at)} />
+          )}
+          {isStaff && letter.can_retry_email && (
             <DetailItem
               label="Email delivery"
               wide
