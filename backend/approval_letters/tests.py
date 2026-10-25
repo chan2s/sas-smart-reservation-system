@@ -17,6 +17,7 @@ from django.core import mail
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from accounts.models import AuditLog
 from approval_letters.documents import build_letter_context
 from approval_letters.models import ApprovalLetter
 from facilities.models import Facility, OperatingHour
@@ -653,4 +654,155 @@ class WorkflowPreservationTests(ApprovalLetterTestBase):
         signed = client.get("/api/approval-letters/?status=SENT")
         self.assertEqual(signed.json()["count"], 1)
         self.assertEqual(signed.json()["results"][0]["letter_id"], letter.letter_id)
+
+
+# ---------------------------------------------------------------------------
+# Module-scoped signatory access + explicit approval action
+# ---------------------------------------------------------------------------
+
+
+class ScopedSignatoryAccessTests(ApprovalLetterTestBase):
+    """The designated signatory can use ONLY the Approval Letters module.
+
+    These tests exercise the backend directly (never the SPA): the designation
+    removes every SAS-staff capability while preserving the account's ability
+    to list, preview, and approve letters. The reservation's own status is
+    checked throughout to prove letter approval is a separate transition.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.reservation = self.approve(self.make_reservation())
+        self.letter = ApprovalLetter.objects.get(reservation=self.reservation)
+
+    def _as(self, user) -> APIClient:
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def test_signatory_can_list_and_preview_pending_letter(self):
+        client = self._as(self.signatory)
+
+        listing = client.get("/api/approval-letters/?status=PENDING_SIGNATURE")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["count"], 1)
+
+        preview = client.get(f"/api/approval-letters/{self.letter.pk}/preview/")
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json()["letter_id"], self.letter.letter_id)
+
+    def test_signatory_is_refused_on_every_other_module(self):
+        client = self._as(self.signatory)
+        scoped_reads = [
+            "/api/reservations/",
+            "/api/facilities/",
+            "/api/equipment/",
+            "/api/facility-resources/",
+            "/api/maintenance/",
+            "/api/analytics/summary/",
+            "/api/calendar/events/?start=2026-11-02&end=2026-11-02",
+        ]
+        for path in scoped_reads:
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 403, response.content)
+                self.assertEqual(response.json()["code"], "approval_letters_only")
+
+        # Administrator-only / staff-only surfaces are refused by their own
+        # permission classes as well (the signatory is not SAS staff).
+        for path in (
+            "/api/auth/users/",
+            "/api/auth/audit-log/",
+            "/api/auth/login-activity/",
+            "/api/analytics/trends/",
+            "/api/reports/",
+        ):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 403, response.content)
+
+        # It also cannot approve, edit, cancel, or check in the reservation.
+        for action in ("approve", "reject", "request_changes", "cancel"):
+            with self.subTest(action=action):
+                response = client.post(
+                    f"/api/reservations/{self.reservation.pk}/{action}/",
+                    {},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 403, response.content)
+
+    def test_signatory_can_approve_letter_through_approve_action(self):
+        client = self._as(self.signatory)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.post(
+                f"/api/approval-letters/{self.letter.pk}/approve/", format="json"
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        self.letter.refresh_from_db()
+        self.assertIn(
+            self.letter.status,
+            (
+                ApprovalLetter.Status.SIGNED,
+                ApprovalLetter.Status.SENT,
+                ApprovalLetter.Status.EMAIL_FAILED,
+            ),
+        )
+        self.assertEqual(self.letter.signatory, self.signatory)
+        self.assertIsNotNone(self.letter.signed_at)
+        self.assertTrue(self.letter.has_signed_pdf)
+
+        # The approval is attributed in the audit trail.
+        audit = AuditLog.objects.filter(
+            action=AuditLog.Action.APPROVAL_LETTER_SIGNED,
+            object_id=self.letter.letter_id,
+        ).first()
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit.actor, self.signatory)
+        self.assertIn(f"user id {self.signatory.pk}", audit.detail)
+
+        # Letter approval NEVER changes the reservation's status.
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(ApprovalLetter.objects.count(), 1)
+
+    def test_repeated_approval_is_refused_without_duplicates(self):
+        client = self._as(self.signatory)
+        with self.captureOnCommitCallbacks(execute=True):
+            first = client.post(
+                f"/api/approval-letters/{self.letter.pk}/approve/", format="json"
+            )
+        self.assertEqual(first.status_code, 200, first.content)
+        self.letter.refresh_from_db()
+        approved_at = self.letter.signed_at
+
+        second = client.post(
+            f"/api/approval-letters/{self.letter.pk}/approve/", format="json"
+        )
+        self.assertEqual(second.status_code, 400)
+        self.letter.refresh_from_db()
+        self.assertEqual(self.letter.signed_at, approved_at)
+        self.assertEqual(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.APPROVAL_LETTER_SIGNED,
+                object_id=self.letter.letter_id,
+            ).count(),
+            1,
+        )
+        self.assertEqual(ApprovalLetter.objects.count(), 1)
+
+    def test_unauthorized_accounts_cannot_approve_through_api(self):
+        for account in (self.other_staff, self.admin, self.requester):
+            with self.subTest(account=account.username):
+                client = self._as(account)
+                response = client.post(
+                    f"/api/approval-letters/{self.letter.pk}/approve/",
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 403, response.content)
+
+        self.letter.refresh_from_db()
+        self.assertEqual(self.letter.status, ApprovalLetter.Status.PENDING_SIGNATURE)
+        self.assertIsNone(self.letter.signatory_id)
+        self.assertIsNone(self.letter.signed_at)
 

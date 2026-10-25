@@ -270,6 +270,10 @@ class UserSerializer(serializers.ModelSerializer):
     # Approval-letter signing designation. Read-only: an administrator grants
     # it server-side (Django admin / seed command); a client can never set it.
     is_approval_signatory = serializers.BooleanField(read_only=True)
+    # True for a non-administrator designated signatory, whose access is
+    # limited to the Approval Letters module. Drives the SPA's module-only
+    # navigation; the backend enforces the same scope on every request.
+    is_approval_letters_only = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -292,6 +296,7 @@ class UserSerializer(serializers.ModelSerializer):
             "is_approved",
             "is_view_only",
             "is_approval_signatory",
+            "is_approval_letters_only",
         )
         read_only_fields = (
             "role",

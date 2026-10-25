@@ -168,6 +168,12 @@ export interface User {
    * read-only — it only controls who may sign approval letters.
    */
   is_approval_signatory?: boolean
+  /**
+   * True for a non-administrator signatory whose access is limited to the
+   * Approval Letters module. Backend-enforced; the SPA uses it for navigation
+   * and route guards only.
+   */
+  is_approval_letters_only?: boolean
 }
 
 /** Approval-letter status (independent of the reservation status). */

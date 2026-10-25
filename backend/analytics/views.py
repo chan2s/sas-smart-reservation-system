@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from accounts.permissions import IsSasStaff
+from accounts.permissions import IsApprovalModuleScopeAllowed, IsSasStaff
 
 from .services import (
     REPORTS,
@@ -38,7 +38,7 @@ def _range_params(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsApprovalModuleScopeAllowed])
 def analytics_summary(request):
     """Dashboard aggregates for the signed-in user.
 

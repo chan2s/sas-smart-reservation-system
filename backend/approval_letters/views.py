@@ -2,12 +2,15 @@
 
 Access model:
 
-* SAS staff (admins + the designated signatory) see all letters.
+* The designated signatory (``is_approval_signatory``) and administrators
+  see all letters. The signatory's account is module-scoped: every other
+  management surface refuses it, so this is its only working module.
 * A requester sees only letters issued for their OWN reservations — enforced
   in the queryset AND re-checked on every detail/download, so a crafted id
   from another user's letter returns 404 like any other missing object.
-* Signing is restricted server-side to the designated signatory
-  (``is_sas_staff`` + ``is_approval_signatory``); frontend checks are cosmetic.
+* Approval is restricted server-side to the designated signatory
+  (``is_approval_signatory``), re-checked by the service under a row lock;
+  frontend checks are cosmetic.
 * Finalized PDF/DOCX files exist only for signed letters, so a pending letter
   has nothing to leak: downloads 404 until signing, and the preview is always
   rendered visibly unsigned.
@@ -25,7 +28,11 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
+from accounts.permissions import (
+    IsAccountApprovedOrReadOnly,
+    IsApprovalLetterStaffOrSignatory,
+    IsApprovalSignatory,
+)
 
 from .documents import render_letter_pdf
 from .models import ApprovalLetter
@@ -67,11 +74,12 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = ApprovalLetter.objects.select_related(
             "reservation", "reservation__facility", "reservation__requester", "signatory"
         )
-        if user.is_admin or (user.is_sas_staff and user.is_approval_signatory):
+        if user.is_admin or getattr(user, "is_approval_signatory", False):
             pass
-        elif self.action == "sign" and user.is_sas_staff:
-            # Let the sign action reach its server-side authorization check so
-            # unauthorized staff receive 403, without granting list/detail use.
+        elif self.action in ("sign", "approve") and user.is_sas_staff:
+            # Let the approval actions reach their server-side authorization
+            # check so unauthorized staff receive 403, without granting
+            # list/detail use.
             pass
         elif self.action == "retry_email" and user.is_sas_staff:
             # SAS staff may retry delivery for an already-signed letter; the
@@ -112,7 +120,11 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly, IsSasStaff],
+        permission_classes=[
+            IsAuthenticated,
+            IsAccountApprovedOrReadOnly,
+            IsApprovalSignatory,
+        ],
     )
     def sign(self, request, pk=None):
         """Apply the test signature. Designated signatory only (server-checked)."""
@@ -139,7 +151,33 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly, IsSasStaff],
+        permission_classes=[
+            IsAuthenticated,
+            IsAccountApprovedOrReadOnly,
+            IsApprovalSignatory,
+        ],
+    )
+    def approve(self, request, pk=None):
+        """Approve a pending letter (explicit designated-signatory action).
+
+        The approval and the existing test-signature step are the same
+        server-side transition: the letter records the approving account and
+        timestamp, becomes ``SIGNED``, and the finalized documents are
+        generated. Accepting both action names keeps the existing signatory
+        workflow intact while giving the module its explicit "Approve Letter"
+        operation. It never auto-approves anything and never touches the
+        reservation's status.
+        """
+        return self.sign(request, pk)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[
+            IsAuthenticated,
+            IsAccountApprovedOrReadOnly,
+            IsApprovalLetterStaffOrSignatory,
+        ],
         url_path="retry-email",
     )
     def retry_email(self, request, pk=None):

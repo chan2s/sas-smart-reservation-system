@@ -104,8 +104,8 @@ class ApprovalLetterSerializer(serializers.ModelSerializer):
         return bool(
             obj.status == ApprovalLetter.Status.PENDING_SIGNATURE
             and user is not None
-            and getattr(user, "is_sas_staff", False)
             and getattr(user, "is_approval_signatory", False)
+            and getattr(user, "is_approved", True)
         )
 
     def get_preview_url(self, obj) -> str:

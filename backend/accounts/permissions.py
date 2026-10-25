@@ -11,6 +11,39 @@ ACCOUNT_NOT_APPROVED_MESSAGE = {
     "code": "account_not_approved",
 }
 
+#: The consistent refusal for the designated approval-letter signatory when it
+#: attempts to use any module other than Approval Letters.
+APPROVAL_LETTERS_ONLY_MESSAGE = {
+    "detail": (
+        "Your account is limited to the Approval Letters module. It cannot "
+        "access reservations, facilities, equipment, users, or settings."
+    ),
+    "code": "approval_letters_only",
+}
+
+#: Paths the module-scoped signatory may still use. The profile is needed to
+#: render the signed-in shell, notifications carry the "letter awaiting your
+#: review" notice, and the approval-letter endpoints are the module itself.
+APPROVAL_SIGNATORY_ALLOWED_PREFIXES = (
+    "/api/approval-letters/",
+    "/api/auth/me/",
+    "/api/notifications/",
+)
+
+
+def approval_signatory_path_allowed(path: str) -> bool:
+    """Whether a module-scoped signatory may call ``path``."""
+    return any((path or "").startswith(prefix) for prefix in APPROVAL_SIGNATORY_ALLOWED_PREFIXES)
+
+
+def is_module_scoped_signatory(user) -> bool:
+    """Safe accessor usable with AnonymousUser and lazy request users."""
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and getattr(user, "is_approval_letters_only", False)
+    )
+
 
 class IsAdmin(BasePermission):
     """Administrator only."""
@@ -24,7 +57,12 @@ class IsAdmin(BasePermission):
 
 
 class IsSasStaff(BasePermission):
-    """Administrator or SAS staff."""
+    """Administrator or SAS staff.
+
+    The module-scoped approval-letter signatory is intentionally excluded: its
+    ``User.is_sas_staff`` property reports False so it can never reach the
+    reservation, facility, equipment, analytics, or user-management surfaces.
+    """
 
     def has_permission(self, request, view):
         return bool(
@@ -32,6 +70,58 @@ class IsSasStaff(BasePermission):
             and request.user.is_authenticated
             and request.user.is_sas_staff
         )
+
+
+class IsApprovalSignatory(BasePermission):
+    """The designated approval-letter signatory (server-verified).
+
+    Administrator status alone is not enough — the explicit designation is
+    required, matching the existing signatory support. The account-approval
+    policy is layered separately by ``IsAccountApprovedOrReadOnly``.
+    """
+
+    message = {
+        "detail": "Only the designated approval-letter signatory may approve letters.",
+        "code": "not_approval_signatory",
+    }
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and getattr(user, "is_approval_signatory", False)
+        )
+
+
+class IsApprovalLetterStaffOrSignatory(BasePermission):
+    """SAS staff or the designated signatory — for approval-letter support actions."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (
+                getattr(user, "is_sas_staff", False)
+                or getattr(user, "is_approval_signatory", False)
+            )
+        )
+
+
+class IsApprovalModuleScopeAllowed(BasePermission):
+    """Deny a module-scoped signatory on endpoints that only require authentication.
+
+    Most views include ``IsAccountApprovedOrReadOnly``, which enforces the same
+    scope. This class covers the remaining read/compute endpoints (calendar,
+    availability, pricing, dashboard summary) that use plain ``IsAuthenticated``
+    so the restriction is complete rather than merely hidden in the SPA.
+    """
+
+    message = APPROVAL_LETTERS_ONLY_MESSAGE
+
+    def has_permission(self, request, view):
+        return not is_module_scoped_signatory(request.user)
 
 
 class IsSasStaffOrReadOnly(BasePermission):
@@ -82,6 +172,15 @@ class IsAccountApprovedOrReadOnly(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         if not (user and user.is_authenticated):
+            return False
+        # A designated signatory is a single-module account: outside Approval
+        # Letters (plus its own profile and notification feed) it is refused
+        # outright, including for otherwise-public reads. The check runs before
+        # the view-only policy so the response names the real restriction.
+        if is_module_scoped_signatory(user) and not approval_signatory_path_allowed(
+            request.path
+        ):
+            self.message = APPROVAL_LETTERS_ONLY_MESSAGE
             return False
         if request.method in SAFE_METHODS:
             return True

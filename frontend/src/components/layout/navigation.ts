@@ -54,15 +54,21 @@ export const staffPrimaryNavigation: NavigationItem[] = [
 export function primaryNavigationFor(
   isStaff: boolean,
   isApprovalSignatory = false,
+  isApprovalLettersOnly = false,
 ): NavigationItem[] {
+  const approvalLettersItem: NavigationItem = {
+    to: '/approval-letters',
+    label: 'Approval Letters',
+    icon: FileSignature,
+  }
+  // A module-scoped signatory sees exactly one working surface. The backend
+  // refuses every other module, so the navigation must not advertise them.
+  if (isApprovalLettersOnly) return [approvalLettersItem]
   const items = isStaff
     ? [...primaryNavigation, ...staffPrimaryNavigation]
     : primaryNavigation
   if (isStaff && isApprovalSignatory) {
-    return [
-      ...items,
-      { to: '/approval-letters', label: 'Approval Letters', icon: FileSignature },
-    ]
+    return [...items, approvalLettersItem]
   }
   return items
 }

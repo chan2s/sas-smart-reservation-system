@@ -17,7 +17,6 @@ import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
 import { cn } from '@/lib/utils'
 import {
   adminNavigation,
-  primaryNavigation,
   primaryNavigationFor,
   secondaryNavigation,
   staffNavigation,
@@ -50,13 +49,13 @@ export function Brand() {
 // ---------------------------------------------------------------------------
 
 export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
-  const { isStaff, isApprovalSignatory } = useAuth()
+  const { isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
   return (
     <nav
       aria-label="Primary"
       className="hidden min-w-0 items-center gap-0.5 rounded-full border border-line bg-soft p-1 xl:inline-flex"
     >
-      {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
+      {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -84,7 +83,7 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
 // ---------------------------------------------------------------------------
 
 function HeaderActions() {
-  const { user, logout, isStaff, isApprovalSignatory } = useAuth()
+  const { user, logout, isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
   const { data: unread } = useUnreadCount()
   const navigate = useNavigate()
   const isAdmin = user?.role === 'ADMIN'
@@ -92,25 +91,29 @@ function HeaderActions() {
   return (
     <div className="col-start-3 flex min-w-0 items-center justify-end gap-1 sm:gap-1.5">
       {/* Compact search field — never wide enough to push the pill off-center */}
-      <div className="relative hidden 2xl:block">
-        <Search
-          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-          aria-hidden
-        />
-        <input
-          type="search"
-          placeholder="Search…"
-          className="h-9 w-44 rounded-full border border-line bg-soft pl-9 pr-4 text-sm text-ink placeholder:text-muted transition-colors duration-150 hover:border-line-strong focus:w-56 focus:border-brand focus:bg-surface focus:outline-none focus:ring-4 focus:ring-brand/10"
-        />
-      </div>
-      <button
-        type="button"
-        onClick={() => navigate('/reservations')}
-        className="flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink 2xl:hidden"
-        aria-label="Search reservations, facilities, equipment"
-      >
-        <Search className="size-5" aria-hidden />
-      </button>
+      {!isApprovalLettersOnly && (
+        <div className="relative hidden 2xl:block">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
+            aria-hidden
+          />
+          <input
+            type="search"
+            placeholder="Search…"
+            className="h-9 w-44 rounded-full border border-line bg-soft pl-9 pr-4 text-sm text-ink placeholder:text-muted transition-colors duration-150 hover:border-line-strong focus:w-56 focus:border-brand focus:bg-surface focus:outline-none focus:ring-4 focus:ring-brand/10"
+          />
+        </div>
+      )}
+      {!isApprovalLettersOnly && (
+        <button
+          type="button"
+          onClick={() => navigate('/reservations')}
+          className="flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink 2xl:hidden"
+          aria-label="Search reservations, facilities, equipment"
+        >
+          <Search className="size-5" aria-hidden />
+        </button>
+      )}
 
       {/* Notifications */}
       <Dropdown
@@ -146,15 +149,17 @@ function HeaderActions() {
                 {user?.display_name ?? 'Administrator'}
               </span>
               <span className="block text-[11px] text-muted">
-                {user?.role === 'ADMIN'
-                  ? 'SAS Administrator'
-                  : user?.role === 'STAFF'
-                    ? 'SAS Staff'
-                    : user?.organization_ref?.display_name ||
-                        user?.organization_ref?.organization_name ||
-                        user?.affiliation_label ||
-                        user?.organization ||
-                        'Requester'}
+                {isApprovalLettersOnly
+                  ? 'Approval Letter Signatory'
+                  : user?.role === 'ADMIN'
+                    ? 'SAS Administrator'
+                    : user?.role === 'STAFF'
+                      ? 'SAS Staff'
+                      : user?.organization_ref?.display_name ||
+                          user?.organization_ref?.organization_name ||
+                          user?.affiliation_label ||
+                          user?.organization ||
+                          'Requester'}
               </span>
             </span>
             <ChevronDown className="hidden size-3.5 text-muted 2xl:block" aria-hidden />
@@ -168,26 +173,28 @@ function HeaderActions() {
                 {user?.display_name ?? 'Administrator'}
               </p>
               <p className="text-xs text-muted">
-                {user?.role === 'ADMIN'
-                  ? 'SAS Administrator'
-                  : user?.role === 'STAFF'
-                    ? 'SAS Staff'
-                    : user?.organization_ref?.display_name ||
-                        user?.organization_ref?.organization_name ||
-                        user?.affiliation_label ||
-                        user?.organization ||
-                        'Requester'}
+                {isApprovalLettersOnly
+                  ? 'Approval Letter Signatory'
+                  : user?.role === 'ADMIN'
+                    ? 'SAS Administrator'
+                    : user?.role === 'STAFF'
+                      ? 'SAS Staff'
+                      : user?.organization_ref?.display_name ||
+                          user?.organization_ref?.organization_name ||
+                          user?.affiliation_label ||
+                          user?.organization ||
+                          'Requester'}
               </p>
             </div>
             <div className="my-1 h-px bg-line md:hidden" aria-hidden />
-            {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
+            {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
               <MenuItem key={`m-${item.to}`} onClick={() => { close(); navigate(item.to) }}>
                 <item.icon className="size-4" />
                 {item.label}
               </MenuItem>
             ))}
             <div className="my-1 h-px bg-line" aria-hidden />
-            {secondaryNavigation.map((item) => (
+            {!isApprovalLettersOnly && secondaryNavigation.map((item) => (
               <MenuItem key={item.to} onClick={() => { close(); navigate(item.to) }}>
                 <item.icon className="size-4" />
                 {item.label}
@@ -241,7 +248,7 @@ function HeaderActions() {
 // ---------------------------------------------------------------------------
 
 function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, isStaff, isApprovalSignatory } = useAuth()
+  const { user, isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
   useEffect(() => {
     if (!open) return
@@ -273,7 +280,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav aria-label="Mobile" className="space-y-1 border-t border-line pt-3">
-          {primaryNavigationFor(isStaff, isApprovalSignatory).map((item) => (
+          {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -293,7 +300,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
             </NavLink>
           ))}
           <div className="my-2 h-px bg-line" aria-hidden />
-          {secondaryNavigation.map((item) => (
+          {!isApprovalLettersOnly && secondaryNavigation.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -413,12 +420,13 @@ export function Header() {
 // ---------------------------------------------------------------------------
 
 export function MobileBottomNav() {
+  const { isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
   return (
     <nav
       aria-label="Mobile"
       className="fixed inset-x-0 bottom-0 z-30 flex border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
     >
-      {primaryNavigation.slice(0, 5).map((item) => (
+      {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).slice(0, 5).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}

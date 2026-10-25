@@ -30,6 +30,12 @@ interface AuthContextValue {
    */
   isApprovalSignatory: boolean
   /**
+   * True for a non-administrator designated signatory, whose access is
+   * limited to the Approval Letters module. The backend enforces the same
+   * scope on every request; this only shapes navigation and route guards.
+   */
+  isApprovalLettersOnly: boolean
+  /**
    * True while the signed-in account has not been approved by an
    * administrator: the interface must hide/disable every state-changing
    * action. Backend enforcement is authoritative — this only shapes the UI.
@@ -99,6 +105,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateUser = useCallback((next: User) => setUser(next), [])
 
+  const isApprovalSignatory = Boolean(
+    user?.is_approval_signatory &&
+      (user.role === 'ADMIN' || user.role === 'STAFF'),
+  )
+  // The backend marks a non-administrator signatory as module-scoped. Fall
+  // back to the same derivation so an older payload cannot expose the full
+  // staff navigation to that account.
+  const isApprovalLettersOnly = Boolean(
+    isApprovalSignatory &&
+      (user?.is_approval_letters_only ?? user?.role !== 'ADMIN'),
+  )
+  const isStaff = Boolean(
+    (user?.role === 'ADMIN' || user?.role === 'STAFF') && !isApprovalLettersOnly,
+  )
+
   return (
     <AuthContext.Provider
       value={{
@@ -107,11 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         updateUser,
-        isStaff: user?.role === 'ADMIN' || user?.role === 'STAFF',
-        isApprovalSignatory: Boolean(
-          user?.is_approval_signatory &&
-            (user.role === 'ADMIN' || user.role === 'STAFF'),
-        ),
+        isStaff,
+        isApprovalSignatory,
+        isApprovalLettersOnly,
         isViewOnly: user?.is_view_only ?? false,
       }}
     >

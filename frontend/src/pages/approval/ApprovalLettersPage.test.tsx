@@ -5,7 +5,7 @@ import type { ApprovalLetter, ApprovalLetterPreview } from '@/lib/types'
 /**
  * Black-box-ish tests for the signatory's Approval Letters workspace: the
  * not-authorized state, the pending list + letter preview, the confirmation
- * dialog gating Sign Document, and the signed-letter document/delivery UI.
+ * dialog gating Approve Letter, and the approved-letter document/delivery UI.
  * The backend remains authoritative for every rule — these only pin the UI.
  */
 
@@ -183,22 +183,22 @@ describe('ApprovalLettersPage', () => {
     expect(screen.getAllByText('NORSU-AL-2026-00001').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Francis M. Galon, Ph.D.').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Assistant Campus Director for Administration and Finance/).length).toBeGreaterThan(0)
-    expect(screen.getByText('Sign Document')).toBeInTheDocument()
+    expect(screen.getByText('Approve Letter')).toBeInTheDocument()
     // The unsigned preview notice is visible.
-    expect(screen.getAllByText(/PENDING SIGNATURE/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/PENDING APPROVAL/).length).toBeGreaterThan(0)
   })
 
-  it('requires the confirmation dialog before signing', async () => {
+  it('requires the confirmation dialog before approving', async () => {
     state.pending = [letter()]
     state.letter = letter()
     state.preview = preview()
     render(<ApprovalLettersPage />)
 
-    fireEvent.click(screen.getByText('Sign Document'))
-    // The dialog opens with the mandated wording; nothing signed yet.
+    fireEvent.click(screen.getByText('Approve Letter'))
+    // The dialog opens with the confirmation wording; nothing approved yet.
     expect(
       await screen.findByText(
-        'Are you sure you want to apply the test signature to this reservation approval letter? Please verify the document before proceeding.',
+        'Are you sure you want to approve this reservation approval letter? Please verify the document before proceeding.',
       ),
     ).toBeInTheDocument()
     expect(state.signLetter).not.toHaveBeenCalled()
@@ -207,14 +207,14 @@ describe('ApprovalLettersPage', () => {
     expect(state.signLetter).not.toHaveBeenCalled()
   })
 
-  it('signs after Confirm Signature', async () => {
+  it('approves after Confirm Approval', async () => {
     state.pending = [letter()]
     state.letter = letter()
     state.preview = preview()
     render(<ApprovalLettersPage />)
 
-    fireEvent.click(screen.getByText('Sign Document'))
-    fireEvent.click(await screen.findByText('Confirm Signature'))
+    fireEvent.click(screen.getByText('Approve Letter'))
+    fireEvent.click(await screen.findByText('Confirm Approval'))
     await waitFor(() => expect(state.signLetter).toHaveBeenCalledTimes(1))
   })
 
@@ -237,10 +237,10 @@ describe('ApprovalLettersPage', () => {
     state.preview = preview({ is_signed: true })
     render(<ApprovalLettersPage />)
 
-    fireEvent.click(screen.getByText('Signed'))
+    fireEvent.click(screen.getByText('Approved'))
     expect(await screen.findByText('Download PDF')).toBeInTheDocument()
     expect(screen.getByText('Download DOCX')).toBeInTheDocument()
-    expect(screen.queryByText('Sign Document')).not.toBeInTheDocument()
+    expect(screen.queryByText('Approve Letter')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Download PDF'))
     await waitFor(() =>

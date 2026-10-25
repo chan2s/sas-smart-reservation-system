@@ -328,15 +328,20 @@ class User(AbstractUser):
     )
     # Designated approval-letter signatory (the Assistant Campus Director for
     # Administration and Finance). Granted ONLY by an administrator through
-    # Django admin / the seed command; it never broadens any other permission —
-    # it only allows signing pending approval letters (and only together with
-    # ``is_sas_staff``, checked by the API's permission class).
+    # Django admin / the seed command.
+    #
+    # The designation is deliberately SCOPED: a staff account holding it is
+    # limited to the Approval Letters module (see ``is_approval_letters_only``)
+    # and loses every other SAS-staff capability. The printed name/position
+    # come from ``approval_letters.constants``; this flag only authorizes the
+    # approval action on pending letters.
     is_approval_signatory = models.BooleanField(
         default=False,
         db_index=True,
         help_text=(
-            "May sign reservation approval letters as the designated campus "
-            "signatory. Granted only by an administrator."
+            "May approve reservation approval letters as the designated campus "
+            "signatory. A non-administrator holding this designation can only "
+            "access the Approval Letters module."
         ),
     )
     # Free-text NORSU unit / department (legacy field, still used by the
@@ -375,7 +380,10 @@ class User(AbstractUser):
         super().clean()
         if not self.is_approval_signatory:
             return
-        if not self.is_sas_staff:
+        # Check the stored role, not ``is_sas_staff``: a designated staff
+        # signatory deliberately reports ``is_sas_staff == False`` so the
+        # designation cannot carry any other staff permission with it.
+        if self.role not in (self.Role.ADMIN, self.Role.STAFF):
             raise ValidationError({
                 "is_approval_signatory": "Only an administrator or SAS staff account can be designated.",
             })
@@ -422,8 +430,35 @@ class User(AbstractUser):
         return not self.is_approved
 
     @property
+    def is_approval_letters_only(self) -> bool:
+        """True when this account is scoped to the Approval Letters module.
+
+        The designated signatory is a SAS STAFF account whose only function is
+        to review and approve reservation approval letters. It must not inherit
+        the staff role's reservation, facility, equipment, analytics, or user
+        management access, so a non-administrator holding the designation is
+        treated as module-scoped everywhere authorization is decided.
+
+        Administrators are exempt: an administrator who is also designated
+        keeps their full administrator capabilities.
+        """
+        return bool(self.is_approval_signatory and not self.is_admin)
+
+    @property
     def is_sas_staff(self) -> bool:
-        return self.role in (self.Role.ADMIN, self.Role.STAFF)
+        """Administrator or SAS staff — never the module-scoped signatory.
+
+        The designated signatory is deliberately excluded even though its
+        stored ``role`` is STAFF: granting staff access would expose every
+        administrator-only module, which the designation must never do. The
+        Approval Letters API authorizes it through ``is_approval_signatory``
+        (and the account-approval permission) instead.
+        """
+        if self.role == self.Role.ADMIN:
+            return True
+        if self.is_approval_signatory:
+            return False
+        return self.role == self.Role.STAFF
 
     # -- Affiliation helpers -------------------------------------------
 

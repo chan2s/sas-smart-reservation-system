@@ -4,6 +4,9 @@ import type { Notification } from '@/lib/types'
 
 const state = vi.hoisted(() => ({
   isStaff: true,
+  role: 'ADMIN' as 'ADMIN' | 'STAFF' | 'REQUESTER',
+  isApprovalSignatory: false,
+  isApprovalLettersOnly: false,
   unread: 2,
   markRead: vi.fn(),
   markAll: vi.fn(),
@@ -22,9 +25,17 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
-    user: { id: 1, role: state.isStaff ? 'ADMIN' : 'REQUESTER', display_name: 'Admin User' },
+    user: {
+      id: 1,
+      role: state.role,
+      display_name: 'Admin User',
+      is_approval_signatory: state.isApprovalSignatory,
+      is_approval_letters_only: state.isApprovalLettersOnly,
+    },
     logout: vi.fn(),
     isStaff: state.isStaff,
+    isApprovalSignatory: state.isApprovalSignatory,
+    isApprovalLettersOnly: state.isApprovalLettersOnly,
     isViewOnly: false,
   }),
 }))
@@ -66,6 +77,9 @@ function openBell() {
 
 beforeEach(() => {
   state.isStaff = true
+  state.role = 'ADMIN'
+  state.isApprovalSignatory = false
+  state.isApprovalLettersOnly = false
   state.unread = 2
   state.loading = false
   state.error = false
@@ -145,5 +159,22 @@ describe('Header notification center', () => {
     render(<Header />)
     openBell()
     expect(screen.getByText("Couldn't load notifications")).toBeTruthy()
+  })
+
+  it('gives the module-scoped signatory only the Approval Letters workspace', () => {
+    state.isStaff = false
+    state.role = 'STAFF'
+    state.isApprovalSignatory = true
+    state.isApprovalLettersOnly = true
+    render(<Header />)
+
+    expect(screen.getAllByText('Approval Letters').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reservations')).not.toBeInTheDocument()
+    expect(screen.queryByText('Facilities')).not.toBeInTheDocument()
+    expect(screen.queryByText('Equipment')).not.toBeInTheDocument()
+    expect(screen.queryByText('Analytics')).not.toBeInTheDocument()
+    // The search shortcut must not lead to the reservation module.
+    expect(screen.queryByRole('button', { name: /search reservations/i })).not.toBeInTheDocument()
   })
 })

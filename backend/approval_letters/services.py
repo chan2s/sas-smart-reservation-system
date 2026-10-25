@@ -5,8 +5,9 @@ Rules the whole module enforces:
 * A letter is created ONCE per approved reservation (``OneToOneField`` +
   ``get_or_create``) — repeated approvals, re-approvals after a change
   request, and concurrent approvals can never duplicate it.
-* Only the designated signatory (an SAS-staff account granted the
-  ``is_approval_signatory`` flag) may sign, verified server-side.
+* Only the designated signatory (an account granted the
+  ``is_approval_signatory`` flag) may approve/sign, verified server-side.
+  The designation scopes a non-administrator to this module only.
 * A letter is signed at most once; every attempt revalidates under a row lock.
 * Email delivery NEVER undoes a signature: it runs after the signing
   transaction commits and only ever updates the letter's email bookkeeping.
@@ -181,16 +182,21 @@ _SIGNABLE_RESERVATION_STATUSES = frozenset({
 
 
 def _assert_can_sign(actor) -> None:
-    """Server-side authorization for signing. Never trusts the frontend."""
+    """Server-side authorization for approving. Never trusts the frontend.
+
+    The designation is the sole authorization: administrator status without
+    it is refused, and a staff role is not required (the designated signatory
+    is intentionally scoped and no longer reports as SAS staff).
+    """
     if actor is None or not getattr(actor, "is_authenticated", False):
-        raise PermissionDenied("Authentication is required to sign letters.")
-    if not getattr(actor, "is_sas_staff", False):
+        raise PermissionDenied("Authentication is required to approve letters.")
+    if not getattr(actor, "is_approved", True):
         raise PermissionDenied(
-            "Only SAS staff can be designated to sign approval letters."
+            "Your account is pending administrator approval and cannot approve letters."
         )
     if not getattr(actor, "is_approval_signatory", False):
         raise PermissionDenied(
-            "Only the designated approval-letter signatory can sign documents."
+            "Only the designated approval-letter signatory can approve letters."
         )
 
 
@@ -262,10 +268,10 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
             object_id=locked.letter_id,
             object_repr=f"Reservation {reservation.reservation_id}",
             detail=(
-                "Test signature applied by the designated signatory; finalized "
-                "PDF"
-                + " and DOCX"
-                + " generated. TEST SIGNATURE — not a verified digital signature."
+                f"Approval recorded by the designated signatory "
+                f"(user id {getattr(actor, 'pk', None)}) at {now.isoformat()}; "
+                "finalized PDF and DOCX generated from the institutional "
+                "template. TEST SIGNATURE — not a verified digital signature."
             ),
         )
         AuditLog.record(

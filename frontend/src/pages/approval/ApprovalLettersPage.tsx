@@ -41,10 +41,10 @@ import type { ApprovalLetter } from '@/lib/types'
 /**
  * The designated signatory's Approval Letters dashboard.
  *
- * Pending letters await the test signature; signed letters expose their
- * finalized documents and email delivery state. The Sign Document button is
- * a UX gate only — the backend re-verifies the signatory designation and the
- * letter's pending state on every request.
+ * Pending letters await the designated signatory's explicit approval; approved
+ * letters expose their finalized documents and email delivery state. The
+ * Approve Letter button is a UX gate only — the backend re-verifies the
+ * signatory designation and the letter's pending state on every request.
  *
  * Layout: the whole workspace lives inside one centered, max-width container
  * so the heading, tabs, list and details share a single alignment axis. The
@@ -106,7 +106,7 @@ export function ApprovalLettersPage() {
           <EmptyState
             icon={<ShieldCheck className="size-5" />}
             title="Not authorized"
-            description="Only the designated signatory — the Assistant Campus Director for Administration and Finance — can view and sign approval letters. The backend verifies this on every request."
+            description="Only the designated signatory — the Assistant Campus Director for Administration and Finance — can view and approve approval letters. The backend verifies this on every request."
           />
         </Card>
       </div>
@@ -118,15 +118,15 @@ export function ApprovalLettersPage() {
       <PageHeader
         eyebrow="Staff workspace"
         title="Approval Letters"
-        description="Review approved reservations and sign the formal approval letters. Signing applies the campus test signature, finalizes the documents, and emails the signed PDF to the requester."
+        description="Review reservation approval letters and approve them. Approving records your account and timestamp, finalizes the institutional documents, and emails them to the requester."
       />
 
       <Tabs
         className="mt-6"
         stretch
         items={[
-          { key: 'pending', label: 'Pending Signature', count: pendingCount },
-          { key: 'signed', label: 'Signed', count: signedCount },
+          { key: 'pending', label: 'Pending Approval', count: pendingCount },
+          { key: 'signed', label: 'Approved', count: signedCount },
         ]}
         active={box}
         onChange={(key) => setBox(key as Box)}
@@ -142,16 +142,16 @@ export function ApprovalLettersPage() {
           ) : letters.length === 0 ? (
             <EmptyState
               icon={<FileText className="size-5" />}
-              title={box === 'pending' ? 'No letters awaiting signature' : 'No signed letters yet'}
+              title={box === 'pending' ? 'No letters awaiting approval' : 'No approved letters yet'}
               description={
                 box === 'pending'
                   ? 'Approval letters appear here automatically after a reservation is approved.'
-                  : 'Letters you sign will be listed here with their documents and delivery status.'
+                  : 'Letters you approve will be listed here with their finalized documents and delivery status.'
               }
             />
           ) : (
             <ul
-              aria-label={box === 'pending' ? 'Letters pending signature' : 'Signed letters'}
+              aria-label={box === 'pending' ? 'Letters pending approval' : 'Approved letters'}
               className="max-h-[32rem] divide-y divide-line overflow-y-auto lg:max-h-[calc(100dvh-18rem)]"
             >
               {letters.map((letter) => (
@@ -181,7 +181,7 @@ export function ApprovalLettersPage() {
               key={selectedId}
               letterId={selectedId}
               onSigned={() => {
-                toast('Letter signed. The finalized documents were generated and the requester is being emailed.')
+                toast('Letter approved. The finalized documents were generated and the requester is being emailed.')
               }}
               onEmailRetried={(sent) => {
                 if (sent) toast('Approval letter email sent to the requester.')
@@ -249,6 +249,15 @@ function letterStatusTone(status: string) {
   }
 }
 
+/**
+ * Display the approval outcome using the module's vocabulary while the
+ * database keeps the project's existing letter statuses (PENDING_SIGNATURE →
+ * SIGNED/SENT/EMAIL_FAILED). The reservation's own status is never merged in.
+ */
+function letterStatusLabel(status: string) {
+  return status === 'PENDING_SIGNATURE' ? 'Pending approval' : 'Approved'
+}
+
 function emailStatusTone(status: string) {
   switch (status) {
     case 'SENT':
@@ -288,7 +297,7 @@ function LetterListItem({
             {letter.letter_id}
           </span>
           <Badge tone={letterStatusTone(letter.status)} className="shrink-0">
-            {letter.status_label}
+            {letterStatusLabel(letter.status)}
           </Badge>
         </span>
         <span className="min-w-0 text-sm break-words text-ink">{letter.event_name}</span>
@@ -409,7 +418,7 @@ function LetterDetail({
               <p className="text-[11px] font-semibold tracking-[0.14em] break-words text-muted uppercase">
                 {letter.letter_id}
               </p>
-              <Badge tone={letterStatusTone(letter.status)}>{letter.status_label}</Badge>
+              <Badge tone={letterStatusTone(letter.status)}>{letterStatusLabel(letter.status)}</Badge>
             </div>
             <h2 className="mt-1.5 text-xl font-semibold tracking-tight break-words text-ink sm:text-2xl">
               {letter.event_name}
@@ -436,7 +445,7 @@ function LetterDetail({
                 onClick={() => setConfirming(true)}
                 loading={signMutation.isPending}
               >
-                Sign Document
+                Approve Letter
               </Button>
             )}
             {letter.has_signed_pdf && (
@@ -477,10 +486,10 @@ function LetterDetail({
           </div>
           <div className="min-w-0">
             <dt className="text-[11px] font-semibold tracking-[0.1em] text-muted uppercase">
-              Signature timestamp
+              Approval timestamp
             </dt>
             <dd className="mt-1 break-words text-ink">
-              {letter.signed_at ? formatDateTime(letter.signed_at) : 'Awaiting signature'}
+              {letter.signed_at ? formatDateTime(letter.signed_at) : 'Awaiting approval'}
             </dd>
           </div>
           <div className="min-w-0 sm:col-span-2">
@@ -579,8 +588,8 @@ function LetterDetail({
           title="Letter preview"
           description={
             letter.has_signed_pdf
-              ? 'The signed document as emailed to the requester'
-              : 'The complete letter, exactly as it will be signed'
+              ? 'The approved document as emailed to the requester'
+              : 'The complete letter, exactly as it will be approved'
           }
         />
         <LetterPreview letterId={letter.id} />
@@ -590,19 +599,20 @@ function LetterDetail({
       <ConfirmDialog
         open={confirming}
         onClose={() => setConfirming(false)}
-        title="Confirm Digital Signature"
-        description="Are you sure you want to apply the test signature to this reservation approval letter? Please verify the document before proceeding."
+        title="Approve Letter"
+        description="Are you sure you want to approve this reservation approval letter? Please verify the document before proceeding."
         recordName={`${letter.letter_id} · ${letter.reservation_reference}`}
         tone="warning"
-        confirmLabel="Confirm Signature"
+        confirmLabel="Confirm Approval"
         cancelLabel="Cancel"
         onConfirm={async () => {
           await handleSign()
         }}
       >
         <p className="rounded-lg bg-soft px-3 py-2 text-[13px] text-body">
-          Signing applies the campus <strong>test signature</strong>, generates the
-          finalized PDF and DOCX, and emails the signed PDF to{' '}
+          Approving records your account and the approval timestamp, applies the
+          campus <strong>test signature</strong> required by the existing
+          workflow, generates the finalized PDF and DOCX, and emails them to{' '}
           <strong>{letter.requester_name}</strong>. This cannot be undone.
         </p>
       </ConfirmDialog>
@@ -745,8 +755,8 @@ function LetterPreview({ letterId }: { letterId: number }) {
 
         {!preview.is_signed && (
           <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] font-semibold text-amber-700">
-            PENDING SIGNATURE — this preview is an UNSIGNED copy. It becomes the
-            finalized document only after the designated signatory signs it.
+            PENDING APPROVAL — this preview is an UNSIGNED copy. It becomes the
+            finalized document only after the designated signatory approves it.
           </p>
         )}
 
@@ -797,8 +807,8 @@ function LetterPreview({ letterId }: { letterId: number }) {
           <p className="text-[13px] break-words text-body">{preview.signatory_position}</p>
           <p className="mt-1 text-xs break-words text-muted italic">
             {preview.signed_at
-              ? `Signed on ${formatDateTime(preview.signed_at)} (system time)`
-              : 'Awaiting signature'}
+              ? `Approved on ${formatDateTime(preview.signed_at)} (system time)`
+              : 'Awaiting approval'}
           </p>
           <p className="mt-2 text-[11px] leading-relaxed text-muted italic">
             {preview.test_signature_disclaimer}

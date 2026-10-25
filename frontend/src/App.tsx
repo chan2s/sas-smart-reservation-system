@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { OfflineBanner } from '@/components/offline/OfflineBanner'
 import { PwaNotices } from '@/components/pwa/PwaNotices'
@@ -118,7 +118,8 @@ function PageLoader() {
 }
 
 function Protected() {
-  const { user, loading } = useAuth()
+  const { user, loading, isApprovalLettersOnly } = useAuth()
+  const location = useLocation()
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-soft">
@@ -127,6 +128,12 @@ function Protected() {
     )
   }
   if (!user) return <Navigate to="/login" replace />
+  // The designated signatory's account is scoped to the Approval Letters
+  // module. The backend refuses every other API; this guard keeps the SPA
+  // from ever rendering those pages when one is reached by direct URL.
+  if (isApprovalLettersOnly && location.pathname !== '/approval-letters') {
+    return <Navigate to="/approval-letters" replace />
+  }
   return <AppShell />
 }
 
@@ -167,6 +174,26 @@ function RequireStaff({ children }: { children: ReactNode }) {
   }
   if (!user) return <Navigate to="/login" replace />
   if (!isStaff) return <Navigate to="/dashboard" replace />
+  return children
+}
+
+/**
+ * Guard for the Approval Letters workspace. Mirrors the backend's
+ * ``IsApprovalSignatory`` permission: the explicit designation is required,
+ * not merely a staff role, so an unauthorized account is redirected rather
+ * than shown a page whose API would refuse it.
+ */
+function RequireApprovalSignatory({ children }: { children: ReactNode }) {
+  const { user, loading, isApprovalSignatory } = useAuth()
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-soft">
+        <Spinner />
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (!isApprovalSignatory) return <Navigate to="/dashboard" replace />
   return children
 }
 
@@ -266,15 +293,15 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
-          {/* Approval-letter signatory workspace. The page itself renders a
-              "not authorized" state for non-signatories; the backend verifies
-              the designation on every sign/list request regardless. */}
+          {/* Approval-letter signatory workspace. Only the explicitly
+              designated account may open it; the backend verifies the
+              designation on every list/approval request regardless. */}
           <Route
             path="/approval-letters"
             element={
-              <RequireStaff>
+              <RequireApprovalSignatory>
                 <ApprovalLettersPage />
-              </RequireStaff>
+              </RequireApprovalSignatory>
             }
           />
           <Route
