@@ -29,7 +29,7 @@ from facilities.models import Facility
 from reservations.models import Reservation
 
 
-from .models import LoginActivity, User
+from .models import AuditLog, LoginActivity, User
 
 PASSWORD = "pass1234!"
 
@@ -532,3 +532,422 @@ class GoogleCallbackRecordsLoginTests(APITestCase):
         self.assertIn("access=", response.url)
         activity = LoginActivity.objects.get(email="recorded@gmail.com")
         self.assertEqual(activity.method, LoginActivity.Method.GOOGLE)
+
+
+# ---------------------------------------------------------------------------
+# Account creation / editing / password reset
+# ---------------------------------------------------------------------------
+
+USERS_URL = "/api/auth/users/"
+USER_DETAIL_URL = "/api/auth/users/{pk}/"
+USER_PASSWORD_URL = "/api/auth/users/{pk}/password/"
+
+
+def _create_payload(**overrides):
+    payload = {
+        "username": "newreq",
+        "email": "newreq@school.edu",
+        "first_name": "Nina",
+        "last_name": "Reyes",
+        "role": User.Role.REQUESTER,
+        "password": "InitialPass123!",
+    }
+    payload.update(overrides)
+    return payload
+
+
+class AdminUserCreationTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin",
+            password=PASSWORD,
+            email="admin@school.edu",
+            role=User.Role.ADMIN,
+        )
+        self.requester = User.objects.create_user(
+            username="req", password=PASSWORD, email="req@school.edu"
+        )
+        self.staff = User.objects.create_user(
+            username="staff",
+            password=PASSWORD,
+            email="staff@school.edu",
+            role=User.Role.STAFF,
+        )
+        self.client = _client_as(self.admin)
+
+    def test_admin_creates_requester_with_hashed_password(self):
+        response = self.client.post(
+            USERS_URL, _create_payload(), format="json"
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        user = User.objects.get(username="newreq")
+        self.assertEqual(user.role, User.Role.REQUESTER)
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertTrue(user.check_password("InitialPass123!"))
+        self.assertNotIn("password", response.data)
+        self.assertNotIn("temporary_password", response.data)
+
+        login = APIClient().post(
+            "/api/auth/login/",
+            {"username": "newreq", "password": "InitialPass123!"},
+        )
+        self.assertEqual(login.status_code, 200, login.data)
+
+    def test_admin_creates_another_administrator(self):
+        response = self.client.post(
+            USERS_URL,
+            _create_payload(
+                username="secondadmin",
+                email="secondadmin@school.edu",
+                role=User.Role.ADMIN,
+                password="AdminPass123!",
+            ),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        user = User.objects.get(username="secondadmin")
+        self.assertEqual(user.role, User.Role.ADMIN)
+        self.assertTrue(user.is_admin)
+        self.assertTrue(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertTrue(user.check_password("AdminPass123!"))
+        self.assertEqual(_client_as(user).get(USERS_URL).status_code, 200)
+
+    def test_omitted_password_generates_one_time_temporary_password(self):
+        payload = _create_payload(username="tempuser", email="temp@school.edu")
+        payload.pop("password")
+
+        response = self.client.post(USERS_URL, payload, format="json")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        temporary = response.data.get("temporary_password")
+        self.assertTrue(temporary)
+        user = User.objects.get(username="tempuser")
+        self.assertTrue(user.check_password(temporary))
+        self.assertNotIn("password", response.data)
+
+        login = APIClient().post(
+            "/api/auth/login/",
+            {"username": "tempuser", "password": temporary},
+        )
+        self.assertEqual(login.status_code, 200, login.data)
+
+    def test_duplicate_username_is_rejected(self):
+        response = self.client.post(
+            USERS_URL, _create_payload(username="admin"), format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("username", response.data)
+        self.assertFalse(User.objects.filter(username="admin").count() > 1)
+
+    def test_duplicate_email_is_rejected_case_insensitively(self):
+        response = self.client.post(
+            USERS_URL,
+            _create_payload(username="otheremail", email="ADMIN@SCHOOL.EDU"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.data)
+        self.assertFalse(User.objects.filter(username="otheremail").exists())
+
+    def test_invalid_role_is_rejected(self):
+        invalid = self.client.post(
+            USERS_URL, _create_payload(role="SUPERUSER"), format="json"
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("role", invalid.data)
+
+    def test_role_defaults_to_requester(self):
+        payload = _create_payload(username="defaultrole", email="default@school.edu")
+        payload.pop("role")
+        response = self.client.post(USERS_URL, payload, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["role"], User.Role.REQUESTER)
+        self.assertFalse(response.data["is_staff"])
+        self.assertFalse(response.data["is_superuser"])
+
+    def test_weak_password_is_rejected(self):
+        response = self.client.post(
+            USERS_URL, _create_payload(password="123"), format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password", response.data)
+        self.assertFalse(User.objects.filter(username="newreq").exists())
+
+    def test_creation_records_an_audit_entry(self):
+        self.client.post(USERS_URL, _create_payload(), format="json")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.USER_CREATED, actor=self.admin
+            ).exists()
+        )
+
+    def test_requester_staff_and_anonymous_cannot_create(self):
+        for user in (self.requester, self.staff):
+            with self.subTest(role=user.role):
+                response = _client_as(user).post(
+                    USERS_URL, _create_payload(username=f"by{user.username}"), format="json"
+                )
+                self.assertEqual(response.status_code, 403)
+        anonymous = APIClient().post(USERS_URL, _create_payload(), format="json")
+        self.assertEqual(anonymous.status_code, 401)
+        self.assertFalse(User.objects.filter(username="newreq").exists())
+
+
+class AdminUserUpdateTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin",
+            password=PASSWORD,
+            email="admin@school.edu",
+            role=User.Role.ADMIN,
+        )
+        self.target = User.objects.create_user(
+            username="target",
+            password=PASSWORD,
+            email="target@school.edu",
+        )
+        self.superuser = User.objects.create_superuser(
+            username="root", password=PASSWORD, email="root@school.edu"
+        )
+        self.client = _client_as(self.admin)
+
+    def test_admin_retrieves_one_account(self):
+        response = self.client.get(USER_DETAIL_URL.format(pk=self.target.pk))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["username"], "target")
+        self.assertNotIn("password", response.data)
+
+    def test_admin_edits_profile_fields(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {
+                "first_name": "Teresa",
+                "last_name": "Cruz",
+                "email": "teresa@school.edu",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.first_name, "Teresa")
+        self.assertEqual(self.target.last_name, "Cruz")
+        self.assertEqual(self.target.email, "teresa@school.edu")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.USER_UPDATED, actor=self.admin
+            ).exists()
+        )
+
+    def test_admin_promotes_requester_and_staff_flag_follows_role(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"role": User.Role.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.role, User.Role.ADMIN)
+        self.assertTrue(self.target.is_admin)
+        self.assertTrue(self.target.is_staff)
+        self.assertFalse(self.target.is_superuser)
+
+        demote = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"role": User.Role.STAFF},
+            format="json",
+        )
+        self.assertEqual(demote.status_code, 200, demote.data)
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.role, User.Role.STAFF)
+        self.assertFalse(self.target.is_staff)
+
+    def test_privilege_flags_in_payload_are_ignored(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {
+                "is_staff": True,
+                "is_superuser": True,
+                "is_active": False,
+                "is_approval_signatory": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.target.refresh_from_db()
+        self.assertFalse(self.target.is_staff)
+        self.assertFalse(self.target.is_superuser)
+        self.assertTrue(self.target.is_active)
+        self.assertFalse(self.target.is_approval_signatory)
+
+    def test_admin_cannot_change_own_role(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.admin.pk),
+            {"role": User.Role.REQUESTER},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role, User.Role.ADMIN)
+
+    def test_superuser_role_cannot_be_changed(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.superuser.pk),
+            {"role": User.Role.STAFF},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.superuser.refresh_from_db()
+        self.assertEqual(self.superuser.role, User.Role.ADMIN)
+
+    def test_duplicate_username_and_email_are_rejected_on_update(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"username": "admin"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("username", response.data)
+
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"email": "ADMIN@SCHOOL.EDU"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.data)
+
+    def test_missing_account_returns_404(self):
+        self.assertEqual(
+            self.client.get(USER_DETAIL_URL.format(pk=999999)).status_code, 404
+        )
+        self.assertEqual(
+            self.client.patch(
+                USER_DETAIL_URL.format(pk=999999), {"first_name": "X"}, format="json"
+            ).status_code,
+            404,
+        )
+
+    def test_non_admins_and_anonymous_cannot_read_or_edit(self):
+        staff = User.objects.create_user(
+            username="staff", password=PASSWORD, role=User.Role.STAFF
+        )
+        requester = User.objects.create_user(username="req", password=PASSWORD)
+        for user in (staff, requester):
+            with self.subTest(role=user.role):
+                client = _client_as(user)
+                self.assertEqual(
+                    client.get(USER_DETAIL_URL.format(pk=self.target.pk)).status_code,
+                    403,
+                )
+                self.assertEqual(
+                    client.patch(
+                        USER_DETAIL_URL.format(pk=self.target.pk),
+                        {"first_name": "Hacked"},
+                        format="json",
+                    ).status_code,
+                    403,
+                )
+        self.assertEqual(
+            APIClient().get(USER_DETAIL_URL.format(pk=self.target.pk)).status_code,
+            401,
+        )
+
+
+class AdminUserPasswordResetTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin",
+            password=PASSWORD,
+            email="admin@school.edu",
+            role=User.Role.ADMIN,
+        )
+        self.target = User.objects.create_user(
+            username="target",
+            password="OldPass123!",
+            email="target@school.edu",
+        )
+        self.client = _client_as(self.admin)
+
+    def test_admin_sets_a_new_password(self):
+        response = self.client.post(
+            USER_PASSWORD_URL.format(pk=self.target.pk),
+            {"password": "NewPass123!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["temporary_password"])
+        self.assertNotIn("password", response.data)
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.check_password("NewPass123!"))
+        self.assertFalse(self.target.check_password("OldPass123!"))
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.USER_PASSWORD_RESET, actor=self.admin
+            ).exists()
+        )
+
+    def test_omitted_password_generates_temporary_password(self):
+        response = self.client.post(
+            USER_PASSWORD_URL.format(pk=self.target.pk), {}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        temporary = response.data["temporary_password"]
+        self.assertTrue(temporary)
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.check_password(temporary))
+
+        login = APIClient().post(
+            "/api/auth/login/",
+            {"username": "target", "password": temporary},
+        )
+        self.assertEqual(login.status_code, 200, login.data)
+
+    def test_weak_password_is_rejected_and_old_password_kept(self):
+        response = self.client.post(
+            USER_PASSWORD_URL.format(pk=self.target.pk),
+            {"password": "123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password", response.data)
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.check_password("OldPass123!"))
+
+    def test_non_admins_and_anonymous_cannot_reset(self):
+        staff = User.objects.create_user(
+            username="staff", password=PASSWORD, role=User.Role.STAFF
+        )
+        requester = User.objects.create_user(username="req", password=PASSWORD)
+        for user in (staff, requester):
+            with self.subTest(role=user.role):
+                response = _client_as(user).post(
+                    USER_PASSWORD_URL.format(pk=self.target.pk),
+                    {"password": "Hacked123!"},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            APIClient()
+            .post(
+                USER_PASSWORD_URL.format(pk=self.target.pk),
+                {"password": "Hacked123!"},
+                format="json",
+            )
+            .status_code,
+            401,
+        )
+        self.target.refresh_from_db()
+        self.assertFalse(self.target.check_password("Hacked123!"))
+
+    def test_missing_account_returns_404(self):
+        self.assertEqual(
+            self.client.post(
+                USER_PASSWORD_URL.format(pk=999999), {}, format="json"
+            ).status_code,
+            404,
+        )

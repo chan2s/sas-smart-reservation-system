@@ -1,6 +1,10 @@
 import type {
   AdminUser,
+  AdminUserCreatePayload,
+  AdminUserCreateResult,
+  AdminUserPasswordResult,
   AdminUserStatusResult,
+  AdminUserUpdatePayload,
   Affiliation,
   ApprovalLetter,
   ApprovalLetterPreview,
@@ -313,7 +317,7 @@ export const api = {
       results: AuditLogEntry[]
     }>(`/api/auth/audit-log/${suffix}`)
   },
-  /** Administrator user management (list + delete). */
+  /** Administrator user management (list / create / edit / reset / delete). */
   adminUsers: (
     params: { search?: string; role?: Role; is_active?: string; page?: number } = {},
   ) => {
@@ -325,6 +329,19 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return api.get<Paginated<AdminUser>>(`/api/auth/users/${suffix}`)
   },
+  createUser: (payload: AdminUserCreatePayload) =>
+    api.post<AdminUserCreateResult>('/api/auth/users/', payload),
+  updateUser: (id: number, payload: AdminUserUpdatePayload) =>
+    api.patch<AdminUser>(`/api/auth/users/${id}/`, payload),
+  /**
+   * Replace an account's password. Omitting `password` asks the backend to
+   * generate a one-time temporary password returned in the response.
+   */
+  resetUserPassword: (id: number, password?: string) =>
+    api.post<AdminUserPasswordResult>(
+      `/api/auth/users/${id}/password/`,
+      password ? { password } : {},
+    ),
   deleteUser: (id: number) => api.delete<void>(`/api/auth/users/${id}/`),
   /**
    * Activate or deactivate an account. Deactivation only clears the backend's

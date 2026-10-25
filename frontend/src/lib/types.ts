@@ -1075,6 +1075,35 @@ export interface AdminUser {
   is_protected: boolean
 }
 
+/** Editable payload for administrator account creation. */
+export interface AdminUserCreatePayload {
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  role: Role
+  /** Omit to have the backend generate a one-time temporary password. */
+  password?: string
+}
+
+/** Editable profile/role fields for an existing account. */
+export interface AdminUserUpdatePayload {
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  role: Role
+}
+
+/**
+ * A newly created account. `temporary_password` is present only when the
+ * administrator did not supply one; it is returned exactly once and is never
+ * available from the list/detail endpoints.
+ */
+export interface AdminUserCreateResult extends AdminUser {
+  temporary_password?: string | null
+}
+
 /**
  * Result of an administrator deactivating or reactivating an account.
  * `user` is the updated row, so the caller never has to guess the new status.
@@ -1082,6 +1111,12 @@ export interface AdminUser {
 export interface AdminUserStatusResult {
   detail: string
   user: AdminUser
+}
+
+/** Result of a password reset; a generated password is shown exactly once. */
+export interface AdminUserPasswordResult {
+  detail: string
+  temporary_password: string | null
 }
 
 /** How an account authenticated. */

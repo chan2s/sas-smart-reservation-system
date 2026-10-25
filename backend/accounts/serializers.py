@@ -1,3 +1,6 @@
+import secrets
+import string
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth.password_validation import validate_password
@@ -525,6 +528,176 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if caller is not None and caller.pk == obj.pk:
             return True
         return bool(obj.is_superuser)
+
+
+#: Alphabet for generated temporary passwords. Mixed case + digits + symbols
+#: keeps them clear of Django's numeric/common-password validators.
+_TEMP_PASSWORD_ALPHABET = string.ascii_letters + string.digits + "!@#$%^&*"
+
+
+def generate_temporary_password(length: int = 14) -> str:
+    """Return a strong one-time password for administrator-created accounts."""
+    while True:
+        value = "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))
+        if (
+            any(char.islower() for char in value)
+            and any(char.isupper() for char in value)
+            and any(char.isdigit() for char in value)
+        ):
+            return value
+
+
+class _AdminIdentityValidationMixin:
+    """Shared uniqueness checks for administrator-managed accounts.
+
+    Django's username uniqueness is exact-case; the management API additionally
+    rejects case-only duplicates so two accounts cannot look identical in the
+    table. Email is not unique at the database level, so it is checked here.
+    """
+
+    def validate_username(self, value):
+        value = (value or "").strip()
+        qs = User.objects.filter(username__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("An account with this username already exists.")
+        return value
+
+    def validate_email(self, value):
+        value = (value or "").strip()
+        if not value:
+            return value
+        qs = User.objects.filter(email__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("An account with this email already exists.")
+        return value
+
+
+class AdminUserCreateSerializer(_AdminIdentityValidationMixin, serializers.ModelSerializer):
+    """Administrator account creation.
+
+    The account is always created in its intended role but never as a Django
+    superuser. ``is_staff`` is derived from ``role == ADMIN`` (matching the
+    project's existing authorization design), and ``is_superuser`` is always
+    False: application administration is controlled by the custom role, not by
+    a privilege flag supplied in the request body.
+
+    A password may be supplied. When omitted (or blank), a strong temporary
+    password is generated and returned exactly once by the view.
+    """
+
+    email = serializers.EmailField(required=True)
+    role = serializers.ChoiceField(choices=User.Role.choices, default=User.Role.REQUESTER)
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+            "password",
+        )
+
+    def validate(self, attrs):
+        raw_password = attrs.get("password") or ""
+        generated = raw_password == ""
+        password = generate_temporary_password() if generated else raw_password
+        if not generated:
+            candidate = User(
+                username=attrs.get("username", ""),
+                first_name=attrs.get("first_name", ""),
+                last_name=attrs.get("last_name", ""),
+                email=attrs.get("email", ""),
+            )
+            try:
+                validate_password(password, candidate)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"password": exc.messages}) from exc
+        attrs["password"] = password
+        attrs["_temporary_password"] = generated
+        return attrs
+
+    def create(self, validated_data):
+        temporary = validated_data.pop("_temporary_password", False)
+        password = validated_data.pop("password")
+        role = validated_data.get("role", User.Role.REQUESTER)
+        user = User.objects.create_user(
+            password=password,
+            is_active=True,
+            is_staff=role == User.Role.ADMIN,
+            is_superuser=False,
+            **validated_data,
+        )
+        self.temporary_password = password if temporary else None
+        return user
+
+
+class AdminUserUpdateSerializer(_AdminIdentityValidationMixin, serializers.ModelSerializer):
+    """Editable profile fields and application role for an existing account.
+
+    ``is_staff`` is kept in sync with the role. ``is_superuser`` and the
+    approval-letter designation are deliberately absent: a request body can
+    never grant either through this endpoint.
+    """
+
+    role = serializers.ChoiceField(choices=User.Role.choices, required=False)
+
+    class Meta:
+        model = User
+        fields = ("username", "email", "first_name", "last_name", "role")
+
+    def update(self, instance, validated_data):
+        for field in ("username", "email", "first_name", "last_name", "role"):
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+        if instance.role == User.Role.ADMIN:
+            instance.is_staff = True
+        elif not instance.is_superuser:
+            instance.is_staff = False
+        instance.save()
+        return instance
+
+
+class AdminUserPasswordSerializer(serializers.Serializer):
+    """Set or generate a new password for an account.
+
+    The plaintext value is never stored. A generated value is returned once by
+    the view so the administrator can hand it to the account owner.
+    """
+
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
+
+    def validate(self, attrs):
+        target = self.context.get("user")
+        if target is None:
+            raise serializers.ValidationError("No account was selected.")
+        raw_password = attrs.get("password") or ""
+        generated = raw_password == ""
+        password = generate_temporary_password() if generated else raw_password
+        if not generated:
+            try:
+                validate_password(password, target)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"password": exc.messages}) from exc
+        attrs["password"] = password
+        attrs["_temporary_password"] = generated
+        return attrs
 
 
 class LoginActivitySerializer(serializers.ModelSerializer):

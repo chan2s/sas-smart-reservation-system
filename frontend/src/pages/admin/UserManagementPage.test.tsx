@@ -4,6 +4,9 @@ import type { AdminUser } from '@/lib/types'
 
 const apiState = vi.hoisted(() => ({
   adminUsers: vi.fn(),
+  createUser: vi.fn(),
+  updateUser: vi.fn(),
+  resetUserPassword: vi.fn(),
   setUserStatus: vi.fn(),
   deleteUser: vi.fn(),
 }))
@@ -11,6 +14,9 @@ const apiState = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => ({
   api: {
     adminUsers: apiState.adminUsers,
+    createUser: apiState.createUser,
+    updateUser: apiState.updateUser,
+    resetUserPassword: apiState.resetUserPassword,
     setUserStatus: apiState.setUserStatus,
     deleteUser: apiState.deleteUser,
   },
@@ -89,6 +95,9 @@ function rowAction(name: string) {
 afterEach(() => {
   cleanup()
   apiState.adminUsers.mockReset()
+  apiState.createUser.mockReset()
+  apiState.updateUser.mockReset()
+  apiState.resetUserPassword.mockReset()
   apiState.setUserStatus.mockReset()
   apiState.deleteUser.mockReset()
 })
@@ -258,5 +267,161 @@ describe('UserManagementPage', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByText('Unable to load users')).toBeInTheDocument())
+  })
+
+  it('creates an account and reveals the generated temporary password once', async () => {
+    apiState.adminUsers.mockResolvedValue(respond([activeUser]))
+    apiState.createUser.mockResolvedValue({
+      ...account({
+        id: 7,
+        username: 'nora',
+        first_name: 'Nora',
+        last_name: 'Cruz',
+        display_name: 'Nora Cruz',
+        email: 'nora@school.edu',
+      }),
+      temporary_password: 'TempPass123!',
+    })
+
+    renderPage()
+    await waitFor(() => expect(screen.getAllByText('Maria Santos').length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add user' }))
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'nora' } })
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'nora@school.edu' } })
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Nora' } })
+    fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Cruz' } })
+    fireEvent.change(screen.getByLabelText('Role', { selector: 'select#user-role' }), {
+      target: { value: 'STAFF' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+
+    await waitFor(() =>
+      expect(apiState.createUser).toHaveBeenCalledWith({
+        username: 'nora',
+        email: 'nora@school.edu',
+        first_name: 'Nora',
+        last_name: 'Cruz',
+        role: 'STAFF',
+      }),
+    )
+    expect(screen.getByText('Created Nora Cruz.')).toBeInTheDocument()
+    expect(screen.getByText('TempPass123!')).toBeInTheDocument()
+    expect(screen.getByText(/shown only once/i)).toBeInTheDocument()
+    await waitFor(() => expect(apiState.adminUsers.mock.calls.length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('shows a readable error when account creation is rejected', async () => {
+    apiState.adminUsers.mockResolvedValue(respond([activeUser]))
+    apiState.createUser.mockRejectedValue(new Error('duplicate'))
+
+    renderPage()
+    await waitFor(() => expect(screen.getAllByText('Maria Santos').length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add user' }))
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'maria' } })
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'maria@school.edu' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Unable to create this account.'))
+  })
+
+  it('edits an account profile and role', async () => {
+    apiState.adminUsers.mockResolvedValue(respond([activeUser]))
+    apiState.updateUser.mockResolvedValue({
+      ...activeUser,
+      first_name: 'Mariel',
+      display_name: 'Mariel Santos',
+      role: 'STAFF',
+      role_label: 'SAS Staff',
+    })
+
+    renderPage()
+    await waitFor(() => expect(screen.getAllByText('Maria Santos').length).toBeGreaterThan(0))
+
+    fireEvent.click(rowAction('Edit Maria Santos'))
+    expect(screen.getByLabelText('First name')).toHaveValue('Maria')
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Mariel' } })
+    fireEvent.change(screen.getByLabelText('Role', { selector: 'select#user-role' }), {
+      target: { value: 'STAFF' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() =>
+      expect(apiState.updateUser).toHaveBeenCalledWith(activeUser.id, {
+        username: 'requester',
+        email: 'maria@school.edu',
+        first_name: 'Mariel',
+        last_name: 'Santos',
+        role: 'STAFF',
+      }),
+    )
+    expect(screen.getByText('Updated Mariel Santos.')).toBeInTheDocument()
+  })
+
+  it('locks the role selector when editing the signed-in administrator', async () => {
+    apiState.adminUsers.mockResolvedValue(
+      respond([
+        account({
+          id: 99,
+          username: 'me',
+          display_name: 'SAS Admin',
+          role: 'ADMIN',
+          role_label: 'Administrator',
+          is_protected: true,
+        }),
+      ]),
+    )
+
+    renderPage()
+    await waitFor(() => expect(screen.getAllByText('SAS Admin').length).toBeGreaterThan(0))
+
+    fireEvent.click(rowAction('Edit SAS Admin'))
+    expect(screen.getByLabelText('Role', { selector: 'select#user-role' })).toBeDisabled()
+    expect(screen.getByText(/role is protected/i)).toBeInTheDocument()
+  })
+
+  it('resets a password with an administrator-supplied value', async () => {
+    apiState.adminUsers.mockResolvedValue(respond([activeUser]))
+    apiState.resetUserPassword.mockResolvedValue({
+      detail: 'Password reset.',
+      temporary_password: null,
+    })
+
+    renderPage()
+    await waitFor(() => expect(screen.getAllByText('Maria Santos').length).toBeGreaterThan(0))
+
+    fireEvent.click(rowAction('Reset password for Maria Santos'))
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'NewPass123!' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Reset password' }))
+
+    await waitFor(() =>
+      expect(apiState.resetUserPassword).toHaveBeenCalledWith(
+        activeUser.id,
+        'NewPass123!',
+      ),
+    )
+    expect(screen.getByText('Password reset.')).toBeInTheDocument()
+  })
+
+  it('shows a generated password returned by a password reset', async () => {
+    apiState.adminUsers.mockResolvedValue(respond([activeUser]))
+    apiState.resetUserPassword.mockResolvedValue({
+      detail: 'Temporary password generated.',
+      temporary_password: 'ResetTemp123!',
+    })
+
+    renderPage()
+    await waitFor(() => expect(screen.getAllByText('Maria Santos').length).toBeGreaterThan(0))
+
+    fireEvent.click(rowAction('Reset password for Maria Santos'))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset password' }))
+
+    await waitFor(() =>
+      expect(apiState.resetUserPassword).toHaveBeenCalledWith(activeUser.id, undefined),
+    )
+    expect(screen.getByText('ResetTemp123!')).toBeInTheDocument()
   })
 })

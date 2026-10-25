@@ -7,8 +7,9 @@ from accounts.permissions import IsSasStaff
 
 from . import oauth_views, organization_views
 from .management_views import (
-    AdminUserDeleteView,
+    AdminUserDetailView,
     AdminUserListView,
+    AdminUserPasswordView,
     AdminUserStatusView,
     LoginActivityListView,
 )
@@ -123,13 +124,19 @@ urlpatterns = [
 
     path("audit-log/", AuditLogView.as_view(), name="audit-log"),
 
-    # Administrator user management (view / deactivate / reactivate / delete).
+    # Administrator user management (create / view / edit / activate /
+    # deactivate / reset password / delete).
     path("users/", AdminUserListView.as_view(), name="user-list"),
-    path("users/<int:pk>/", AdminUserDeleteView.as_view(), name="user-detail"),
+    path("users/<int:pk>/", AdminUserDetailView.as_view(), name="user-detail"),
     path(
         "users/<int:pk>/status/",
         AdminUserStatusView.as_view(),
         name="user-status",
+    ),
+    path(
+        "users/<int:pk>/password/",
+        AdminUserPasswordView.as_view(),
+        name="user-password",
     ),
 
     # Administrator login activity (successful sign-ins, newest first).

@@ -19,7 +19,13 @@ from rest_framework.response import Response
 
 from .models import AuditLog, LoginActivity
 from .permissions import IsAccountApprovedOrReadOnly, IsAdmin
-from .serializers import AdminUserSerializer, LoginActivitySerializer
+from .serializers import (
+    AdminUserCreateSerializer,
+    AdminUserPasswordSerializer,
+    AdminUserSerializer,
+    AdminUserUpdateSerializer,
+    LoginActivitySerializer,
+)
 
 # Read the swapped-in user model directly so the queries below stay readable.
 User = get_user_model()
@@ -32,6 +38,36 @@ User = get_user_model()
 
 def _active_superuser_count() -> int:
     return User.objects.filter(is_superuser=True, is_active=True).count()
+
+
+def _active_admin_count() -> int:
+    """Accounts that can currently administer the system."""
+    return User.objects.filter(role=User.Role.ADMIN, is_active=True).count()
+
+
+def role_change_block_reason(target, caller, new_role: str) -> str:
+    """Why ``target``'s role may not be changed to ``new_role``, or ``""``.
+
+    Guards are server-side and independent of the UI:
+
+    * an administrator cannot change their own role (no accidental lockout);
+    * a superuser is a protected system account whose role invariants are
+      managed by the account manager, never this endpoint;
+    * the last active administrator cannot be demoted.
+    """
+    if new_role == target.role:
+        return ""
+    if caller is not None and caller.pk == target.pk:
+        return "You cannot change your own administrator role."
+    if target.is_superuser:
+        return "Protected system accounts cannot have their role changed."
+    if (
+        target.role == User.Role.ADMIN
+        and target.is_active
+        and _active_admin_count() <= 1
+    ):
+        return "The last active administrator account cannot be demoted."
+    return ""
 
 
 def deletion_block_reason(target, caller) -> str:
@@ -49,6 +85,12 @@ def deletion_block_reason(target, caller) -> str:
         if _active_superuser_count() <= 1:
             return "The last active superuser account cannot be deleted."
         return "Protected system accounts cannot be deleted."
+    if (
+        target.role == User.Role.ADMIN
+        and target.is_active
+        and _active_admin_count() <= 1
+    ):
+        return "The last active administrator account cannot be deleted."
     return ""
 
 
@@ -88,6 +130,12 @@ def status_block_reason(target, caller, *, activating: bool) -> str:
         if _active_superuser_count() <= 1:
             return "The last active superuser account cannot be deactivated."
         return "Protected system accounts cannot be deactivated."
+    if (
+        target.role == User.Role.ADMIN
+        and target.is_active
+        and _active_admin_count() <= 1
+    ):
+        return "The last active administrator account cannot be deactivated."
     return ""
 
 
@@ -114,8 +162,12 @@ class _AdminOnlyMixin:
 # ---------------------------------------------------------------------------
 
 
-class AdminUserListView(_AdminOnlyMixin, generics.ListAPIView):
+class AdminUserListView(_AdminOnlyMixin, generics.ListCreateAPIView):
     """GET /api/auth/users/ — paginated registered-user list (administrators).
+
+    POST /api/auth/users/ — create an account. The body accepts username,
+    email, first/last name, role, and an optional password. When the password
+    is omitted, the response carries a one-time ``temporary_password``.
 
     Filters: ``?search=`` (username / name / email / organization),
     ``?role=`` (ADMIN | STAFF | REQUESTER), ``?is_active=`` (true/false).
@@ -124,6 +176,37 @@ class AdminUserListView(_AdminOnlyMixin, generics.ListAPIView):
     """
 
     serializer_class = AdminUserSerializer
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return AdminUserCreateSerializer
+        return AdminUserSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        AuditLog.record(
+            request.user,
+            AuditLog.Action.USER_CREATED,
+            object_type="user",
+            object_id=user.pk,
+            object_repr=user.display_name,
+            detail=(
+                f"Created account {user.display_name} ({user.email}) "
+                f"with role {user.get_role_display()}"
+            ),
+            request=request,
+        )
+
+        payload = dict(
+            AdminUserSerializer(user, context=self.get_serializer_context()).data
+        )
+        temporary_password = getattr(serializer, "temporary_password", None)
+        if temporary_password:
+            payload["temporary_password"] = temporary_password
+        return Response(payload, status=status.HTTP_201_CREATED)
 
     def get_queryset(self):
         qs = User.objects.select_related("organization_ref").order_by(
@@ -148,19 +231,76 @@ class AdminUserListView(_AdminOnlyMixin, generics.ListAPIView):
         return qs
 
 
-class AdminUserDeleteView(_AdminOnlyMixin, generics.GenericAPIView):
-    """DELETE /api/auth/users/<pk>/ — remove an eligible account.
+class AdminUserDetailView(_AdminOnlyMixin, generics.GenericAPIView):
+    """GET / PATCH / DELETE /api/auth/users/<pk>/ — one account.
 
-    The account is deleted inside a transaction that first *anonymizes*
-    historical reservations (their ``requester`` FK is set to NULL) so the
-    reservation history, audit trail, and login activity all survive. Audit and
-    login rows are denormalized/SET_NULL and need no explicit handling.
+    PATCH edits the permitted profile fields and the application role. Every
+    privilege-bearing flag (``is_staff``, ``is_superuser``, the approval-letter
+    designation, activation) is absent from the serializer, so a manipulated
+    body cannot grant it.
+
+    DELETE removes an eligible account inside a transaction that first
+    *anonymizes* historical reservations (their ``requester`` FK is set to
+    NULL) so the reservation history, audit trail, and login activity all
+    survive. Audit and login rows are denormalized/SET_NULL and need no
+    explicit handling.
     """
 
     serializer_class = AdminUserSerializer
 
     def get_object(self):
         return User.objects.filter(pk=self.kwargs["pk"]).first()
+
+    def get(self, request, *args, **kwargs):
+        target = self.get_object()
+        if target is None:
+            return Response(
+                {"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(self.get_serializer(target).data)
+
+    def patch(self, request, *args, **kwargs):
+        target = self.get_object()
+        if target is None:
+            return Response(
+                {"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = AdminUserUpdateSerializer(
+            target,
+            data=request.data,
+            partial=True,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+
+        new_role = serializer.validated_data.get("role", target.role)
+        reason = role_change_block_reason(target, request.user, new_role)
+        if reason:
+            return Response({"detail": reason}, status=status.HTTP_400_BAD_REQUEST)
+
+        tracked_fields = ("username", "email", "first_name", "last_name", "role")
+        before = {field: getattr(target, field) for field in tracked_fields}
+        user = serializer.save()
+        changed = [
+            field
+            for field in tracked_fields
+            if before[field] != getattr(user, field)
+        ]
+        if changed:
+            AuditLog.record(
+                request.user,
+                AuditLog.Action.USER_UPDATED,
+                object_type="user",
+                object_id=user.pk,
+                object_repr=user.display_name,
+                detail=(
+                    f"Updated account {user.display_name} ({user.email}): "
+                    f"{', '.join(changed)}"
+                ),
+                request=request,
+            )
+        return Response(self.get_serializer(user).data)
 
     def delete(self, request, *args, **kwargs):
         target = self.get_object()
@@ -271,6 +411,64 @@ class AdminUserStatusView(_AdminOnlyMixin, generics.GenericAPIView):
                     "Account activated." if is_active else "Account deactivated."
                 ),
                 "user": self.get_serializer(target).data,
+            }
+        )
+
+
+class AdminUserPasswordView(_AdminOnlyMixin, generics.GenericAPIView):
+    """POST /api/auth/users/<pk>/password/ — securely replace a password.
+
+    Body: ``{"password": "…"}``. Omitting the field (or sending it blank)
+    generates a strong temporary password instead. The value is hashed with
+    Django's password hasher and is never stored or logged in plaintext; a
+    generated value is returned exactly once in ``temporary_password`` so the
+    administrator can hand it over.
+
+    The account's role, activation state, organization, reservations, and
+    history are untouched.
+    """
+
+    serializer_class = AdminUserPasswordSerializer
+
+    def get_object(self):
+        return User.objects.filter(pk=self.kwargs["pk"]).first()
+
+    def post(self, request, *args, **kwargs):
+        target = self.get_object()
+        if target is None:
+            return Response(
+                {"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = self.get_serializer(
+            data=request.data,
+            context={**self.get_serializer_context(), "user": target},
+        )
+        serializer.is_valid(raise_exception=True)
+        password = serializer.validated_data["password"]
+        generated = serializer.validated_data.get("_temporary_password", False)
+
+        target.set_password(password)
+        target.save(update_fields=["password"])
+
+        AuditLog.record(
+            request.user,
+            AuditLog.Action.USER_PASSWORD_RESET,
+            object_type="user",
+            object_id=target.pk,
+            object_repr=target.display_name,
+            detail=f"Reset password for {target.display_name} ({target.email})",
+            request=request,
+        )
+
+        return Response(
+            {
+                "detail": (
+                    "Temporary password generated."
+                    if generated
+                    else "Password reset."
+                ),
+                "temporary_password": password if generated else None,
             }
         )
 

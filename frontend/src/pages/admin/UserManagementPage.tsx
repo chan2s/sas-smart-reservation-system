@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { format } from 'date-fns'
-import { Power, Search, Trash2, UserCog } from 'lucide-react'
+import { KeyRound, Pencil, Power, Search, Trash2, UserCog, UserPlus } from 'lucide-react'
 import { api, apiErrorMessage } from '@/lib/api'
-import type { AdminUser, Role } from '@/lib/types'
+import type {
+  AdminUser,
+  AdminUserCreatePayload,
+  AdminUserUpdatePayload,
+  Role,
+} from '@/lib/types'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/ui/Toast'
 import { PageHeader } from '@/components/ui/Misc'
@@ -30,6 +35,25 @@ const ROLE_TONE: Record<Role, 'brand' | 'sky' | 'neutral'> = {
 }
 
 type StatusFilter = '' | 'active' | 'inactive'
+type FormMode = 'create' | 'edit'
+
+interface UserFormState {
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  role: Role
+  password: string
+}
+
+const EMPTY_FORM: UserFormState = {
+  username: '',
+  email: '',
+  first_name: '',
+  last_name: '',
+  role: 'REQUESTER',
+  password: '',
+}
 
 /** The API's `is_active` query value for a status filter choice. */
 function statusParam(status: StatusFilter): 'true' | 'false' | undefined {
@@ -71,6 +95,22 @@ export function UserManagementPage() {
   } | null>(null)
   const [savingStatus, setSavingStatus] = useState(false)
 
+  const [formMode, setFormMode] = useState<FormMode | null>(null)
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
+  const [form, setForm] = useState<UserFormState>(EMPTY_FORM)
+  const [formError, setFormError] = useState('')
+  const [savingForm, setSavingForm] = useState(false)
+
+  const [resetTarget, setResetTarget] = useState<AdminUser | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
+  const [resetError, setResetError] = useState('')
+  const [resettingPassword, setResettingPassword] = useState(false)
+  const [credential, setCredential] = useState<{
+    displayName: string
+    username: string
+    password: string
+  } | null>(null)
+
   useEffect(() => {
     let cancelled = false
     setUsers(null)
@@ -103,6 +143,140 @@ export function UserManagementPage() {
   }, [query, role, status, page, reloadKey])
 
   const refresh = useCallback(() => setReloadKey((value) => value + 1), [])
+
+  function openCreate() {
+    setEditingUser(null)
+    setForm(EMPTY_FORM)
+    setFormError('')
+    setFormMode('create')
+  }
+
+  function openEdit(target: AdminUser) {
+    setEditingUser(target)
+    setForm({
+      username: target.username,
+      email: target.email,
+      first_name: target.first_name,
+      last_name: target.last_name,
+      role: target.role,
+      password: '',
+    })
+    setFormError('')
+    setFormMode('edit')
+  }
+
+  function closeForm() {
+    if (savingForm) return
+    setFormMode(null)
+    setEditingUser(null)
+    setFormError('')
+  }
+
+  async function submitForm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!formMode) return
+    setFormError('')
+
+    const identity = {
+      username: form.username.trim(),
+      email: form.email.trim(),
+      first_name: form.first_name.trim(),
+      last_name: form.last_name.trim(),
+      role: form.role,
+    }
+    if (!identity.username || !identity.email) {
+      setFormError('Username and email are required.')
+      return
+    }
+
+    setSavingForm(true)
+    try {
+      if (formMode === 'create') {
+        const payload: AdminUserCreatePayload = {
+          ...identity,
+          ...(form.password ? { password: form.password } : {}),
+        }
+        const created = await api.createUser(payload)
+        toast(`Created ${created.display_name}.`)
+        if (created.temporary_password) {
+          setCredential({
+            displayName: created.display_name,
+            username: created.username,
+            password: created.temporary_password,
+          })
+        }
+        setFormMode(null)
+        setEditingUser(null)
+        refresh()
+      } else if (editingUser) {
+        const payload: AdminUserUpdatePayload = identity
+        const updated = await api.updateUser(editingUser.id, payload)
+        toast(`Updated ${updated.display_name}.`)
+        setFormMode(null)
+        setEditingUser(null)
+        refresh()
+      }
+    } catch (err) {
+      setFormError(
+        apiErrorMessage(
+          err,
+          formMode === 'create'
+            ? 'Unable to create this account.'
+            : 'Unable to update this account.',
+        ),
+      )
+    } finally {
+      setSavingForm(false)
+    }
+  }
+
+  function openPasswordReset(target: AdminUser) {
+    setResetTarget(target)
+    setResetPassword('')
+    setResetError('')
+  }
+
+  function closePasswordReset() {
+    if (resettingPassword) return
+    setResetTarget(null)
+    setResetPassword('')
+    setResetError('')
+  }
+
+  async function submitPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!resetTarget) return
+    setResetError('')
+    setResettingPassword(true)
+    try {
+      const result = await api.resetUserPassword(
+        resetTarget.id,
+        resetPassword || undefined,
+      )
+      toast(result.detail)
+      if (result.temporary_password) {
+        setCredential({
+          displayName: resetTarget.display_name,
+          username: resetTarget.username,
+          password: result.temporary_password,
+        })
+      }
+      setResetTarget(null)
+      setResetPassword('')
+    } catch (err) {
+      setResetError(
+        apiErrorMessage(err, 'Unable to reset this account password.'),
+      )
+    } finally {
+      setResettingPassword(false)
+    }
+  }
+
+  const roleLocked = Boolean(
+    formMode === 'edit' &&
+      editingUser &&
+      (editingUser.id === currentUser?.id || editingUser.is_superuser),
+  )
 
   async function confirmDelete() {
     if (!pendingDelete) return
@@ -233,7 +407,14 @@ export function UserManagementPage() {
       <PageHeader
         eyebrow="Administration"
         title="User management"
-        description="Review registered accounts, control who can sign in, and remove accounts that are no longer needed."
+        description="Create accounts, assign roles, reset passwords, and control who can sign in."
+        actions={
+          !isViewOnly && (
+            <Button icon={<UserPlus className="size-4" aria-hidden />} onClick={openCreate}>
+              Add user
+            </Button>
+          )
+        }
       />
 
       <p className="mt-4 text-xs text-muted">
@@ -287,6 +468,8 @@ export function UserManagementPage() {
               <TableActions>
                 {!isViewOnly && (
                   <>
+                    <EditButton item={item} onEdit={openEdit} />
+                    <PasswordButton item={item} onReset={openPasswordReset} />
                     <StatusButton
                       item={item}
                       currentUserId={currentUser?.id}
@@ -328,6 +511,8 @@ export function UserManagementPage() {
             <CardActions>
               {!isViewOnly && (
                 <>
+                  <EditButton item={item} onEdit={openEdit} />
+                  <PasswordButton item={item} onReset={openPasswordReset} />
                   <StatusButton
                     item={item}
                     currentUserId={currentUser?.id}
@@ -453,6 +638,230 @@ export function UserManagementPage() {
           </div>
         )}
       </Modal>
+
+      <Modal
+        open={formMode !== null}
+        onClose={closeForm}
+        title={formMode === 'create' ? 'Add user' : 'Edit user'}
+        description={
+          formMode === 'create'
+            ? 'Create an account and choose the role it should have in SAS RESERVE.'
+            : 'Update the account profile or application role.'
+        }
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeForm} disabled={savingForm}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="user-account-form"
+              loading={savingForm}
+            >
+              {formMode === 'create' ? 'Create account' : 'Save changes'}
+            </Button>
+          </>
+        }
+      >
+        <form id="user-account-form" className="space-y-4" onSubmit={submitForm}>
+          {formError && (
+            <div
+              role="alert"
+              className="rounded-lg border border-status-rejected/25 bg-status-rejected-bg px-3.5 py-2.5 text-[13px] text-status-rejected"
+            >
+              {formError}
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Username" htmlFor="user-username" required>
+              <Input
+                id="user-username"
+                value={form.username}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, username: event.target.value }))
+                }
+                autoComplete="off"
+                required
+              />
+            </Field>
+            <Field label="Email" htmlFor="user-email" required>
+              <Input
+                id="user-email"
+                type="email"
+                value={form.email}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, email: event.target.value }))
+                }
+                autoComplete="off"
+                required
+              />
+            </Field>
+            <Field label="First name" htmlFor="user-first-name">
+              <Input
+                id="user-first-name"
+                value={form.first_name}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, first_name: event.target.value }))
+                }
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Last name" htmlFor="user-last-name">
+              <Input
+                id="user-last-name"
+                value={form.last_name}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, last_name: event.target.value }))
+                }
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="Role"
+            htmlFor="user-role"
+            hint={
+              roleLocked
+                ? 'This account\u2019s role is protected and cannot be changed here.'
+                : 'Administrators can manage users; SAS staff can manage operational modules; requesters can reserve facilities.'
+            }
+          >
+            <Select
+              id="user-role"
+              value={form.role}
+              disabled={roleLocked}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  role: event.target.value as Role,
+                }))
+              }
+            >
+              <option value="REQUESTER">Requester</option>
+              <option value="STAFF">SAS Staff</option>
+              <option value="ADMIN">Administrator</option>
+            </Select>
+          </Field>
+
+          {formMode === 'create' && (
+            <Field
+              label="Initial password"
+              htmlFor="user-password"
+              hint="Leave blank to generate a temporary password, shown once after creation."
+            >
+              <Input
+                id="user-password"
+                type="password"
+                value={form.password}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, password: event.target.value }))
+                }
+                autoComplete="new-password"
+              />
+            </Field>
+          )}
+        </form>
+      </Modal>
+
+      <Modal
+        open={resetTarget !== null}
+        onClose={closePasswordReset}
+        title="Reset password"
+        description="Set a new password or generate a one-time temporary password."
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={closePasswordReset}
+              disabled={resettingPassword}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="reset-password-form"
+              loading={resettingPassword}
+            >
+              Reset password
+            </Button>
+          </>
+        }
+      >
+        {resetTarget && (
+          <form
+            id="reset-password-form"
+            className="space-y-4"
+            onSubmit={submitPasswordReset}
+          >
+            {resetError && (
+              <div
+                role="alert"
+                className="rounded-lg border border-status-rejected/25 bg-status-rejected-bg px-3.5 py-2.5 text-[13px] text-status-rejected"
+              >
+                {resetError}
+              </div>
+            )}
+            <div className="rounded-xl border border-line bg-soft p-3.5 text-[13px]">
+              <p className="font-medium text-ink">{resetTarget.display_name}</p>
+              <p className="text-muted">
+                @{resetTarget.username} · {resetTarget.email || 'No email address'}
+              </p>
+            </div>
+            <Field
+              label="New password"
+              htmlFor="reset-password"
+              hint="Leave blank to generate a temporary password, shown once after saving."
+            >
+              <Input
+                id="reset-password"
+                type="password"
+                value={resetPassword}
+                onChange={(event) => setResetPassword(event.target.value)}
+                autoComplete="new-password"
+              />
+            </Field>
+          </form>
+        )}
+      </Modal>
+
+      <Modal
+        open={credential !== null}
+        onClose={() => setCredential(null)}
+        title="Temporary password"
+        size="sm"
+        footer={<Button onClick={() => setCredential(null)}>Done</Button>}
+      >
+        {credential && (
+          <div className="space-y-4 text-sm text-body">
+            <p>
+              Share these credentials with{' '}
+              <span className="font-semibold text-ink">{credential.displayName}</span>.
+              The temporary password is shown only once.
+            </p>
+            <div className="space-y-3 rounded-xl border border-line bg-soft p-3.5 text-[13px]">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                  Username
+                </p>
+                <code className="break-all text-ink">{credential.username}</code>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                  Temporary password
+                </p>
+                <code className="break-all text-ink">{credential.password}</code>
+              </div>
+            </div>
+            <p className="text-xs text-muted">
+              The account owner should change this password after signing in.
+            </p>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -465,6 +874,48 @@ function AccountStatusBadge({ user }: { user: AdminUser }) {
       label={user.is_active ? 'Active' : 'Inactive'}
       tone={user.is_active ? 'emerald' : 'gray'}
     />
+  )
+}
+
+/** Edit profile / role. Role changes for self and superusers are locked. */
+function EditButton({
+  item,
+  onEdit,
+}: {
+  item: AdminUser
+  onEdit: (user: AdminUser) => void
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={<Pencil className="size-4" aria-hidden />}
+      aria-label={`Edit ${item.display_name}`}
+      onClick={() => onEdit(item)}
+    >
+      Edit
+    </Button>
+  )
+}
+
+/** Password reset. The backend hashes the value and never returns it again. */
+function PasswordButton({
+  item,
+  onReset,
+}: {
+  item: AdminUser
+  onReset: (user: AdminUser) => void
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={<KeyRound className="size-4" aria-hidden />}
+      aria-label={`Reset password for ${item.display_name}`}
+      onClick={() => onReset(item)}
+    >
+      Password
+    </Button>
   )
 }
 
