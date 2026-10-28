@@ -727,7 +727,7 @@ export function UserManagementPage() {
             hint={
               roleLocked
                 ? 'This account\u2019s role is protected and cannot be changed here.'
-                : 'This role is reserved for the configured Sir Francis M. Galon account and only opens approval letters.'
+                : 'The active holder can review and approve reservation letters. Only one active account can hold this role.'
             }
           >
             <Select

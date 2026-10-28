@@ -56,8 +56,6 @@ def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Opt
     :func:`send_reservation_approved`; never raises into the caller, and never
     touches the letter itself (bookkeeping is the letters service's job).
     """
-    from approval_letters.constants import SIGNATORY_NAME
-
     reference = letter.reservation.reservation_id
     subject = APPROVAL_LETTER_SUBJECT.format(letter_id=letter.letter_id)
 
@@ -73,7 +71,7 @@ def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Opt
         "start_time": letter.reservation.start_time,
         "end_time": letter.reservation.end_time,
         "signed_at": letter.signed_at,
-        "signatory_name": SIGNATORY_NAME,
+        "signatory_name": letter.signatory_name,
         "view_url": (
             f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}"
             f"/reservations/{letter.reservation.pk}"

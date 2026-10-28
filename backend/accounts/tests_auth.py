@@ -49,6 +49,18 @@ class LoginWithoutSecondFactorTests(APITestCase):
         ):
             self.assertEqual(self.client.post(path, {}).status_code, 404, path)
 
+    def test_profile_update_cannot_grant_position_role(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            "/api/auth/me/",
+            {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.role, User.Role.REQUESTER)
+        self.assertFalse(self.user.is_authorized_letter_approver)
+
 
 class GoogleOAuthSecurityTests(APITestCase):
     def setUp(self):
@@ -251,7 +263,7 @@ class GoogleOAuthSecurityTests(APITestCase):
         self.assertTrue(response.url.startswith(f"{tunnel}/login"))
         self.assertIn("google_error=missing_code", response.url)
 
-    def test_google_login_never_creates_admin(self):
+    def test_google_login_never_creates_position_holder(self):
         """The social adapter forces REQUESTER for any social signup."""
         from django.contrib.auth import get_user_model
 
@@ -266,7 +278,7 @@ class GoogleOAuthSecurityTests(APITestCase):
                 self.user = User(
                     username="someone",
                     email="someone@x.com",
-                    role="ADMIN",
+                    role="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE",
                     is_staff=True,
                     is_superuser=True,
                 )

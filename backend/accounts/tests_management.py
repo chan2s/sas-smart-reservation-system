@@ -575,6 +575,46 @@ class AdminUserCreationTests(APITestCase):
         )
         self.client = _client_as(self.admin)
 
+    def test_admin_creates_first_position_holder_with_ordinary_account_details(self):
+        payload = _create_payload(
+            username="positionholder",
+            email="positionholder@school.edu",
+            first_name="Taylor",
+            last_name="Morgan",
+            role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
+        )
+        response = self.client.post(USERS_URL, payload, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        holder = User.objects.get(username="positionholder")
+        self.assertEqual(
+            holder.role, User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+        )
+        self.assertTrue(holder.is_authorized_letter_approver)
+        self.assertFalse(holder.is_admin)
+        self.assertFalse(holder.is_sas_staff)
+
+    def test_admin_cannot_create_a_second_active_position_holder(self):
+        first = _create_payload(
+            username="holderone",
+            email="holderone@school.edu",
+            role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
+        )
+        self.assertEqual(self.client.post(USERS_URL, first, format="json").status_code, 201)
+        second = _create_payload(
+            username="holdertwo",
+            email="holdertwo@school.edu",
+            role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
+        )
+        response = self.client.post(USERS_URL, second, format="json")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(
+            User.objects.filter(
+                role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
+                is_active=True,
+            ).count(),
+            1,
+        )
+
     def test_admin_creates_requester_with_hashed_password(self):
         response = self.client.post(
             USERS_URL, _create_payload(), format="json"
@@ -766,12 +806,7 @@ class AdminUserUpdateTests(APITestCase):
         self.assertEqual(self.target.role, User.Role.STAFF)
         self.assertFalse(self.target.is_staff)
 
-    @override_settings(APPROVAL_LETTER_APPROVER_EMAIL="sir.galon@norsu.edu")
-    def test_admin_can_assign_dedicated_role_only_to_configured_sir_galon(self):
-        self.target.email = "sir.galon@norsu.edu"
-        self.target.first_name = "Francis M."
-        self.target.last_name = "Galon"
-        self.target.save()
+    def test_admin_can_assign_position_role_to_an_ordinary_account(self):
         response = self.client.patch(
             USER_DETAIL_URL.format(pk=self.target.pk),
             {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
@@ -783,20 +818,42 @@ class AdminUserUpdateTests(APITestCase):
             self.target.role,
             User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
         )
+        self.assertTrue(self.target.is_authorized_letter_approver)
         self.assertFalse(self.target.is_staff)
         self.assertEqual(
             response.data["role_label"],
             "Assistant Campus Director for Administration and Finance",
         )
 
-    @override_settings(APPROVAL_LETTER_APPROVER_EMAIL="sir.galon@norsu.edu")
-    def test_admin_cannot_assign_dedicated_role_to_another_account(self):
+    def test_admin_can_transfer_position_role_to_successor(self):
+        self.target.role = User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+        self.target.save()
+        successor = User.objects.create_user(
+            username="successor", password=PASSWORD, email="successor@school.edu"
+        )
+        self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"role": User.Role.REQUESTER},
+            format="json",
+        )
         response = self.client.patch(
+            USER_DETAIL_URL.format(pk=successor.pk),
+            {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.target.refresh_from_db()
+        successor.refresh_from_db()
+        self.assertFalse(self.target.is_authorized_letter_approver)
+        self.assertTrue(successor.is_authorized_letter_approver)
+
+    def test_non_admin_cannot_assign_position_role(self):
+        response = _client_as(self.target).patch(
             USER_DETAIL_URL.format(pk=self.target.pk),
             {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
             format="json",
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 403)
         self.target.refresh_from_db()
         self.assertEqual(self.target.role, User.Role.REQUESTER)
 

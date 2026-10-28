@@ -90,9 +90,11 @@ class ApprovalLetterSerializer(serializers.ModelSerializer):
         )
 
     def get_signatory_name(self, obj) -> str:
-        from .constants import SIGNATORY_NAME
-
-        return SIGNATORY_NAME
+        return obj.signatory_name or (
+            obj.signatory.get_full_name().strip() or obj.signatory.username
+            if obj.signatory_id
+            else ""
+        )
 
     def get_signatory_position(self, obj) -> str:
         from .constants import SIGNATORY_POSITION
@@ -163,9 +165,11 @@ class ReservationApprovalLetterSummarySerializer(serializers.ModelSerializer):
         )
 
     def get_signatory_name(self, obj) -> str:
-        from .constants import SIGNATORY_NAME
-
-        return SIGNATORY_NAME
+        return obj.signatory_name or (
+            obj.signatory.get_full_name().strip() or obj.signatory.username
+            if obj.signatory_id
+            else ""
+        )
 
     def get_signatory_position(self, obj) -> str:
         from .constants import SIGNATORY_POSITION

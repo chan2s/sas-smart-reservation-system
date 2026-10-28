@@ -2,14 +2,14 @@
 
 Access model:
 
-* The designated signatory (``is_approval_signatory``) and administrators
+* The active position holder and administrators
   see all letters. The signatory's account is module-scoped: every other
   management surface refuses it, so this is its only working module.
 * A requester sees only letters issued for their OWN reservations — enforced
   in the queryset AND re-checked on every detail/download, so a crafted id
   from another user's letter returns 404 like any other missing object.
-* Approval is restricted server-side to the designated signatory
-  (``is_approval_signatory``), re-checked by the service under a row lock;
+* Approval is restricted server-side to the active position holder,
+  re-checked by the service under a row lock;
   frontend checks are cosmetic.
 * Finalized PDF/DOCX files exist only for signed letters, so a pending letter
   has nothing to leak: downloads 404 until signing, and the preview is always
@@ -111,7 +111,7 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
             pass
         elif user.is_sas_staff:
             # General staff and administrators do not get access to the
-            # designated signatory's review workspace by virtue of staff role.
+            # position holder's review workspace by virtue of staff role.
             queryset = queryset.none()
         else:
             queryset = queryset.filter(reservation__requester=user)
@@ -205,7 +205,7 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
         url_path="retry-email",
     )
     def retry_email(self, request, pk=None):
-        """Retry a failed signed-letter email. Signatory or SAS staff."""
+        """Retry a failed signed-letter email. Administrator or SAS staff."""
         letter = self.get_object()
         try:
             letter = retry_email(letter, request.user)

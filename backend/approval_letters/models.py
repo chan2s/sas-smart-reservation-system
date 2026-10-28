@@ -39,7 +39,7 @@ class ApprovalLetter(models.Model):
     """The formal approval letter issued for one approved reservation."""
 
     class Status(models.TextChoices):
-        # Generated and awaiting Sir Galon's explicit approval.
+        # Generated and awaiting approval from the position holder.
         PENDING_SIGNATURE = "PENDING_SIGNATURE", "Pending signature"
         # Approval is the terminal letter decision; delivery is tracked below.
         APPROVED = "APPROVED", "Approved"
@@ -89,6 +89,11 @@ class ApprovalLetter(models.Model):
         blank=True,
         related_name="approval_letters_signed",
     )
+    # Snapshots preserve actual approver attribution if their account is later
+    # deactivated, transferred, or deleted.
+    signatory_name = models.CharField(max_length=160, blank=True)
+    signatory_username = models.CharField(max_length=150, blank=True)
+    signatory_email = models.EmailField(max_length=254, blank=True)
     signed_at = models.DateTimeField(null=True, blank=True)
 
     # DOCX is populated from the institutional template at issuance, then

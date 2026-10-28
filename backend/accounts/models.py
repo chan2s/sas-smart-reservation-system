@@ -229,39 +229,7 @@ class Organization(models.Model):
         return f"{self.organization_code} — {self.organization_name}"
 
 
-class UserQuerySet(models.QuerySet):
-    """Keep ORM bulk role edits subject to the same identity boundary."""
-
-    def update(self, **kwargs):
-        role = kwargs.get("role")
-        if role == "ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE":
-            from django.conf import settings
-
-            authorized_email = (
-                getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
-            ).strip().casefold()
-            if not authorized_email:
-                raise ValidationError({
-                    "role": "The approval-letter approver account is not configured."
-                })
-            candidates = list(
-                self.values("email", "first_name", "last_name", "is_superuser")
-            )
-            if not candidates or any(
-                (row["email"] or "").strip().casefold() != authorized_email
-                or row["is_superuser"]
-                or (row["first_name"] or "").strip().casefold()
-                not in ("francis", "francis m.")
-                or (row["last_name"] or "").strip().casefold() != "galon"
-                for row in candidates
-            ):
-                raise ValidationError({
-                    "role": "Only the configured Sir Francis M. Galon account can hold this role."
-                })
-        return super().update(**kwargs)
-
-
-class UserManager(BaseUserManager.from_queryset(UserQuerySet)):
+class UserManager(BaseUserManager):
     """Custom manager so ``create_superuser()`` assigns the ADMIN role.
 
     Django's built-in ``UserManager.create_superuser()`` only sets
@@ -362,15 +330,8 @@ class User(AbstractUser):
     role = models.CharField(
         max_length=48, choices=Role.choices, default=Role.REQUESTER
     )
-    # Designated approval-letter signatory (the Assistant Campus Director for
-    # Administration and Finance). Granted ONLY by an administrator through
-    # Django admin / the seed command.
-    #
-    # The designation is deliberately SCOPED: a staff account holding it is
-    # limited to the Approval Letters module (see ``is_approval_letters_only``)
-    # and loses every other SAS-staff capability. The printed name/position
-    # come from ``approval_letters.constants``; this flag only authorizes the
-    # approval action on pending letters.
+    # Legacy designation field retained for existing data and API clients.
+    # Authorization is derived exclusively from the position role below.
     is_approval_signatory = models.BooleanField(
         default=False,
         db_index=True,
@@ -411,7 +372,8 @@ class User(AbstractUser):
             models.UniqueConstraint(
                 fields=("role",),
                 condition=models.Q(
-                    role="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE"
+                    role="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE",
+                    is_active=True,
                 ),
                 name="unique_assistant_campus_director_role",
             )
@@ -419,31 +381,9 @@ class User(AbstractUser):
 
     def save(self, *args, **kwargs):
         if self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
-            from django.conf import settings
-
-            authorized_email = (
-                getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
-            ).strip().casefold()
-            if not authorized_email or (self.email or "").strip().casefold() != authorized_email:
-                raise ValidationError({
-                    "role": (
-                        "This role can only be assigned to the configured approval-letter "
-                        "approver account."
-                    ),
-                })
             if self.is_superuser:
                 raise ValidationError({
                     "role": "A Django superuser account cannot hold the approval-only role.",
-                })
-            if self.first_name.strip().casefold() not in ("francis", "francis m.") or self.last_name.strip().casefold() != "galon":
-                raise ValidationError({
-                    "role": "This role is reserved for Sir Francis M. Galon.",
-                })
-            if type(self).objects.filter(
-                role=self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
-            ).exclude(pk=self.pk).exists():
-                raise ValidationError({
-                    "role": "Only one account may hold this role.",
                 })
             self.is_staff = False
             self.is_approval_signatory = False
@@ -461,9 +401,8 @@ class User(AbstractUser):
             and self.is_authorized_letter_approver
         ):
             return
-        # Check the stored role, not ``is_sas_staff``: a designated staff
-        # signatory deliberately reports ``is_sas_staff == False`` so the
-        # designation cannot carry any other staff permission with it.
+        # This legacy field is retained for old records and never grants role
+        # permissions. Keep its historical validation for compatibility.
         if self.role not in (self.Role.ADMIN, self.Role.STAFF):
             raise ValidationError({
                 "is_approval_signatory": "Only an administrator or SAS staff account can be designated.",
@@ -514,55 +453,33 @@ class User(AbstractUser):
     def is_approval_letters_only(self) -> bool:
         """True when this account is scoped to the Approval Letters module.
 
-        The designated signatory is a SAS STAFF account whose only function is
-        to review and approve reservation approval letters. It must not inherit
-        the staff role's reservation, facility, equipment, analytics, or user
-        management access, so a non-administrator holding the designation is
-        treated as module-scoped everywhere authorization is decided.
+        The position holder's only function is to review and approve reservation
+        approval letters. It does not inherit general staff capabilities.
 
-        Administrators are exempt: an administrator who is also designated
-        keeps their full administrator capabilities.
+        General administrator access does not substitute for the position role.
         """
-        return bool(
-            self.is_authorized_letter_approver
-            or (self.is_approval_signatory and not self.is_admin)
-        )
+        return self.is_authorized_letter_approver
 
     @property
     def is_authorized_letter_approver(self) -> bool:
-        """Resolve the designated approver from the configured account identity.
-
-        The stored role alone is never sufficient for letter permissions. This
-        check also makes direct role edits inert unless they target the
-        institutionally configured Sir Galon account.
-        """
-        from django.conf import settings
-
-        authorized_email = (
-            getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
-        ).strip().casefold()
+        """Whether this active account currently holds the approval position."""
         return bool(
             self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
-            and authorized_email
+            and self.is_active
             and not self.is_superuser
-            and (self.email or "").strip().casefold() == authorized_email
-            and self.first_name.strip().casefold() in ("francis", "francis m.")
-            and self.last_name.strip().casefold() == "galon"
         )
 
     @property
     def is_sas_staff(self) -> bool:
-        """Administrator or SAS staff — never the module-scoped signatory.
+        """Administrator or SAS staff, excluding the active position holder.
 
-        The designated signatory is deliberately excluded even though its
-        stored ``role`` is STAFF: granting staff access would expose every
-        administrator-only module, which the designation must never do. The
-        Approval Letters API authorizes it through ``is_approval_signatory``
-        (and the account-approval permission) instead.
+        The position role is deliberately excluded from staff access. The
+        Approval Letters API authorizes its holder through that role and the
+        account-approval permission.
         """
         if self.role == self.Role.ADMIN:
             return True
-        if self.is_approval_signatory:
+        if self.is_authorized_letter_approver:
             return False
         return self.role == self.Role.STAFF
 

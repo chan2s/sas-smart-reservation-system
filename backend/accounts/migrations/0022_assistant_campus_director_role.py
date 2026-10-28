@@ -1,45 +1,6 @@
 from django.db import migrations, models
 
 
-def promote_existing_approver(apps, schema_editor):
-    """Move only the already-designated Sir Galon staff account to its role."""
-    from django.conf import settings
-
-    email = (getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or "").strip()
-    if not email:
-        return
-    User = apps.get_model("accounts", "User")
-    matches = User.objects.filter(
-        role="STAFF",
-        is_approval_signatory=True,
-        is_superuser=False,
-        email__iexact=email,
-        first_name__in=("Francis", "Francis M."),
-        last_name__iexact="Galon",
-    )
-    if matches.count() == 1:
-        matches.update(
-            role="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE",
-            is_approval_signatory=False,
-            is_staff=False,
-        )
-
-
-def restore_existing_approver(apps, schema_editor):
-    from django.conf import settings
-
-    email = (getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or "").strip()
-    if not email:
-        return
-    User = apps.get_model("accounts", "User")
-    User.objects.filter(
-        role="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE",
-        email__iexact=email,
-        first_name__in=("Francis", "Francis M."),
-        last_name__iexact="Galon",
-    ).update(role="STAFF", is_approval_signatory=True, is_staff=False)
-
-
 class Migration(migrations.Migration):
     dependencies = [("accounts", "0021_alter_auditlog_action")]
 
@@ -60,10 +21,6 @@ class Migration(migrations.Migration):
                 default="REQUESTER",
                 max_length=48,
             ),
-        ),
-        migrations.RunPython(
-            promote_existing_approver,
-            restore_existing_approver,
         ),
         migrations.AddConstraint(
             model_name="user",

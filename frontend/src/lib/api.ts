@@ -872,7 +872,7 @@ export const endpoints = {
     api.get<ApprovalLetter>(`/api/approval-letters/${id}/`),
   approvalLetterPreview: (id: number) =>
     api.get<ApprovalLetterPreview>(`/api/approval-letters/${id}/preview/`),
-  /** Records Sir Galon's explicit approval of a pending letter. */
+  /** Records the position holder's explicit approval of a pending letter. */
   signApprovalLetter: (id: number) =>
     api.post<ApprovalLetter>(`/api/approval-letters/${id}/approve/`, {}),
   retryLetterEmail: (id: number) =>

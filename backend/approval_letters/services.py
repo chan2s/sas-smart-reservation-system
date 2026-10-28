@@ -5,9 +5,8 @@ Rules the whole module enforces:
 * A letter is created ONCE per approved reservation (``OneToOneField`` +
   ``get_or_create``) — repeated approvals, re-approvals after a change
   request, and concurrent approvals can never duplicate it.
-* Only the designated signatory (an account granted the
-  ``is_approval_signatory`` flag) may approve/sign, verified server-side.
-  The designation scopes a non-administrator to this module only.
+* Only the active holder of the dedicated position role may approve/sign,
+  verified server-side. The role scopes its holder to this module only.
 * A letter is signed at most once; every attempt revalidates under a row lock.
 * Email delivery NEVER undoes a signature: it runs after the signing
   transaction commits and only ever updates the letter's email bookkeeping.
@@ -19,7 +18,6 @@ import logging
 from io import BytesIO
 
 from django.contrib.auth import get_user_model
-from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import transaction
@@ -63,8 +61,6 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
     resolved by ``get_or_create`` and never produces two letters. Called via
     ``transaction.on_commit`` by the approval workflow.
     """
-    from .constants import SIGNATORY_NAME
-
     requester, requester_name, requester_email = _requester_snapshot(reservation)
     letter, created = ApprovalLetter.objects.get_or_create(
         reservation=reservation,
@@ -112,20 +108,19 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
             reservation.reservation_id,
             letter.status,
         )
-        # Staff notice (the designated signatory is SAS staff, so this covers
-        # them): a letter is waiting. In-app only — the letter itself is
+        # Notify the current position holder that a letter is waiting. The
+        # letter itself is
         # emailed to the requester after signing.
         link = f"/approval-letters?letter={letter.pk}"
         user_model = get_user_model()
         signatories = user_model.objects.filter(
             is_active=True,
             role=user_model.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
-            email__iexact=getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", ""),
         )
         message = (
             f"Letter {letter.letter_id} for {reservation.event_name} "
             f"({reservation.reservation_id}) is awaiting the designated "
-            f"signatory ({SIGNATORY_NAME})."
+            "position holder."
         )
         for signatory in signatories:
             notify(
@@ -137,8 +132,8 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
             )
         if not signatories.exists():
             logger.warning(
-                "Approval letter %s has no active designated signatory account; "
-                "an administrator must configure one.",
+                "Approval letter %s has no active position holder; "
+                "an administrator must assign one.",
                 letter.letter_id,
             )
     return letter
@@ -185,9 +180,8 @@ _SIGNABLE_RESERVATION_STATUSES = frozenset({
 def _assert_can_sign(actor) -> None:
     """Server-side authorization for approving. Never trusts the frontend.
 
-    The designation is the sole authorization: administrator status without
-    it is refused, and a staff role is not required (the designated signatory
-    is intentionally scoped and no longer reports as SAS staff).
+    The active position role is the sole authorization: administrator status
+    without it is refused, and a staff role is not required.
     """
     if actor is None or not getattr(actor, "is_authenticated", False):
         raise PermissionDenied("Authentication is required to approve letters.")
@@ -238,6 +232,9 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
 
         locked.signed_at = now
         locked.signatory = actor
+        locked.signatory_name = actor.get_full_name().strip() or actor.username
+        locked.signatory_username = actor.username
+        locked.signatory_email = actor.email
         locked.status = ApprovalLetter.Status.APPROVED
         # Render both finalized files before writing either to storage. A
         # renderer error therefore leaves the pending letter untouched.
@@ -269,7 +266,7 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
             object_id=locked.letter_id,
             object_repr=f"Reservation {reservation.reservation_id}",
             detail=(
-                f"Approval recorded by Sir Francis M. Galon "
+                f"Approval recorded by the position holder "
                 f"(user id {getattr(actor, 'pk', None)}) at {now.isoformat()}; "
                 "finalized PDF and DOCX generated from the institutional "
                 "template. TEST SIGNATURE — not a verified digital signature."

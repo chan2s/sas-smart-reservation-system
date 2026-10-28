@@ -72,7 +72,7 @@ class IsSasStaff(BasePermission):
 
 
 class IsApprovalSignatory(BasePermission):
-    """The designated approval-letter signatory (server-verified).
+    """The active holder of the approval-letter position (server-verified).
 
     Administrator status alone is not enough — the explicit designation is
     required, matching the existing signatory support. The account-approval
@@ -94,7 +94,7 @@ class IsApprovalSignatory(BasePermission):
 
 
 class IsApprovalLetterStaffOrSignatory(BasePermission):
-    """SAS staff or the designated signatory — for approval-letter support actions."""
+    """SAS staff or position holder for approval-letter support actions."""
 
     def has_permission(self, request, view):
         user = request.user

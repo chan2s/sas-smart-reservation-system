@@ -26,7 +26,6 @@ from .constants import (
     ISSUING_OFFICE,
     MISSION_STATEMENT,
     QUALITY_POLICY,
-    SIGNATORY_NAME,
     SIGNATORY_POSITION,
     SYSTEM_NAME,
     TEST_SIGNATURE_DISCLAIMER,
@@ -103,7 +102,14 @@ def build_letter_context(letter) -> dict:
         "facility_rules": facility_rules,
         "estimated_total": estimated_total,
         "is_external": reservation.requester_type == Reservation.RequesterType.EXTERNAL,
-        "signatory_name": SIGNATORY_NAME,
+        "signatory_name": (
+            letter.signatory_name
+            or (
+                letter.signatory.get_full_name().strip() or letter.signatory.username
+                if letter.signatory_id
+                else ""
+            )
+        ),
         "signatory_position": SIGNATORY_POSITION,
         "signed_at": timezone.localtime(letter.signed_at) if letter.signed_at else None,
         "test_signature_disclaimer": TEST_SIGNATURE_DISCLAIMER,

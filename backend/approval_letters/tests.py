@@ -13,7 +13,6 @@ from zipfile import ZipFile
 from datetime import date, time
 
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
 from django.core import mail
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
@@ -33,10 +32,7 @@ User = get_user_model()
 LETTERS_MEDIA_ROOT = tempfile.mkdtemp(prefix="sas-test-approval-letters-")
 
 
-@override_settings(
-    MEDIA_ROOT=LETTERS_MEDIA_ROOT,
-    APPROVAL_LETTER_APPROVER_EMAIL="sir.galon@norsu.edu",
-)
+@override_settings(MEDIA_ROOT=LETTERS_MEDIA_ROOT)
 class ApprovalLetterTestBase(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -47,9 +43,9 @@ class ApprovalLetterTestBase(TestCase):
             username="lettersignatory",
             password="pass12345",
             role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
-            first_name="Francis M.",
-            last_name="Galon",
-            email="sir.galon@norsu.edu",
+            first_name="Position",
+            last_name="Holder",
+            email="position-holder@school.edu",
         )
         cls.other_staff = User.objects.create_user(
             username="otherstaff", password="pass12345", role=User.Role.STAFF
@@ -200,7 +196,7 @@ class LetterCreationTests(ApprovalLetterTestBase):
             context["facility_rules"],
             ["No food in the AVR", "Return all equipment after use"],
         )
-        self.assertEqual(context["signatory_name"], "Francis M. Galon, Ph.D.")
+        self.assertEqual(context["signatory_name"], "")
         self.assertEqual(
             context["signatory_position"],
             "Assistant Campus Director for Administration and Finance",
@@ -273,6 +269,9 @@ class SigningTests(ApprovalLetterTestBase):
         letter = self.sign(self.letter)
         self.assertEqual(letter.signatory_id, self.signatory.pk)
         self.assertIsNotNone(letter.signed_at)
+        self.assertEqual(letter.signatory_name, "Position Holder")
+        self.assertEqual(letter.signatory_username, self.signatory.username)
+        self.assertEqual(letter.signatory_email, self.signatory.email)
 
     def test_signing_does_not_change_reservation_status(self):
         letter = self.sign(self.letter)
@@ -391,7 +390,7 @@ class AccessTests(ApprovalLetterTestBase):
         data = response.json()
         self.assertEqual(data["letter_id"], self.letter.letter_id)
         self.assertFalse(data["is_signed"])
-        self.assertEqual(data["signatory_name"], "Francis M. Galon, Ph.D.")
+        self.assertEqual(data["signatory_name"], "")
         self.assertEqual(
             data["signatory_position"],
             "Assistant Campus Director for Administration and Finance",
@@ -803,16 +802,27 @@ class ScopedSignatoryAccessTests(ApprovalLetterTestBase):
                 )
                 self.assertEqual(response.status_code, 403, response.content)
 
+        for account in (self.other_staff, self.requester):
+            with self.subTest(workspace_account=account.username):
+                response = self._as(account).get("/api/approval-letters/")
+                self.assertEqual(response.status_code, 403, response.content)
+                response = self._as(account).get(
+                    f"/api/approval-letters/{self.letter.pk}/preview/"
+                )
+                self.assertEqual(response.status_code, 403, response.content)
+
         self.letter.refresh_from_db()
         self.assertEqual(self.letter.status, ApprovalLetter.Status.PENDING_SIGNATURE)
         self.assertIsNone(self.letter.signatory_id)
         self.assertIsNone(self.letter.signed_at)
 
-    def test_direct_role_edit_on_another_account_does_not_grant_approval(self):
-        with self.assertRaises(ValidationError):
-            User.objects.filter(pk=self.other_staff.pk).update(
-                role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
-            )
+    def test_ordinary_staff_cannot_assign_themselves_the_position_role(self):
+        response = self._as(self.other_staff).patch(
+            f"/api/auth/users/{self.other_staff.pk}/",
+            {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
         self.assertFalse(self.other_staff.is_authorized_letter_approver)
         response = self._as(self.other_staff).post(
             f"/api/approval-letters/{self.letter.pk}/approve/",
@@ -821,6 +831,76 @@ class ScopedSignatoryAccessTests(ApprovalLetterTestBase):
         self.assertEqual(response.status_code, 403, response.content)
         self.letter.refresh_from_db()
         self.assertEqual(self.letter.status, ApprovalLetter.Status.PENDING_SIGNATURE)
+
+    def test_role_removal_revokes_workspace_access(self):
+        response = self._as(self.admin).patch(
+            f"/api/auth/users/{self.signatory.pk}/",
+            {"role": User.Role.REQUESTER},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.signatory.refresh_from_db()
+        denied = self._as(self.signatory).get("/api/approval-letters/")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_account_deactivation_revokes_workspace_access(self):
+        response = self._as(self.admin).post(
+            f"/api/auth/users/{self.signatory.pk}/status/",
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.signatory.refresh_from_db()
+        denied = self._as(self.signatory).get("/api/approval-letters/")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_role_transfer_preserves_historical_approver_and_reservation(self):
+        client = self._as(self.signatory)
+        with self.captureOnCommitCallbacks(execute=True):
+            approved = client.post(
+                f"/api/approval-letters/{self.letter.pk}/approve/", format="json"
+            )
+        self.assertEqual(approved.status_code, 200, approved.content)
+        self.letter.refresh_from_db()
+        original_attribution = (
+            self.letter.signatory_id,
+            self.letter.signatory_name,
+            self.letter.signatory_username,
+            self.letter.signatory_email,
+            self.letter.signed_at,
+        )
+
+        admin = self._as(self.admin)
+        removed = admin.patch(
+            f"/api/auth/users/{self.signatory.pk}/",
+            {"role": User.Role.REQUESTER},
+            format="json",
+        )
+        self.assertEqual(removed.status_code, 200, removed.content)
+        successor = User.objects.create_user(
+            username="lettersuccessor",
+            password="pass12345",
+            email="successor@school.edu",
+        )
+        assigned = admin.patch(
+            f"/api/auth/users/{successor.pk}/",
+            {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
+            format="json",
+        )
+        self.assertEqual(assigned.status_code, 200, assigned.content)
+        self.letter.refresh_from_db()
+        self.assertEqual(
+            (
+                self.letter.signatory_id,
+                self.letter.signatory_name,
+                self.letter.signatory_username,
+                self.letter.signatory_email,
+                self.letter.signed_at,
+            ),
+            original_attribution,
+        )
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, Reservation.Status.APPROVED)
 
     def test_approver_cannot_use_retry_email_action(self):
         client = self._as(self.signatory)

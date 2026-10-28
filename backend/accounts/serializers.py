@@ -616,9 +616,6 @@ class AdminUserCreateSerializer(_AdminIdentityValidationMixin, serializers.Model
         )
 
     def validate(self, attrs):
-        role = attrs.get("role", User.Role.REQUESTER)
-        if role == User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
-            _validate_approval_approver_identity(attrs)
         raw_password = attrs.get("password") or ""
         generated = raw_password == ""
         password = generate_temporary_password() if generated else raw_password
@@ -676,42 +673,6 @@ class AdminUserUpdateSerializer(_AdminIdentityValidationMixin, serializers.Model
             instance.is_staff = False
         instance.save()
         return instance
-
-    def validate(self, attrs):
-        role = attrs.get("role", getattr(self.instance, "role", None))
-        if role == User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
-            candidate = {
-                "email": attrs.get("email", self.instance.email),
-                "first_name": attrs.get("first_name", self.instance.first_name),
-                "last_name": attrs.get("last_name", self.instance.last_name),
-            }
-            _validate_approval_approver_identity(candidate)
-        return attrs
-
-
-def _validate_approval_approver_identity(attrs):
-    """Keep role assignment limited to the one configured Sir Galon account."""
-    from django.conf import settings
-
-    authorized_email = (
-        getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
-    ).strip().casefold()
-    email = (attrs.get("email") or "").strip().casefold()
-    first_name = (attrs.get("first_name") or "").strip().casefold()
-    last_name = (attrs.get("last_name") or "").strip().casefold()
-    errors = {}
-    if not authorized_email:
-        errors["role"] = (
-            "The authorized approval-letter account is not configured. Set "
-            "APPROVAL_LETTER_APPROVER_EMAIL before assigning this role."
-        )
-    elif email != authorized_email:
-        errors["email"] = "This role can only be assigned to the configured approver account."
-    if first_name not in ("francis", "francis m.") or last_name != "galon":
-        errors["role"] = "This role is reserved for Sir Francis M. Galon."
-    if errors:
-        raise serializers.ValidationError(errors)
-
 
 class AdminUserPasswordSerializer(serializers.Serializer):
     """Set or generate a new password for an account.

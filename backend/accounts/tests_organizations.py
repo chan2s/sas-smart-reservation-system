@@ -531,6 +531,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
                 "first_name": "Maria",
                 "last_name": "Santos",
                 "email": "maria@norsu.edu.ph",
+                "role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
                 "affiliation": "NORSU_FACULTY_STAFF",
                 "organization": "College of Engineering",
             },
@@ -539,6 +540,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(_external_organizations().count(), 0)
         user = User.objects.get(username="campusnew")
+        self.assertEqual(user.role, User.Role.REQUESTER)
         self.assertEqual(user.affiliation, User.Affiliation.NORSU_FACULTY_STAFF)
         self.assertEqual(user.organization, "College of Engineering")
         self.assertIsNone(user.organization_ref)

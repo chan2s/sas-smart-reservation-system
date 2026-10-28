@@ -1,13 +1,5 @@
-"""Designated approval-letter signatory and letterhead constants.
+"""Institutional letterhead and position constants."""
 
-The signatory identity is FIXED by the campus's delegation of authority, not
-chosen per letter and never supplied by a client. The authenticated account
-that signs only needs the ``is_approval_signatory`` flag — the printed name
-and position always come from here so no account field can forge them.
-"""
-
-# The one authorized signatory of reservation approval letters.
-SIGNATORY_NAME = "Francis M. Galon, Ph.D."
 SIGNATORY_POSITION = "Assistant Campus Director for Administration and Finance"
 
 # Letterhead. Uses the institutional names the system already uses (SAS

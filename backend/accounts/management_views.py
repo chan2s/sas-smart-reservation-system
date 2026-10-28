@@ -12,7 +12,7 @@ the one Django, simplejwt, and the permission classes already honour.
 """
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -187,7 +187,14 @@ class AdminUserListView(_AdminOnlyMixin, generics.ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+        except IntegrityError:
+            return Response(
+                {"detail": "An account already holds this role or conflicts with these account details."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         AuditLog.record(
             request.user,
@@ -283,7 +290,14 @@ class AdminUserDetailView(_AdminOnlyMixin, generics.GenericAPIView):
 
         tracked_fields = ("username", "email", "first_name", "last_name", "role")
         before = {field: getattr(target, field) for field in tracked_fields}
-        user = serializer.save()
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+        except IntegrityError:
+            return Response(
+                {"detail": "An account already holds this role or conflicts with these account details."},
+                status=status.HTTP_409_CONFLICT,
+            )
         changed = [
             field
             for field in tracked_fields
@@ -388,8 +402,15 @@ class AdminUserStatusView(_AdminOnlyMixin, generics.GenericAPIView):
         # Idempotent: setting the flag it already has is a successful no-op and
         # is not audited (nothing changed).
         if target.is_active != is_active:
-            target.is_active = is_active
-            target.save(update_fields=["is_active"])
+            try:
+                with transaction.atomic():
+                    target.is_active = is_active
+                    target.save(update_fields=["is_active"])
+            except IntegrityError:
+                return Response(
+                    {"detail": "Another active account already holds this role."},
+                    status=status.HTTP_409_CONFLICT,
+                )
             AuditLog.record(
                 request.user,
                 (

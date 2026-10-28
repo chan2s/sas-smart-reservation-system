@@ -100,7 +100,7 @@ function letter(overrides: Partial<ApprovalLetter> = {}): ApprovalLetter {
     requester_email: 'maria@campus.edu',
     organization: '',
     approved_at: '2026-10-20T09:00:00+08:00',
-    signatory_name: 'Francis M. Galon, Ph.D.',
+    signatory_name: 'Position Holder',
     signatory_position: 'Assistant Campus Director for Administration and Finance',
     signatory: 3,
     signed_at: null,
@@ -141,7 +141,7 @@ function preview(overrides: Partial<ApprovalLetterPreview> = {}): ApprovalLetter
     facility_rules: ['No food in the gym'],
     estimated_total: '',
     is_external: false,
-    signatory_name: 'Francis M. Galon, Ph.D.',
+    signatory_name: 'Position Holder',
     signatory_position: 'Assistant Campus Director for Administration and Finance',
     signed_at: null,
     is_signed: false,
@@ -181,7 +181,7 @@ describe('ApprovalLettersPage', () => {
     render(<ApprovalLettersPage />)
     // The id appears in both the list and the detail header.
     expect(screen.getAllByText('NORSU-AL-2026-00001').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Francis M. Galon, Ph.D.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Position Holder').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Assistant Campus Director for Administration and Finance/).length).toBeGreaterThan(0)
     expect(screen.getByText('Approve Letter')).toBeInTheDocument()
     // The unsigned preview notice is visible.
