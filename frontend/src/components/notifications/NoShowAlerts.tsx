@@ -76,19 +76,24 @@ export function NotificationCenter({ onNavigate }: { onNavigate?: () => void }) 
   const unread = unreadData?.count ?? notifications.filter((notification) => !notification.read).length
 
   return (
-    <div className="w-[27rem] max-w-[calc(100vw-2.5rem)]">
-      <div className="flex items-center justify-between gap-3 px-2.5 py-2">
-        <div className="flex items-center gap-2">
-          <Bell className="size-4 text-brand" aria-hidden />
+    /*
+     * The panel owns the width (full-bleed sheet on mobile, 27rem from `sm`
+     * up); this column fills it and only the notification list scrolls, so the
+     * header and the "All notifications" footer stay reachable.
+     */
+    <div className="flex min-h-0 w-full min-w-0 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-2.5 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Bell className="size-4 shrink-0 text-brand" aria-hidden />
           <p className="text-[13px] font-semibold text-ink">Notifications</p>
-          {unread > 0 && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-semibold text-brand">{unread} unread</span>}
+          {unread > 0 && <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-semibold text-brand">{unread} unread</span>}
         </div>
         {unread > 0 && !isViewOnly && (
           <button
             type="button"
             onClick={() => markAll.mutate()}
             disabled={markAll.isPending}
-            className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand hover:text-brand-dark disabled:opacity-60"
+            className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] font-semibold text-brand hover:text-brand-dark disabled:opacity-60"
           >
             <CheckCheck className="size-3.5" aria-hidden />
             Mark all as read
@@ -131,7 +136,7 @@ export function NotificationCenter({ onNavigate }: { onNavigate?: () => void }) 
           </p>
         </div>
       ) : (
-        <ul className="max-h-[52vh] divide-y divide-line overflow-y-auto">
+        <ul className="max-h-[min(65vh,560px)] min-h-0 flex-1 divide-y divide-line overflow-y-auto overscroll-contain">
           {notifications.map((notification) => (
             <NotificationCenterRow
               key={`${notification.source ?? 'notification'}-${notification.id}`}
@@ -146,7 +151,7 @@ export function NotificationCenter({ onNavigate }: { onNavigate?: () => void }) 
           ))}
         </ul>
       )}
-      <div className="border-t border-line px-2.5 py-2">
+      <div className="shrink-0 border-t border-line px-2.5 py-2">
         <Link
           to="/notifications"
           onClick={onNavigate}
@@ -171,22 +176,22 @@ function NotificationCenterRow({
   onOpen: () => void
 }) {
   const content = (
-    <div className={cn('flex items-start gap-2.5 rounded-lg px-2.5 py-2.5 transition-colors hover:bg-soft/70', !notification.read && 'bg-brand-soft/20')}>
+    <div className={cn('flex items-start gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-soft/70 sm:gap-2.5 sm:px-2.5', !notification.read && 'bg-brand-soft/20')}>
       <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
         {notificationIcon[notification.type]}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-start justify-between gap-2">
-          <span className="text-[12.5px] font-semibold leading-snug text-ink">{notification.title}</span>
+          <span className="min-w-0 flex-1 break-words text-[12.5px] font-semibold leading-snug text-ink">{notification.title}</span>
           <span className={cn('shrink-0 text-[10px] font-medium', notification.read ? 'text-muted' : 'text-brand')}>
             {notification.read ? 'Read' : 'Unread'}
           </span>
         </span>
-        {notification.message && <span className="mt-0.5 block text-[11.5px] leading-snug text-body">{notification.message}</span>}
-        <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[10.5px] text-muted">
-          <span>{notification.type_label}</span>
+        {notification.message && <span className="mt-0.5 block break-words text-[11.5px] leading-snug text-body">{notification.message}</span>}
+        <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[10.5px] text-muted">
+          <span className="break-words">{notification.type_label}</span>
           <span aria-hidden>·</span>
-          <time dateTime={notification.created_at}>
+          <time dateTime={notification.created_at} className="break-words">
             {format(new Date(notification.created_at), 'MMM d, yyyy h:mm a')}
           </time>
         </span>
@@ -200,7 +205,7 @@ function NotificationCenterRow({
   return (
     <li>
       {notification.link ? (
-        <Link to={notification.link} onClick={onOpen} aria-disabled={pending}>
+        <Link to={notification.link} onClick={onOpen} aria-disabled={pending} className="block">
           {content}
         </Link>
       ) : (

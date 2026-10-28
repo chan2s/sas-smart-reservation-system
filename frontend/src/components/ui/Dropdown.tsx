@@ -6,11 +6,19 @@ export function Dropdown({
   children,
   align = 'right',
   className,
+  panelClassName,
 }: {
   trigger: ReactNode
   children: ReactNode | ((close: () => void) => ReactNode)
   align?: 'left' | 'right'
   className?: string
+  /**
+   * Replaces the default panel sizing/positioning classes (width, max-height,
+   * scroll and anchor). `cn` is a plain join, not tailwind-merge, so passing a
+   * value here must supply the complete positioning model — used by the
+   * notification panel to switch to a viewport-anchored layout on mobile.
+   */
+  panelClassName?: string
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -46,8 +54,12 @@ export function Dropdown({
         <div
           role="menu"
           className={cn(
-            'absolute z-30 mt-2 max-h-[70vh] min-w-[180px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-pop animate-fade-up',
-            align === 'right' ? 'right-0' : 'left-0',
+            'z-30 rounded-xl border border-line bg-surface shadow-pop animate-fade-up',
+            panelClassName ??
+              cn(
+                'absolute mt-2 max-h-[70vh] min-w-[180px] max-w-[calc(100vw-1rem)] overflow-y-auto p-1.5',
+                align === 'right' ? 'right-0' : 'left-0',
+              ),
           )}
         >
           {typeof children === 'function' ? children(() => setOpen(false)) : children}

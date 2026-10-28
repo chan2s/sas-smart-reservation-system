@@ -119,6 +119,13 @@ function HeaderActions() {
       {!isApprovalLettersOnly && (
         <Dropdown
           align="right"
+          /*
+           * Mobile: viewport-anchored sheet with 12px gutters on both sides, so
+           * it can never overflow the left edge and stays clear of the fixed
+           * bottom navigation (max height reserves header + nav + safe area).
+           * From `sm` up it falls back to the original right-aligned panel.
+           */
+          panelClassName="fixed left-3 right-3 top-[4.25rem] flex max-h-[calc(100dvh_-_8.5rem_-_env(safe-area-inset-bottom))] w-auto max-w-[min(27rem,calc(100vw_-_24px))] flex-col overflow-hidden rounded-xl border border-line bg-surface p-1.5 shadow-pop animate-fade-up sm:absolute sm:top-full sm:left-auto sm:right-0 sm:mt-2 sm:max-h-[70vh] sm:w-[27rem]"
           trigger={
             <span className="relative flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink">
               <Bell className="size-5" aria-label="Notifications" />
