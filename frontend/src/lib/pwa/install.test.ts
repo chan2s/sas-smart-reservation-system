@@ -72,6 +72,8 @@ describe('install prompt capture', () => {
     const install = await loadInstallModule()
     expect(install.getInstallSnapshot()).toEqual({
       canPrompt: false,
+      promptAvailable: false,
+      promptDismissed: false,
       dismissed: false,
       installed: false,
       canShowIosInstructions: false,
@@ -105,6 +107,36 @@ describe('install prompt capture', () => {
     fireInstallPrompt('accepted')
     await install.promptInstall()
     expect(install.getInstallSnapshot().canPrompt).toBe(false)
+    expect(install.getInstallSnapshot().promptAvailable).toBe(false)
+  })
+
+  it('keeps the explicit install button usable after a polite dismissal', async () => {
+    const install = await loadInstallModule()
+    fireInstallPrompt()
+    install.dismissInstall()
+    // The floating invitation respects the seven-day cooldown…
+    expect(install.getInstallSnapshot().canPrompt).toBe(false)
+    // …but Settings may still offer the real prompt.
+    expect(install.getInstallSnapshot().promptAvailable).toBe(true)
+    await expect(install.promptInstall()).resolves.toBe('accepted')
+  })
+
+  it('remembers a cancelled prompt so the UI can explain how to retry', async () => {
+    const install = await loadInstallModule()
+    fireInstallPrompt('dismissed')
+    await expect(install.promptInstall()).resolves.toBe('dismissed')
+    expect(install.getInstallSnapshot().promptDismissed).toBe(true)
+    // The browser event is single-use, so nothing is left to re-prompt with.
+    expect(install.getInstallSnapshot().promptAvailable).toBe(false)
+  })
+
+  it('forgets the cancellation when the browser offers a fresh prompt', async () => {
+    const install = await loadInstallModule()
+    fireInstallPrompt('dismissed')
+    await install.promptInstall()
+    fireInstallPrompt()
+    expect(install.getInstallSnapshot().promptDismissed).toBe(false)
+    expect(install.getInstallSnapshot().promptAvailable).toBe(true)
   })
 
   it('does not offer installation when the app already runs standalone', async () => {

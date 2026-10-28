@@ -17,6 +17,9 @@ import {
   subscribeInstall,
 } from '@/lib/pwa/install'
 
+/** What the user chose in the browser's install dialog, or that none was open. */
+export type InstallOutcome = 'accepted' | 'dismissed' | 'unavailable'
+
 interface PwaContextValue {
   /** The shell has been precached and can open offline. */
   offlineReady: boolean
@@ -24,13 +27,17 @@ interface PwaContextValue {
   updateAvailable: boolean
   acceptUpdate: () => void
   dismissUpdate: () => void
-  /** A native install prompt is available and not dismissed. */
+  /** A native install prompt is available and the polite invitation may show. */
   canInstall: boolean
+  /** A native install prompt is available, even after an earlier "not now". */
+  promptAvailable: boolean
+  /** The native prompt was opened and closed unused in this session. */
+  promptDismissed: boolean
   installDismissed: boolean
   isInstalled: boolean
   /** An iOS/iPadOS device: manual "Add to Home Screen" instructions apply. */
   canShowIosInstructions: boolean
-  promptInstall: () => Promise<void>
+  promptInstall: () => Promise<InstallOutcome>
   dismissInstall: () => void
   dismissIosInstructions: () => void
 }
@@ -78,6 +85,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const promptInstall = useCallback(async () => {
     const outcome = await triggerInstallPrompt()
     if (outcome === 'accepted') toast('Installing SAS RESERVE…', 'success')
+    return outcome
   }, [toast])
 
   const value = useMemo<PwaContextValue>(
@@ -87,6 +95,8 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       acceptUpdate,
       dismissUpdate,
       canInstall: install.canPrompt,
+      promptAvailable: install.promptAvailable,
+      promptDismissed: install.promptDismissed,
       installDismissed: install.dismissed,
       isInstalled: install.installed,
       canShowIosInstructions: install.canShowIosInstructions,

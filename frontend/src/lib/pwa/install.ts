@@ -33,6 +33,16 @@ interface BeforeInstallPromptEvent extends Event {
 export interface InstallSnapshot {
   /** A deferred prompt is available and the user has not recently dismissed it. */
   canPrompt: boolean
+  /**
+   * A deferred prompt is held, ignoring the dismissal cooldown.
+   *
+   * The polite floating invitation obeys the cooldown ({@link canPrompt}); an
+   * explicit install section (Settings) must stay usable after the user said
+   * "not now", so it reads this instead.
+   */
+  promptAvailable: boolean
+  /** The native prompt was shown this session and the user closed it unused. */
+  promptDismissed: boolean
   /** The user dismissed the install invitation, and the cooldown has not elapsed. */
   dismissed: boolean
   /** Running as an installed app (standalone), or already installed. */
@@ -47,6 +57,7 @@ let deferredPrompt: BeforeInstallPromptEvent | null = null
 let sessionDismissed = false
 let iosSessionDismissed = false
 let installed = false
+let promptDismissed = false
 const listeners = new Set<Listener>()
 
 function isStandalone(): boolean {
@@ -112,6 +123,8 @@ function withinCooldown(key: string, sessionDismissal: boolean): boolean {
 
 let snapshot: InstallSnapshot = {
   canPrompt: false,
+  promptAvailable: false,
+  promptDismissed: false,
   dismissed: false,
   installed: false,
   canShowIosInstructions: false,
@@ -122,6 +135,8 @@ function recompute(): void {
   const dismissed = withinCooldown(DISMISS_KEY, sessionDismissed)
   snapshot = {
     canPrompt: deferredPrompt !== null && !dismissed && !nowInstalled,
+    promptAvailable: deferredPrompt !== null && !nowInstalled,
+    promptDismissed: promptDismissed && !nowInstalled,
     dismissed,
     installed: nowInstalled,
     canShowIosInstructions:
@@ -142,6 +157,8 @@ if (typeof window !== 'undefined') {
     // Suppress the browser's mini-infobar; the app shows its own invitation.
     event.preventDefault()
     deferredPrompt = event as BeforeInstallPromptEvent
+    // A fresh offer from the browser supersedes an earlier cancelled prompt.
+    promptDismissed = false
     recompute()
     emit()
   })
@@ -173,11 +190,18 @@ export async function promptInstall(): Promise<'accepted' | 'dismissed' | 'unava
   try {
     await event.prompt()
     const choice = await event.userChoice
-    if (choice.outcome === 'accepted') installed = true
+    if (choice.outcome === 'accepted') {
+      installed = true
+    } else {
+      // The event is single-use, so the button cannot re-open the same prompt;
+      // remember the cancellation so the UI can explain how to try again.
+      promptDismissed = true
+    }
     recompute()
     emit()
     return choice.outcome
   } catch {
+    promptDismissed = true
     recompute()
     emit()
     return 'dismissed'

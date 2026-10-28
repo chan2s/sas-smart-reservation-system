@@ -8,6 +8,7 @@ import {
   VERIFICATION_TONE,
 } from '@/components/organizations/OrganizationStatusNotice'
 import { ViewOnlyNotice } from '@/components/auth/ViewOnlyNotice'
+import { InstallAppSection } from '@/components/pwa/InstallAppSection'
 import type { User } from '@/lib/types'
 import { useToast } from '@/components/ui/Toast'
 import { api } from '@/lib/api'
@@ -119,6 +120,11 @@ export function SettingsPage() {
           )}
         </form>
       </Card>
+
+      {/* ---------------------------------------------------------- */}
+      {/* Installable app                                            */}
+      {/* ---------------------------------------------------------- */}
+      <InstallAppSection />
 
       {/* ---------------------------------------------------------- */}
       {/* Affiliation & organization                                */}
