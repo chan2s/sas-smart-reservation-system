@@ -104,7 +104,7 @@ class ApprovalLetterSerializer(serializers.ModelSerializer):
         return bool(
             obj.status == ApprovalLetter.Status.PENDING_SIGNATURE
             and user is not None
-            and getattr(user, "is_approval_signatory", False)
+            and getattr(user, "is_authorized_letter_approver", False)
             and getattr(user, "is_approved", True)
         )
 

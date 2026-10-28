@@ -218,10 +218,10 @@ describe('ApprovalLettersPage', () => {
     await waitFor(() => expect(state.signLetter).toHaveBeenCalledTimes(1))
   })
 
-  it('offers PDF/DOCX downloads and shows delivery state for signed letters', async () => {
+  it('offers PDF/DOCX downloads and shows delivery state for approved letters', async () => {
     const signed = letter({
-      status: 'SENT',
-      status_label: 'Signed and sent',
+      status: 'APPROVED',
+      status_label: 'Approved',
       signed_at: '2026-10-24T10:00:00+08:00',
       has_signed_pdf: true,
       has_signed_docx: true,

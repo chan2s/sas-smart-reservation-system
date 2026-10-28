@@ -787,11 +787,12 @@ export function useMarkAllNotificationsRead() {
   })
 }
 
-export function useUnreadCount() {
+export function useUnreadCount(enabled = true) {
   return useQuery({
     queryKey: ['unread-count'],
     queryFn: () => endpoints.unreadNotifications(),
     refetchInterval: 60_000,
+    enabled,
   })
 }
 

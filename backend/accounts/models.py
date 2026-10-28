@@ -229,7 +229,39 @@ class Organization(models.Model):
         return f"{self.organization_code} — {self.organization_name}"
 
 
-class UserManager(BaseUserManager):
+class UserQuerySet(models.QuerySet):
+    """Keep ORM bulk role edits subject to the same identity boundary."""
+
+    def update(self, **kwargs):
+        role = kwargs.get("role")
+        if role == "ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE":
+            from django.conf import settings
+
+            authorized_email = (
+                getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
+            ).strip().casefold()
+            if not authorized_email:
+                raise ValidationError({
+                    "role": "The approval-letter approver account is not configured."
+                })
+            candidates = list(
+                self.values("email", "first_name", "last_name", "is_superuser")
+            )
+            if not candidates or any(
+                (row["email"] or "").strip().casefold() != authorized_email
+                or row["is_superuser"]
+                or (row["first_name"] or "").strip().casefold()
+                not in ("francis", "francis m.")
+                or (row["last_name"] or "").strip().casefold() != "galon"
+                for row in candidates
+            ):
+                raise ValidationError({
+                    "role": "Only the configured Sir Francis M. Galon account can hold this role."
+                })
+        return super().update(**kwargs)
+
+
+class UserManager(BaseUserManager.from_queryset(UserQuerySet)):
     """Custom manager so ``create_superuser()`` assigns the ADMIN role.
 
     Django's built-in ``UserManager.create_superuser()`` only sets
@@ -289,6 +321,10 @@ class User(AbstractUser):
         ADMIN = "ADMIN", "Administrator"
         STAFF = "STAFF", "SAS Staff"
         REQUESTER = "REQUESTER", "Requester"
+        ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE = (
+            "ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE",
+            "Assistant Campus Director for Administration and Finance",
+        )
 
     class Affiliation(models.TextChoices):
         # ``NORSU_STUDENT`` and ``NORSU_OFFICE`` are retained for existing
@@ -324,7 +360,7 @@ class User(AbstractUser):
     objects = UserManager()
 
     role = models.CharField(
-        max_length=16, choices=Role.choices, default=Role.REQUESTER
+        max_length=48, choices=Role.choices, default=Role.REQUESTER
     )
     # Designated approval-letter signatory (the Assistant Campus Director for
     # Administration and Finance). Granted ONLY by an administrator through
@@ -370,7 +406,47 @@ class User(AbstractUser):
     )
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("role",),
+                condition=models.Q(
+                    role="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE"
+                ),
+                name="unique_assistant_campus_director_role",
+            )
+        ]
+
     def save(self, *args, **kwargs):
+        if self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
+            from django.conf import settings
+
+            authorized_email = (
+                getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
+            ).strip().casefold()
+            if not authorized_email or (self.email or "").strip().casefold() != authorized_email:
+                raise ValidationError({
+                    "role": (
+                        "This role can only be assigned to the configured approval-letter "
+                        "approver account."
+                    ),
+                })
+            if self.is_superuser:
+                raise ValidationError({
+                    "role": "A Django superuser account cannot hold the approval-only role.",
+                })
+            if self.first_name.strip().casefold() not in ("francis", "francis m.") or self.last_name.strip().casefold() != "galon":
+                raise ValidationError({
+                    "role": "This role is reserved for Sir Francis M. Galon.",
+                })
+            if type(self).objects.filter(
+                role=self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+            ).exclude(pk=self.pk).exists():
+                raise ValidationError({
+                    "role": "Only one account may hold this role.",
+                })
+            self.is_staff = False
+            self.is_approval_signatory = False
         # Administrators get Django admin access automatically.
         if self.role == self.Role.ADMIN:
             self.is_staff = True
@@ -379,6 +455,11 @@ class User(AbstractUser):
     def clean(self):
         super().clean()
         if not self.is_approval_signatory:
+            return
+        if (
+            self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+            and self.is_authorized_letter_approver
+        ):
             return
         # Check the stored role, not ``is_sas_staff``: a designated staff
         # signatory deliberately reports ``is_sas_staff == False`` so the
@@ -442,7 +523,32 @@ class User(AbstractUser):
         Administrators are exempt: an administrator who is also designated
         keeps their full administrator capabilities.
         """
-        return bool(self.is_approval_signatory and not self.is_admin)
+        return bool(
+            self.is_authorized_letter_approver
+            or (self.is_approval_signatory and not self.is_admin)
+        )
+
+    @property
+    def is_authorized_letter_approver(self) -> bool:
+        """Resolve the designated approver from the configured account identity.
+
+        The stored role alone is never sufficient for letter permissions. This
+        check also makes direct role edits inert unless they target the
+        institutionally configured Sir Galon account.
+        """
+        from django.conf import settings
+
+        authorized_email = (
+            getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", "") or ""
+        ).strip().casefold()
+        return bool(
+            self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+            and authorized_email
+            and not self.is_superuser
+            and (self.email or "").strip().casefold() == authorized_email
+            and self.first_name.strip().casefold() in ("francis", "francis m.")
+            and self.last_name.strip().casefold() == "galon"
+        )
 
     @property
     def is_sas_staff(self) -> bool:
@@ -597,6 +703,7 @@ class AuditLog(models.Model):
         APPROVAL_LETTER_CREATED = "APPROVAL_LETTER_CREATED", "Approval letter created"
         APPROVAL_LETTER_DOC_GENERATED = "APPROVAL_LETTER_DOC_GENERATED", "Approval letter document generated"
         APPROVAL_LETTER_SIGNED = "APPROVAL_LETTER_SIGNED", "Approval letter signed"
+        APPROVAL_LETTER_APPROVED = "APPROVAL_LETTER_APPROVED", "Approval letter approved"
         APPROVAL_LETTER_EMAIL_SENT = "APPROVAL_LETTER_EMAIL_SENT", "Approval letter email accepted"
         APPROVAL_LETTER_EMAIL_FAILED = "APPROVAL_LETTER_EMAIL_FAILED", "Approval letter email failed"
         APPROVAL_LETTER_EMAIL_TRY = "APPROVAL_LETTER_EMAIL_TRY", "Approval letter email attempted"

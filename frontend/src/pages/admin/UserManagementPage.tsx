@@ -32,6 +32,7 @@ const ROLE_TONE: Record<Role, 'brand' | 'sky' | 'neutral'> = {
   ADMIN: 'brand',
   STAFF: 'sky',
   REQUESTER: 'neutral',
+  ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE: 'brand',
 }
 
 type StatusFilter = '' | 'active' | 'inactive'
@@ -726,7 +727,7 @@ export function UserManagementPage() {
             hint={
               roleLocked
                 ? 'This account\u2019s role is protected and cannot be changed here.'
-                : 'Administrators can manage users; SAS staff can manage operational modules; requesters can reserve facilities.'
+                : 'This role is reserved for the configured Sir Francis M. Galon account and only opens approval letters.'
             }
           >
             <Select
@@ -743,6 +744,9 @@ export function UserManagementPage() {
               <option value="REQUESTER">Requester</option>
               <option value="STAFF">SAS Staff</option>
               <option value="ADMIN">Administrator</option>
+              <option value="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE">
+                Assistant Campus Director for Administration and Finance
+              </option>
             </Select>
           </Field>
 

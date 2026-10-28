@@ -19,6 +19,7 @@ import logging
 from io import BytesIO
 
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import transaction
@@ -118,8 +119,8 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
         user_model = get_user_model()
         signatories = user_model.objects.filter(
             is_active=True,
-            is_approval_signatory=True,
-            role__in=(user_model.Role.ADMIN, user_model.Role.STAFF),
+            role=user_model.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
+            email__iexact=getattr(settings, "APPROVAL_LETTER_APPROVER_EMAIL", ""),
         )
         message = (
             f"Letter {letter.letter_id} for {reservation.event_name} "
@@ -194,7 +195,7 @@ def _assert_can_sign(actor) -> None:
         raise PermissionDenied(
             "Your account is pending administrator approval and cannot approve letters."
         )
-    if not getattr(actor, "is_approval_signatory", False):
+    if not getattr(actor, "is_authorized_letter_approver", False):
         raise PermissionDenied(
             "Only the designated approval-letter signatory can approve letters."
         )
@@ -226,7 +227,7 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
 
         if locked.status != ApprovalLetter.Status.PENDING_SIGNATURE:
             raise LetterSignError(
-                "This letter has already been signed and cannot be signed again."
+                "This letter has already been approved and cannot be approved again."
             )
         reservation = locked.reservation
         if reservation.status not in _SIGNABLE_RESERVATION_STATUSES:
@@ -237,7 +238,7 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
 
         locked.signed_at = now
         locked.signatory = actor
-        locked.status = ApprovalLetter.Status.SIGNED
+        locked.status = ApprovalLetter.Status.APPROVED
         # Render both finalized files before writing either to storage. A
         # renderer error therefore leaves the pending letter untouched.
         pdf_bytes = render_letter_pdf(locked, signed=True)
@@ -263,12 +264,12 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
 
         AuditLog.record(
             actor,
-            AuditLog.Action.APPROVAL_LETTER_SIGNED,
+            AuditLog.Action.APPROVAL_LETTER_APPROVED,
             object_type="approval_letter",
             object_id=locked.letter_id,
             object_repr=f"Reservation {reservation.reservation_id}",
             detail=(
-                f"Approval recorded by the designated signatory "
+                f"Approval recorded by Sir Francis M. Galon "
                 f"(user id {getattr(actor, 'pk', None)}) at {now.isoformat()}; "
                 "finalized PDF and DOCX generated from the institutional "
                 "template. TEST SIGNATURE — not a verified digital signature."
@@ -283,7 +284,7 @@ def sign_letter(letter: ApprovalLetter, actor) -> ApprovalLetter:
             detail="Final signed PDF and DOCX generated from the issued letter.",
         )
         logger.info(
-            "Approval letter %s signed by user id %s at %s.",
+            "Approval letter %s approved by user id %s at %s.",
             locked.letter_id,
             getattr(actor, "pk", None),
             now,
@@ -403,14 +404,12 @@ def deliver_signed_letter(letter_id: int) -> ApprovalLetter:
             letter.email_status = ApprovalLetter.EmailStatus.SENT
             letter.email_error = ""
             letter.emailed_at = timezone.now()
-            letter.status = ApprovalLetter.Status.SENT
             logger.info("Signed-letter email SENT for %s to the requester.", letter.letter_id)
             audit_action = AuditLog.Action.APPROVAL_LETTER_EMAIL_SENT
             audit_detail = "Signed PDF accepted by the configured email service."
         else:
             letter.email_status = ApprovalLetter.EmailStatus.FAILED
             letter.email_error = (reason or "unknown")[:100]
-            letter.status = ApprovalLetter.Status.EMAIL_FAILED
             logger.error(
                 "Signed-letter email FAILED for %s (reason: %s). The signature "
                 "remains intact.",

@@ -10,9 +10,7 @@ import {
   Eye,
   FileSignature,
   FileText,
-  MailWarning,
   RefreshCw,
-  Send,
   ShieldCheck,
   UserRound,
 } from 'lucide-react'
@@ -24,7 +22,6 @@ import {
   useApprovalLetter,
   useApprovalLetters,
   useApprovalLetterPreview,
-  useRetryLetterEmail,
   useSignApprovalLetter,
 } from '@/hooks/queries'
 import { useAuth } from '@/hooks/useAuth'
@@ -54,7 +51,7 @@ import type { ApprovalLetter } from '@/lib/types'
 
 type Box = 'pending' | 'signed'
 
-const SIGNED_STATUSES = 'SIGNED,SENT,EMAIL_FAILED'
+const APPROVED_STATUSES = 'APPROVED,SIGNED,SENT,EMAIL_FAILED'
 
 export function ApprovalLettersPage() {
   const { isApprovalSignatory } = useAuth()
@@ -65,7 +62,7 @@ export function ApprovalLettersPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
 
   const pendingQuery = useApprovalLetters({ status: 'PENDING_SIGNATURE' })
-  const signedQuery = useApprovalLetters({ status: SIGNED_STATUSES })
+  const signedQuery = useApprovalLetters({ status: APPROVED_STATUSES })
 
   const activeQuery = box === 'pending' ? pendingQuery : signedQuery
   const letters = activeQuery.data?.results ?? []
@@ -183,10 +180,6 @@ export function ApprovalLettersPage() {
               onSigned={() => {
                 toast('Letter approved. The finalized documents were generated and the requester is being emailed.')
               }}
-              onEmailRetried={(sent) => {
-                if (sent) toast('Approval letter email sent to the requester.')
-                else toast('The email could not be delivered yet. You can retry.', 'error')
-              }}
             />
           )}
         </div>
@@ -240,6 +233,7 @@ function letterStatusTone(status: string) {
   switch (status) {
     case 'PENDING_SIGNATURE':
       return 'amber' as const
+    case 'APPROVED':
     case 'SENT':
       return 'emerald' as const
     case 'SIGNED':
@@ -251,8 +245,7 @@ function letterStatusTone(status: string) {
 
 /**
  * Display the approval outcome using the module's vocabulary while the
- * database keeps the project's existing letter statuses (PENDING_SIGNATURE →
- * SIGNED/SENT/EMAIL_FAILED). The reservation's own status is never merged in.
+ * letter state stays independent of the reservation's approval state.
  */
 function letterStatusLabel(status: string) {
   return status === 'PENDING_SIGNATURE' ? 'Pending approval' : 'Approved'
@@ -337,16 +330,13 @@ function LetterListItem({
 function LetterDetail({
   letterId,
   onSigned,
-  onEmailRetried,
 }: {
   letterId: number
   onSigned: () => void
-  onEmailRetried: (sent: boolean) => void
 }) {
   const { toast } = useToast()
   const { data: letter, isLoading, isError, refetch } = useApprovalLetter(letterId)
   const signMutation = useSignApprovalLetter(letterId)
-  const retryMutation = useRetryLetterEmail(letterId)
   const [confirming, setConfirming] = useState(false)
   const [pdfBusy, setPdfBusy] = useState(false)
   const [docxBusy, setDocxBusy] = useState(false)
@@ -397,15 +387,6 @@ function LetterDetail({
   async function handleSign() {
     await signMutation.mutateAsync()
     onSigned()
-  }
-
-  async function handleRetryEmail() {
-    try {
-      const result = await retryMutation.mutateAsync()
-      onEmailRetried(result.email_status === 'SENT')
-    } catch (error) {
-      toast(apiErrorMessage(error, 'The retry could not be started.'), 'error')
-    }
   }
 
   return (
@@ -510,23 +491,6 @@ function LetterDetail({
                   Last attempt {formatDateTime(letter.email_attempted_at)}
                 </span>
               )}
-              {letter.can_retry_email && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleRetryEmail()}
-                  loading={retryMutation.isPending}
-                  icon={<Send className="size-3.5" aria-hidden />}
-                >
-                  Retry email
-                </Button>
-              )}
-              {letter.email_status === 'FAILED' && letter.email_error && (
-                <span className="flex min-w-0 items-start gap-1 text-xs break-words text-status-rejected">
-                  <MailWarning className="mt-px size-3.5 shrink-0" aria-hidden />
-                  <span className="min-w-0">{letter.email_error}</span>
-                </span>
-              )}
             </dd>
             <p className="mt-1 text-xs text-muted">
               This records acceptance by the configured email service; recipient receipt or opening is not tracked.
@@ -610,9 +574,8 @@ function LetterDetail({
         }}
       >
         <p className="rounded-lg bg-soft px-3 py-2 text-[13px] text-body">
-          Approving records your account and the approval timestamp, applies the
-          campus <strong>test signature</strong> required by the existing
-          workflow, generates the finalized PDF and DOCX, and emails them to{' '}
+          Approval records your account and the approval timestamp, generates
+          the approved PDF and DOCX, and sends them to{' '}
           <strong>{letter.requester_name}</strong>. This cannot be undone.
         </p>
       </ConfirmDialog>

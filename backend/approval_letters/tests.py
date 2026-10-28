@@ -13,6 +13,7 @@ from zipfile import ZipFile
 from datetime import date, time
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core import mail
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
@@ -32,7 +33,10 @@ User = get_user_model()
 LETTERS_MEDIA_ROOT = tempfile.mkdtemp(prefix="sas-test-approval-letters-")
 
 
-@override_settings(MEDIA_ROOT=LETTERS_MEDIA_ROOT)
+@override_settings(
+    MEDIA_ROOT=LETTERS_MEDIA_ROOT,
+    APPROVAL_LETTER_APPROVER_EMAIL="sir.galon@norsu.edu",
+)
 class ApprovalLetterTestBase(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -42,10 +46,10 @@ class ApprovalLetterTestBase(TestCase):
         cls.signatory = User.objects.create_user(
             username="lettersignatory",
             password="pass12345",
-            role=User.Role.STAFF,
+            role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
             first_name="Francis M.",
             last_name="Galon",
-            is_approval_signatory=True,
+            email="sir.galon@norsu.edu",
         )
         cls.other_staff = User.objects.create_user(
             username="otherstaff", password="pass12345", role=User.Role.STAFF
@@ -218,7 +222,7 @@ class SigningTests(ApprovalLetterTestBase):
         response = self.sign_via_api(self.letter)
         self.assertEqual(response.status_code, 200)
         self.letter.refresh_from_db()
-        self.assertEqual(self.letter.status, ApprovalLetter.Status.SENT)
+        self.assertEqual(self.letter.status, ApprovalLetter.Status.APPROVED)
         self.assertEqual(self.letter.signatory, self.signatory)
         self.assertIsNotNone(self.letter.signed_at)
         self.assertTrue(self.letter.has_signed_pdf)
@@ -420,9 +424,17 @@ class AccessTests(ApprovalLetterTestBase):
             self.client.get(f"/api/approval-letters/{letter.pk}/download/docx/").status_code,
             404,
         )
-        # Even the letter detail is hidden.
+        # Requesters cannot open the approval workspace.
         self.assertEqual(
-            self.client.get(f"/api/approval-letters/{letter.pk}/").status_code, 404
+            self.client.get(f"/api/approval-letters/{letter.pk}/").status_code, 403
+        )
+
+    def test_requester_cannot_open_approval_workspace(self):
+        self.client.force_authenticate(self.requester)
+        self.assertEqual(self.client.get("/api/approval-letters/").status_code, 403)
+        self.assertEqual(
+            self.client.get(f"/api/approval-letters/{self.letter.pk}/preview/").status_code,
+            403,
         )
 
     def test_staff_can_download_any_letter(self):
@@ -459,7 +471,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
     def test_signed_letter_is_emailed_with_attachments(self):
         letter = self.sign(self.letter)
         letter.refresh_from_db()
-        self.assertEqual(letter.status, ApprovalLetter.Status.SENT)
+        self.assertEqual(letter.status, ApprovalLetter.Status.APPROVED)
         self.assertEqual(letter.email_status, ApprovalLetter.EmailStatus.SENT)
         self.assertIsNotNone(letter.emailed_at)
         self.assertIsNotNone(letter.email_attempted_at)
@@ -501,7 +513,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
         self.assertEqual(self.letter.signatory, self.signatory)
         self.assertTrue(self.letter.has_signed_pdf)
         # Delivery recorded as failed.
-        self.assertEqual(self.letter.status, ApprovalLetter.Status.EMAIL_FAILED)
+        self.assertEqual(self.letter.status, ApprovalLetter.Status.APPROVED)
         self.assertEqual(self.letter.email_status, ApprovalLetter.EmailStatus.FAILED)
         self.assertEqual(self.letter.email_error, "smtp_connection")
         self.assertIsNone(self.letter.emailed_at)
@@ -524,7 +536,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
         # the retry assertions below see exactly the letter email.
         mail.outbox.clear()
 
-        self.client.force_authenticate(self.signatory)
+        self.client.force_authenticate(self.other_staff)
         response = self.client.post(
             f"/api/approval-letters/{self.letter.pk}/retry-email/"
         )
@@ -532,7 +544,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
         self.letter.refresh_from_db()
         self.assertEqual(self.letter.email_status, ApprovalLetter.EmailStatus.SENT)
         self.assertIsNotNone(self.letter.emailed_at)
-        self.assertEqual(self.letter.status, ApprovalLetter.Status.SENT)
+        self.assertEqual(self.letter.status, ApprovalLetter.Status.APPROVED)
         # Same letter, same signature, same document — nothing re-created.
         self.assertEqual(self.letter.signed_at, signed_at)
         self.assertEqual(self.letter.pdf_file.name, pdf_name)
@@ -541,7 +553,7 @@ class EmailDeliveryTests(ApprovalLetterTestBase):
 
     def test_retry_sent_email_is_refused(self):
         letter = self.sign(self.letter)
-        self.client.force_authenticate(self.signatory)
+        self.client.force_authenticate(self.other_staff)
         response = self.client.post(f"/api/approval-letters/{letter.pk}/retry-email/")
         self.assertEqual(response.status_code, 400)
 
@@ -629,10 +641,7 @@ class WorkflowPreservationTests(ApprovalLetterTestBase):
         client = APIClient()
         client.force_authenticate(self.requester)
         response = client.get("/api/approval-letters/")
-        self.assertEqual(response.status_code, 200)
-        results = response.json()["results"]
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["letter_id"], letter.letter_id)
+        self.assertEqual(response.status_code, 403)
 
         client.force_authenticate(self.admin)
         response = client.get("/api/approval-letters/")
@@ -651,7 +660,7 @@ class WorkflowPreservationTests(ApprovalLetterTestBase):
 
         pending = client.get("/api/approval-letters/?status=PENDING_SIGNATURE")
         self.assertEqual(pending.json()["count"], 0)
-        signed = client.get("/api/approval-letters/?status=SENT")
+        signed = client.get("/api/approval-letters/?status=APPROVED")
         self.assertEqual(signed.json()["count"], 1)
         self.assertEqual(signed.json()["results"][0]["letter_id"], letter.letter_id)
 
@@ -740,21 +749,14 @@ class ScopedSignatoryAccessTests(ApprovalLetterTestBase):
         self.assertEqual(response.status_code, 200, response.content)
 
         self.letter.refresh_from_db()
-        self.assertIn(
-            self.letter.status,
-            (
-                ApprovalLetter.Status.SIGNED,
-                ApprovalLetter.Status.SENT,
-                ApprovalLetter.Status.EMAIL_FAILED,
-            ),
-        )
+        self.assertEqual(self.letter.status, ApprovalLetter.Status.APPROVED)
         self.assertEqual(self.letter.signatory, self.signatory)
         self.assertIsNotNone(self.letter.signed_at)
         self.assertTrue(self.letter.has_signed_pdf)
 
         # The approval is attributed in the audit trail.
         audit = AuditLog.objects.filter(
-            action=AuditLog.Action.APPROVAL_LETTER_SIGNED,
+            action=AuditLog.Action.APPROVAL_LETTER_APPROVED,
             object_id=self.letter.letter_id,
         ).first()
         self.assertIsNotNone(audit)
@@ -784,7 +786,7 @@ class ScopedSignatoryAccessTests(ApprovalLetterTestBase):
         self.assertEqual(self.letter.signed_at, approved_at)
         self.assertEqual(
             AuditLog.objects.filter(
-                action=AuditLog.Action.APPROVAL_LETTER_SIGNED,
+                action=AuditLog.Action.APPROVAL_LETTER_APPROVED,
                 object_id=self.letter.letter_id,
             ).count(),
             1,
@@ -805,4 +807,26 @@ class ScopedSignatoryAccessTests(ApprovalLetterTestBase):
         self.assertEqual(self.letter.status, ApprovalLetter.Status.PENDING_SIGNATURE)
         self.assertIsNone(self.letter.signatory_id)
         self.assertIsNone(self.letter.signed_at)
+
+    def test_direct_role_edit_on_another_account_does_not_grant_approval(self):
+        with self.assertRaises(ValidationError):
+            User.objects.filter(pk=self.other_staff.pk).update(
+                role=User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+            )
+        self.assertFalse(self.other_staff.is_authorized_letter_approver)
+        response = self._as(self.other_staff).post(
+            f"/api/approval-letters/{self.letter.pk}/approve/",
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.letter.refresh_from_db()
+        self.assertEqual(self.letter.status, ApprovalLetter.Status.PENDING_SIGNATURE)
+
+    def test_approver_cannot_use_retry_email_action(self):
+        client = self._as(self.signatory)
+        response = client.post(
+            f"/api/approval-letters/{self.letter.pk}/retry-email/",
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.content)
 

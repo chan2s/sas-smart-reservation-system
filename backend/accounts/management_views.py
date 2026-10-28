@@ -85,6 +85,8 @@ def deletion_block_reason(target, caller) -> str:
         if _active_superuser_count() <= 1:
             return "The last active superuser account cannot be deleted."
         return "Protected system accounts cannot be deleted."
+    if target.role == User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
+        return "The designated approval-letter account cannot be deleted here."
     if (
         target.role == User.Role.ADMIN
         and target.is_active

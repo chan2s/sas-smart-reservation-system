@@ -189,7 +189,6 @@ class CustomUserAdmin(UserAdmin):
                     "organization",
                     "organization_ref",
                     "avatar",
-                    "is_approval_signatory",
                 )
             },
         ),

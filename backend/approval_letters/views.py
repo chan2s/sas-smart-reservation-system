@@ -25,13 +25,13 @@ from django.http import FileResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
-    IsApprovalLetterStaffOrSignatory,
     IsApprovalSignatory,
+    IsSasStaff,
 )
 
 from .documents import render_letter_pdf
@@ -50,6 +50,26 @@ DOCX_CONTENT_TYPE = (
 )
 
 
+class IsApprovalLetterWorkspaceOrRequesterDownload(BasePermission):
+    """Allow the approver workspace and requesters' own finalized downloads."""
+
+    message = {
+        "detail": "Only the designated approver may access the approval-letter workspace.",
+        "code": "approval_letter_workspace_forbidden",
+    }
+
+    def has_permission(self, request, view):
+        user = request.user
+        if getattr(user, "is_admin", False) or getattr(
+            user, "is_authorized_letter_approver", False
+        ):
+            return True
+        return bool(
+            getattr(user, "role", None) == user.Role.REQUESTER
+            and getattr(view, "action", None) in ("download_pdf", "download_docx")
+        )
+
+
 def _attachment_response(file_field, content_type: str) -> FileResponse:
     filename = file_field.name.rsplit("/", 1)[-1]
     response = FileResponse(default_storage.open(file_field.name, "rb"), content_type=content_type)
@@ -60,7 +80,11 @@ def _attachment_response(file_field, content_type: str) -> FileResponse:
 class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
     """List / retrieve / preview / download / sign / retry approval letters."""
 
-    permission_classes = [IsAuthenticated, IsAccountApprovedOrReadOnly]
+    permission_classes = [
+        IsAuthenticated,
+        IsAccountApprovedOrReadOnly,
+        IsApprovalLetterWorkspaceOrRequesterDownload,
+    ]
     serializer_class = ApprovalLetterSerializer
 
     def get_queryset(self):
@@ -74,7 +98,7 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = ApprovalLetter.objects.select_related(
             "reservation", "reservation__facility", "reservation__requester", "signatory"
         )
-        if user.is_admin or getattr(user, "is_approval_signatory", False):
+        if user.is_admin or getattr(user, "is_authorized_letter_approver", False):
             pass
         elif self.action in ("sign", "approve") and user.is_sas_staff:
             # Let the approval actions reach their server-side authorization
@@ -176,7 +200,7 @@ class ApprovalLetterViewSet(viewsets.ReadOnlyModelViewSet):
         permission_classes=[
             IsAuthenticated,
             IsAccountApprovedOrReadOnly,
-            IsApprovalLetterStaffOrSignatory,
+            IsSasStaff,
         ],
         url_path="retry-email",
     )

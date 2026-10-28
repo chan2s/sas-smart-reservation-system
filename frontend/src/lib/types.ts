@@ -1,6 +1,10 @@
 // API types — mirror the Django REST serializers.
 
-export type Role = 'ADMIN' | 'STAFF' | 'REQUESTER'
+export type Role =
+  | 'ADMIN'
+  | 'STAFF'
+  | 'REQUESTER'
+  | 'ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE'
 
 /** Chatbot response — grounded answer from the rule-based pipeline. */
 export interface ChatbotSuggestion {
@@ -177,7 +181,12 @@ export interface User {
 }
 
 /** Approval-letter status (independent of the reservation status). */
-export type ApprovalLetterStatus = 'PENDING_SIGNATURE' | 'SIGNED' | 'SENT' | 'EMAIL_FAILED'
+export type ApprovalLetterStatus =
+  | 'PENDING_SIGNATURE'
+  | 'APPROVED'
+  | 'SIGNED'
+  | 'SENT'
+  | 'EMAIL_FAILED'
 
 /** Embedded in the reservation detail payload (requester-facing summary). */
 export interface ApprovalLetterSummary {

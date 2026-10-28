@@ -39,15 +39,14 @@ class ApprovalLetter(models.Model):
     """The formal approval letter issued for one approved reservation."""
 
     class Status(models.TextChoices):
-        # Generated and awaiting the designated signatory.
+        # Generated and awaiting Sir Galon's explicit approval.
         PENDING_SIGNATURE = "PENDING_SIGNATURE", "Pending signature"
-        # Signed; the finalized PDF/DOCX exist. Distinct from SENT so a failed
-        # email never hides the fact that the signature itself completed.
-        SIGNED = "SIGNED", "Signed"
-        # Signed AND the requester email was accepted by the email backend.
-        SENT = "SENT", "Signed and sent"
-        # Signed but the requester email failed; retryable without re-signing.
-        EMAIL_FAILED = "EMAIL_FAILED", "Signed — email failed"
+        # Approval is the terminal letter decision; delivery is tracked below.
+        APPROVED = "APPROVED", "Approved"
+        # Retained so old clients/data can be read during rolling deployment.
+        SIGNED = "SIGNED", "Signed (legacy)"
+        SENT = "SENT", "Signed and sent (legacy)"
+        EMAIL_FAILED = "EMAIL_FAILED", "Signed — email failed (legacy)"
 
     class EmailStatus(models.TextChoices):
         NOT_SENT = "NOT_SENT", "Not sent"
@@ -155,7 +154,12 @@ class ApprovalLetter(models.Model):
 
     @property
     def is_signed(self) -> bool:
-        return self.status != self.Status.PENDING_SIGNATURE
+        return self.status in (
+            self.Status.APPROVED,
+            self.Status.SIGNED,
+            self.Status.SENT,
+            self.Status.EMAIL_FAILED,
+        )
 
     @property
     def has_signed_pdf(self) -> bool:

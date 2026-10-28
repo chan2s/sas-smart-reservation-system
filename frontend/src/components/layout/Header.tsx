@@ -84,7 +84,7 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
 
 function HeaderActions() {
   const { user, logout, isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
-  const { data: unread } = useUnreadCount()
+  const { data: unread } = useUnreadCount(!isApprovalLettersOnly)
   const navigate = useNavigate()
   const isAdmin = user?.role === 'ADMIN'
 
@@ -116,25 +116,23 @@ function HeaderActions() {
       )}
 
       {/* Notifications */}
-      <Dropdown
-        align="right"
-        trigger={
-          <span className="relative flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink">
-            <Bell className="size-5" aria-label="Notifications" />
-            {(unread?.count ?? 0) > 0 && (
-              <span className="absolute right-1 top-1 flex min-w-[17px] items-center justify-center rounded-full bg-brand px-1 py-px text-[10px] font-bold text-white ring-2 ring-surface">
-                {unread?.count}
-              </span>
-            )}
-          </span>
-        }
-      >
-        {(close) => (
-          <>
-            <NotificationCenter onNavigate={close} />
-          </>
-        )}
-      </Dropdown>
+      {!isApprovalLettersOnly && (
+        <Dropdown
+          align="right"
+          trigger={
+            <span className="relative flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink">
+              <Bell className="size-5" aria-label="Notifications" />
+              {(unread?.count ?? 0) > 0 && (
+                <span className="absolute right-1 top-1 flex min-w-[17px] items-center justify-center rounded-full bg-brand px-1 py-px text-[10px] font-bold text-white ring-2 ring-surface">
+                  {unread?.count}
+                </span>
+              )}
+            </span>
+          }
+        >
+          {(close) => <NotificationCenter onNavigate={close} />}
+        </Dropdown>
+      )}
 
       {/* User menu */}
       <Dropdown
@@ -150,7 +148,7 @@ function HeaderActions() {
               </span>
               <span className="block text-[11px] text-muted">
                 {isApprovalLettersOnly
-                  ? 'Approval Letter Signatory'
+                  ? 'Assistant Campus Director for Administration and Finance'
                   : user?.role === 'ADMIN'
                     ? 'SAS Administrator'
                     : user?.role === 'STAFF'
@@ -174,7 +172,7 @@ function HeaderActions() {
               </p>
               <p className="text-xs text-muted">
                 {isApprovalLettersOnly
-                  ? 'Approval Letter Signatory'
+                  ? 'Assistant Campus Director for Administration and Finance'
                   : user?.role === 'ADMIN'
                     ? 'SAS Administrator'
                     : user?.role === 'STAFF'

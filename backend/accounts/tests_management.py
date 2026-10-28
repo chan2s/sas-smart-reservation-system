@@ -122,7 +122,7 @@ class SuperuserRoleTests(APITestCase):
 
         with mock.patch("builtins.input", side_effect=_input), mock.patch(
             "getpass.getpass", side_effect=_prompt
-        ):
+        ), mock.patch("sys.stdin", mock.Mock(isatty=lambda: True)):
             call_command("createsuperuser")
 
         user = User.objects.get(username="mgmt-created")
@@ -765,6 +765,40 @@ class AdminUserUpdateTests(APITestCase):
         self.target.refresh_from_db()
         self.assertEqual(self.target.role, User.Role.STAFF)
         self.assertFalse(self.target.is_staff)
+
+    @override_settings(APPROVAL_LETTER_APPROVER_EMAIL="sir.galon@norsu.edu")
+    def test_admin_can_assign_dedicated_role_only_to_configured_sir_galon(self):
+        self.target.email = "sir.galon@norsu.edu"
+        self.target.first_name = "Francis M."
+        self.target.last_name = "Galon"
+        self.target.save()
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.target.refresh_from_db()
+        self.assertEqual(
+            self.target.role,
+            User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
+        )
+        self.assertFalse(self.target.is_staff)
+        self.assertEqual(
+            response.data["role_label"],
+            "Assistant Campus Director for Administration and Finance",
+        )
+
+    @override_settings(APPROVAL_LETTER_APPROVER_EMAIL="sir.galon@norsu.edu")
+    def test_admin_cannot_assign_dedicated_role_to_another_account(self):
+        response = self.client.patch(
+            USER_DETAIL_URL.format(pk=self.target.pk),
+            {"role": User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.role, User.Role.REQUESTER)
 
     def test_privilege_flags_in_payload_are_ignored(self):
         response = self.client.patch(

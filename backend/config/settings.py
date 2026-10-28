@@ -70,6 +70,14 @@ def _normalize_from_email(value: str) -> str:
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
+# The one institutional account allowed to hold the Assistant Campus Director
+# approval role. Configure this with Sir Galon's existing account email in
+# each deployment; it is an identity, never a credential.
+APPROVAL_LETTER_APPROVER_EMAIL = (
+    os.environ.get("APPROVAL_LETTER_APPROVER_EMAIL", "").strip()
+    or "galon@school.edu"
+).casefold()
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"

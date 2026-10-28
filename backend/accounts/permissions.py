@@ -27,7 +27,6 @@ APPROVAL_LETTERS_ONLY_MESSAGE = {
 APPROVAL_SIGNATORY_ALLOWED_PREFIXES = (
     "/api/approval-letters/",
     "/api/auth/me/",
-    "/api/notifications/",
 )
 
 
@@ -90,7 +89,7 @@ class IsApprovalSignatory(BasePermission):
         return bool(
             user
             and user.is_authenticated
-            and getattr(user, "is_approval_signatory", False)
+            and getattr(user, "is_authorized_letter_approver", False)
         )
 
 
@@ -104,7 +103,7 @@ class IsApprovalLetterStaffOrSignatory(BasePermission):
             and user.is_authenticated
             and (
                 getattr(user, "is_sas_staff", False)
-                or getattr(user, "is_approval_signatory", False)
+                or getattr(user, "is_authorized_letter_approver", False)
             )
         )
 

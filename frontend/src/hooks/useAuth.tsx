@@ -107,7 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isApprovalSignatory = Boolean(
     user?.is_approval_signatory &&
-      (user.role === 'ADMIN' || user.role === 'STAFF'),
+      (user.role === 'ADMIN' || user.role === 'STAFF' ||
+        user.role === 'ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE'),
   )
   // The backend marks a non-administrator signatory as module-scoped. Fall
   // back to the same derivation so an older payload cannot expose the full
