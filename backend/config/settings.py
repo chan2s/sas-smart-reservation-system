@@ -73,6 +73,11 @@ SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 
+# Captured at import time: Django's test runner forces ``DEBUG`` to False, but
+# runtime code (building public links for emails) still needs to distinguish a
+# real deployment from a local development run.
+IS_PRODUCTION = not DEBUG
+
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.environ.get(
@@ -481,10 +486,15 @@ REMINDER_EMAIL_CLAIM_TIMEOUT_SECONDS = int(
 # Frontend
 # ---------------------------------------------------------------------------
 
+# Public origin of the React application: the OAuth fallback AND every link
+# placed in an email. There is deliberately no localhost fallback outside
+# local development — silently building links to the developer machine is
+# worse than a loud configuration error, which
+# ``notifications.email_service.get_public_frontend_url`` raises and logs.
 PUBLIC_FRONTEND_URL = os.environ.get(
     "PUBLIC_FRONTEND_URL",
-    "http://localhost:5173",
-)
+    "" if IS_PRODUCTION else "http://localhost:5173",
+).strip().rstrip("/")
 
 # Origins allowed to receive OAuth redirects, in addition to localhost in
 # DEBUG and (optionally) current VS Code Dev Tunnels. Exact origins only.

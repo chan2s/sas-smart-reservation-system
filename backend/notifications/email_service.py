@@ -16,8 +16,10 @@ import socket
 import ssl
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.exceptions import TemplateDoesNotExist, TemplateSyntaxError
 from django.template.loader import render_to_string
@@ -25,6 +27,70 @@ from django.template.loader import render_to_string
 logger = logging.getLogger(__name__)
 
 SAS_RESERVE_SITE_NAME = "SAS RESERVE"
+
+#: Hostnames reachable only from a developer's machine. A link built from one
+#: of these in a deployment is a misconfiguration, not a usable link.
+_LOCAL_FRONTEND_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def get_public_frontend_url() -> str:
+    """Return the configured public frontend origin, normalized.
+
+    ``PUBLIC_FRONTEND_URL`` is the single source of truth for the base URL of
+    every link placed in an email, so no domain is ever hardcoded here and
+    local development keeps using its own local origin.
+
+    Raises:
+        ImproperlyConfigured: when the setting is missing, is not an absolute
+        http(s) URL, or points at localhost in a non-development deployment.
+        Callers turn that into a failed email instead of sending every
+        recipient a link back to the developer's machine.
+    """
+    base = (getattr(settings, "PUBLIC_FRONTEND_URL", "") or "").strip()
+    base = base.rstrip("/")
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").lower()
+
+    if not base or parsed.scheme not in ("http", "https") or not host:
+        logger.error(
+            "PUBLIC_FRONTEND_URL is not an absolute http(s) URL (%r); email "
+            "notifications cannot link to SAS RESERVE. Set it to the public "
+            "origin of the deployed frontend.",
+            base,
+        )
+        raise ImproperlyConfigured(
+            "PUBLIC_FRONTEND_URL must be the public origin of the SAS RESERVE "
+            "frontend, e.g. https://reserve.example.edu."
+        )
+
+    if host in _LOCAL_FRONTEND_HOSTS and getattr(settings, "IS_PRODUCTION", False):
+        logger.error(
+            "PUBLIC_FRONTEND_URL points at the local development host %r in a "
+            "non-DEBUG deployment; email links would be unreachable. Set it "
+            "to the public origin of the deployed frontend.",
+            base,
+        )
+        raise ImproperlyConfigured(
+            "PUBLIC_FRONTEND_URL must not point at localhost outside local "
+            "development."
+        )
+
+    return base
+
+
+def build_frontend_url(path: str) -> str:
+    """Absolute frontend URL for ``path`` (no duplicate or missing slash)."""
+    return f"{get_public_frontend_url()}/{path.lstrip('/')}"
+
+
+def build_reservation_url(reservation) -> str:
+    """Link to the SPA's reservation detail route for ``reservation``.
+
+    The route is ``/reservations/:id`` and the frontend resolves ``:id`` as
+    the reservation's numeric primary key, which is the identifier used here.
+    """
+    return build_frontend_url(f"reservations/{reservation.pk}")
+
 
 REMINDER_SUBJECT = "Reminder: Your SAS RESERVE Booking Is Coming Up"
 
@@ -59,6 +125,14 @@ def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Opt
     reference = letter.reservation.reservation_id
     subject = APPROVAL_LETTER_SUBJECT.format(letter_id=letter.letter_id)
 
+    try:
+        view_url = build_reservation_url(letter.reservation)
+    except ImproperlyConfigured as exc:
+        logger.error(
+            "Signed-letter email for %s not sent: %s", letter.letter_id, exc
+        )
+        return False, _classify_email_error(exc)
+
     context = {
         "site_name": SAS_RESERVE_SITE_NAME,
         "requester_name": letter.requester_name
@@ -72,10 +146,7 @@ def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Opt
         "end_time": letter.reservation.end_time,
         "signed_at": letter.signed_at,
         "signatory_name": letter.signatory_name,
-        "view_url": (
-            f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}"
-            f"/reservations/{letter.reservation.pk}"
-        ),
+        "view_url": view_url,
         "has_docx": bool(letter.docx_file),
     }
 
@@ -213,6 +284,8 @@ def _classify_email_error(exc: Exception) -> str:
         return "smtp"
     if isinstance(exc, (TemplateDoesNotExist, TemplateSyntaxError)):
         return "template"
+    if isinstance(exc, ImproperlyConfigured):
+        return "configuration"
     if isinstance(exc, OSError):
         return "connection"
     return "unknown"
@@ -305,7 +378,13 @@ def build_reservation_context(
     message: str,
     next_action: Optional[str] = None,
 ) -> dict:
-    """Shared context for reservation notification emails."""
+    """Shared context for reservation notification emails.
+
+    Raises:
+        ImproperlyConfigured: when the public frontend URL is unusable (see
+        :func:`get_public_frontend_url`). Callers report a failed email
+        instead of sending links nobody can open.
+    """
     requester_name = reservation.requester_display_name
     if reservation.requester_type != reservation.RequesterType.EXTERNAL:
         requester_name = (
@@ -330,7 +409,7 @@ def build_reservation_context(
         "status_label": status_label,
         "message": message,
         "next_action": next_action,
-        "view_url": f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}/reservations/{reservation.id}",
+        "view_url": build_reservation_url(reservation),
     }
 
 
@@ -341,19 +420,22 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
     closed`` / mid-handshake drop from Gmail is retried safely (before any message
     bytes are transmitted). Returns ``(success, error_category)`` where
     ``error_category`` is one of ``no_email``, ``smtp``, ``smtp_authentication``,
-    ``invalid_recipient``, ``template``, ``connection``, or ``unknown``
-    (``None`` on success).
+    ``invalid_recipient``, ``template``, ``connection``, ``configuration``,
+    or ``unknown`` (``None`` on success).
     """
-    context = build_reservation_context(
-        reservation,
-        status=reservation.Status.APPROVED,
-        status_label="Approved",
-        message=(
-            f"Your reservation {reservation.event_name} has been approved and is "
-            f"confirmed for {reservation.date}."
-        ),
-        next_action=CHECK_IN_INSTRUCTIONS,
-    )
+    try:
+        context = build_reservation_context(
+            reservation,
+            status=reservation.Status.APPROVED,
+            status_label="Approved",
+            message=(
+                f"Your reservation {reservation.event_name} has been approved and is "
+                f"confirmed for {reservation.date}."
+            ),
+            next_action=CHECK_IN_INSTRUCTIONS,
+        )
+    except ImproperlyConfigured:
+        return False, "configuration"
     if actor and getattr(actor, "pk", None):
         context["approved_by"] = actor.display_name or "SAS Office"
     else:
@@ -438,23 +520,27 @@ def send_reservation_checkin_reminder(
     Returns ``(success, error_category)`` with the same categories as
     :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
     ``smtp_authentication``, ``invalid_recipient``, ``connection``,
-    ``unknown``; ``None`` on success). Delivery never raises into the caller.
+    ``configuration``, ``unknown``; ``None`` on success). Delivery never raises
+    into the caller.
     """
     email = resolve_requester_email(reservation)
     if not email:
         return False, "no_email"
 
-    context = build_reservation_context(
-        reservation,
-        status=reservation.Status.APPROVED,
-        status_label="Approved",
-        message=(
-            f"This is a reminder that your reservation {reservation.event_name} "
-            f"at {reservation.facility.name} is scheduled for "
-            f"{reservation.date}. Please arrive on time for check-in."
-        ),
-        next_action=CHECK_IN_INSTRUCTIONS,
-    )
+    try:
+        context = build_reservation_context(
+            reservation,
+            status=reservation.Status.APPROVED,
+            status_label="Approved",
+            message=(
+                f"This is a reminder that your reservation {reservation.event_name} "
+                f"at {reservation.facility.name} is scheduled for "
+                f"{reservation.date}. Please arrive on time for check-in."
+            ),
+            next_action=CHECK_IN_INSTRUCTIONS,
+        )
+    except ImproperlyConfigured:
+        return False, "configuration"
     context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
     context["scheduled_check_in"] = (
         f"{reservation.start_datetime:%I:%M %p}".lstrip("0")
@@ -535,28 +621,32 @@ def send_reservation_no_show_notice(
     Returns ``(success, error_category)`` with the same categories as
     :func:`send_reservation_approved` (``no_email``, ``template``, ``smtp``,
     ``smtp_authentication``, ``invalid_recipient``, ``connection``,
-    ``unknown``; ``None`` on success). Delivery never raises into the caller.
+    ``configuration``, ``unknown``; ``None`` on success). Delivery never raises
+    into the caller.
     """
     email = resolve_requester_email(reservation, actor)
     if not email:
         return False, "no_email"
 
-    context = build_reservation_context(
-        reservation,
-        status=reservation.Status.NO_SHOW,
-        status_label="No-show",
-        message=(
-            f"Your reservation {reservation.reservation_id} for {reservation.event_name} "
-            f"at {reservation.facility.name} on {reservation.date} "
-            f"({reservation.start_time:%H:%M}-{reservation.end_time:%H:%M}) "
-            "was marked as a no-show because check-in was not recorded within the "
-            "allowed period."
-        ),
-        next_action=(
-            "If you believe this was recorded in error, please contact the SAS Office "
-            "as soon as possible."
-        ),
-    )
+    try:
+        context = build_reservation_context(
+            reservation,
+            status=reservation.Status.NO_SHOW,
+            status_label="No-show",
+            message=(
+                f"Your reservation {reservation.reservation_id} for {reservation.event_name} "
+                f"at {reservation.facility.name} on {reservation.date} "
+                f"({reservation.start_time:%H:%M}-{reservation.end_time:%H:%M}) "
+                "was marked as a no-show because check-in was not recorded within the "
+                "allowed period."
+            ),
+            next_action=(
+                "If you believe this was recorded in error, please contact the SAS Office "
+                "as soon as possible."
+            ),
+        )
+    except ImproperlyConfigured:
+        return False, "configuration"
     context["marked_by"] = (
         actor.display_name if actor and getattr(actor, "pk", None) else "SAS Office"
     )
@@ -670,13 +760,16 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
             "You can check your reservation status in SAS RESERVE at any time."
         )
 
-    context = build_reservation_context(
-        reservation,
-        status=status,
-        status_label=status_label,
-        message=message,
-        next_action=next_action,
-    )
+    try:
+        context = build_reservation_context(
+            reservation,
+            status=status,
+            status_label=status_label,
+            message=message,
+            next_action=next_action,
+        )
+    except ImproperlyConfigured:
+        return False, "configuration"
     submitted_at = reservation.created_at or timezone.now()
     if timezone.is_aware(submitted_at):
         submitted_at = timezone.localtime(submitted_at)
@@ -765,17 +858,20 @@ def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
     if not email:
         return False, "no_email"
 
-    context = build_reservation_context(
-        reservation,
-        status=reservation.Status.APPROVED,
-        status_label="Approved",
-        message=(
-            "Your reservation is scheduled within the next three days. "
-            "Please review the details below and make the necessary "
-            "preparations."
-        ),
-        next_action=CHECK_IN_INSTRUCTIONS,
-    )
+    try:
+        context = build_reservation_context(
+            reservation,
+            status=reservation.Status.APPROVED,
+            status_label="Approved",
+            message=(
+                "Your reservation is scheduled within the next three days. "
+                "Please review the details below and make the necessary "
+                "preparations."
+            ),
+            next_action=CHECK_IN_INSTRUCTIONS,
+        )
+    except ImproperlyConfigured:
+        return False, "configuration"
     context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
 
     try:
