@@ -471,3 +471,160 @@ class AlertTestCase(TestCase):
             PossibleNoShowAlert.objects.get().stage,
             PossibleNoShowAlert.Stage.START_REACHED,
         )
+
+
+class AwaitingNoShowReviewTests(AlertTestCase):
+    """Overdue reservations that still require an explicit administrator review."""
+
+    def setUp(self):
+        super().setUp()
+        self.yesterday = self.day - timedelta(days=1)
+
+    def make_overdue(self, **overrides):
+        defaults = dict(
+            date=self.yesterday,
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+        )
+        defaults.update(overrides)
+        return self.make_reservation(**defaults)
+
+    def list_alerts(self, hour, minute=0, user=None):
+        self._auth(user or self.admin)
+        fixed = self._fixed_now(hour, minute)
+        with mock.patch(
+            "notifications.no_show_alerts.timezone.now", return_value=fixed
+        ), mock.patch(
+            "reservations.services.workflow.timezone.now", return_value=fixed
+        ):
+            response = self.client.get("/api/notifications/no-show-alerts/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def test_overdue_reservation_is_listed_for_review(self):
+        reservation = self.make_overdue()
+
+        body = self.list_alerts(10, 0)
+
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["results"], [])
+        self.assertEqual(body["review_count"], 1)
+        row = body["awaiting_review"][0]
+        self.assertEqual(row["reservation"], reservation.pk)
+        self.assertEqual(row["reference"], reservation.reservation_id)
+        self.assertEqual(row["event_name"], "Leadership Summit")
+        self.assertEqual(row["facility"], "Alert Hall")
+        self.assertEqual(row["requester"], "Maria Santos")
+        self.assertEqual(row["date"], self.yesterday.isoformat())
+        self.assertEqual(row["start_time"], "10:00")
+        self.assertEqual(row["end_time"], "12:00")
+        self.assertEqual(row["status"], Reservation.Status.APPROVED)
+        self.assertEqual(row["link"], f"/reservations/{reservation.pk}")
+        self.assertEqual(row["time_label"], "Ended 22 hours ago")
+        self.assertEqual(row["no_check_in_label"], "No check-in recorded")
+        self.assertTrue(row["can_mark_no_show"])
+
+    def test_possible_no_show_is_not_duplicated_in_review(self):
+        reservation = self.make_reservation()
+
+        body = self.list_alerts(10, 5)
+
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["results"][0]["reservation"], reservation.pk)
+        self.assertEqual(body["review_count"], 0)
+        self.assertEqual(body["awaiting_review"], [])
+
+    def test_reservation_with_an_active_alert_is_deduplicated_by_id(self):
+        reservation = self.make_overdue()
+        PossibleNoShowAlert.objects.create(
+            reservation=reservation,
+            stage=PossibleNoShowAlert.Stage.NO_SHOW_RISK,
+            detected_at=self.at(10, 20),
+            stage_changed_at=self.at(10, 20),
+        )
+
+        review_ids = [
+            row.pk
+            for row in no_show_alerts.awaiting_review(now=self._fixed_now(10, 30))
+        ]
+        self.assertNotIn(reservation.pk, review_ids)
+
+        # The next sweep resolves the stale (ended) alert, so the reservation is
+        # then listed exactly once — in the review group, never in both.
+        body = self.list_alerts(10, 30)
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["review_count"], 1)
+        self.assertEqual(body["awaiting_review"][0]["reservation"], reservation.pk)
+
+    def test_future_reservation_is_excluded(self):
+        self.make_overdue(date=self.day + timedelta(days=2))
+
+        body = self.list_alerts(10, 0)
+
+        self.assertEqual(body["review_count"], 0)
+        self.assertEqual(body["awaiting_review"], [])
+
+    def test_today_reservation_whose_end_time_has_not_passed_is_excluded(self):
+        self.make_reservation(start_time=time(14, 0), end_time=time(16, 0))
+
+        body = self.list_alerts(15, 0)
+
+        self.assertEqual(body["review_count"], 0)
+
+    def test_today_reservation_whose_end_time_has_passed_is_listed(self):
+        reservation = self.make_reservation(start_time=time(10, 0), end_time=time(12, 0))
+
+        body = self.list_alerts(12, 5)
+
+        self.assertEqual(body["review_count"], 1)
+        self.assertEqual(body["awaiting_review"][0]["reservation"], reservation.pk)
+        self.assertEqual(body["awaiting_review"][0]["time_label"], "Ended 5 minutes ago")
+        # The existing no-show rule only allows marking from the NEXT local day.
+        self.assertFalse(body["awaiting_review"][0]["can_mark_no_show"])
+
+    def test_checked_in_reservation_is_excluded(self):
+        self.make_overdue(
+            status=Reservation.Status.ACTIVE,
+            checked_in_at=self.at(10, 5),
+        )
+        self.make_overdue(
+            event_name="Checked in but still approved",
+            checked_in_at=self.at(10, 5),
+        )
+
+        body = self.list_alerts(13, 0)
+
+        self.assertEqual(body["review_count"], 0)
+
+    def test_completed_reservation_is_excluded(self):
+        self.make_overdue(status=Reservation.Status.COMPLETED)
+
+        body = self.list_alerts(13, 0)
+
+        self.assertEqual(body["review_count"], 0)
+
+    def test_cancelled_reservation_is_excluded(self):
+        self.make_overdue(status=Reservation.Status.CANCELLED)
+
+        body = self.list_alerts(13, 0)
+
+        self.assertEqual(body["review_count"], 0)
+
+    def test_confirmed_no_show_is_excluded(self):
+        self.make_overdue(
+            status=Reservation.Status.NO_SHOW,
+            no_show_marked_at=self.at(9, 0),
+            no_show_marked_by=self.admin,
+        )
+
+        body = self.list_alerts(13, 0)
+
+        self.assertEqual(body["review_count"], 0)
+
+    def test_review_is_only_visible_to_administrators(self):
+        self.make_overdue()
+
+        self._auth(self.requester)
+        response = self.client.get("/api/notifications/no-show-alerts/")
+
+        self.assertEqual(response.status_code, 403, response.content)

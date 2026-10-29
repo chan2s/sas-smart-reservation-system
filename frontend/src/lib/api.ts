@@ -32,6 +32,7 @@ import type {
   MaintenanceRecord,
   MyAffiliation,
   NoShowAlert,
+  NoShowAlertsResponse,
   Notification,
   Organization,
   OrganizationType,
@@ -841,11 +842,12 @@ export const endpoints = {
     api.post<Notification>(`/api/notifications/${id}/mark_read/`),
   markAllNotificationsRead: () => api.post<{ count: number }>('/api/notifications/mark_all_read/'),
 
-  /** Staff-only: active possible-no-show alerts (refreshed by the backend). */
+  /**
+   * Staff-only: active possible-no-show alerts plus overdue reservations
+   * awaiting a no-show review (both refreshed/computed by the backend).
+   */
   noShowAlerts: () =>
-    api.get<{ count: number; unread: number; results: NoShowAlert[] }>(
-      '/api/notifications/no-show-alerts/',
-    ),
+    api.get<NoShowAlertsResponse>('/api/notifications/no-show-alerts/'),
   acknowledgeNoShowAlert: (id: number) =>
     api.post<NoShowAlert>(`/api/notifications/no-show-alerts/${id}/acknowledge/`),
   acknowledgeAllNoShowAlerts: () =>

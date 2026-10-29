@@ -424,7 +424,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         organization_fields = {
             field: validated_data.pop(field)
             for field in self._ORGANIZATION_FIELDS
-            if validated_data.get(field)
+            if field in validated_data
         }
         user = User(**validated_data)
         user.set_password(password)

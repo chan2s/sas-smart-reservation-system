@@ -48,8 +48,8 @@ export function StageBadge({
   )
 }
 
-/** "Oct 23, 2026 · 9:00 AM" for an alert's reservation slot. */
-export function alertDateTime(alert: NoShowAlert): string {
+/** "Oct 23, 2026 · 9:00 AM" for an alert's or review row's reservation slot. */
+export function alertDateTime(alert: Pick<NoShowAlert, 'date' | 'start_time'>): string {
   const day = format(new Date(`${alert.date}T00:00:00`), 'MMM d, yyyy')
   return `${day} · ${formatTime(alert.start_time)}`
 }

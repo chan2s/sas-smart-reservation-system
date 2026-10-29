@@ -469,6 +469,7 @@ class ExternalOrganizationRegistrationTests(TestCase):
             organization.verification_status, Organization.VerificationStatus.PENDING
         )
         self.assertEqual(organization.organization_type, "SCHOOL_UNIVERSITY")
+        self.assertEqual(organization.purpose, "Community sports event")
 
         user = User.objects.get(username="bnhs")
         self.assertEqual(user.affiliation, User.Affiliation.EXTERNAL_ORGANIZATION)
@@ -482,6 +483,30 @@ class ExternalOrganizationRegistrationTests(TestCase):
                 actor=user, action=AuditLog.Action.ORGANIZATION_REGISTERED
             ).exists()
         )
+
+    def test_external_registration_accepts_empty_optional_purpose(self):
+        response = self.client.post(
+            REGISTER_URL,
+            _external_registration(purpose=""),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        user = User.objects.get(username="bnhs")
+        organization = user.organization_ref
+        self.assertIsNotNone(organization)
+        self.assertEqual(organization.purpose, "")
+
+    def test_external_registration_accepts_omitted_optional_purpose(self):
+        payload = _external_registration()
+        payload.pop("purpose")
+        response = self.client.post(REGISTER_URL, payload, format="json")
+
+        self.assertEqual(response.status_code, 201, response.content)
+        user = User.objects.get(username="bnhs")
+        organization = user.organization_ref
+        self.assertIsNotNone(organization)
+        self.assertEqual(organization.purpose, "")
 
     def test_external_registration_missing_fields_rejected(self):
         for field in (

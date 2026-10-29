@@ -991,6 +991,45 @@ export interface NoShowAlert {
   no_check_in_label: string
 }
 
+/**
+ * An overdue reservation that still needs an explicit no-show decision.
+ *
+ * The backend lists it (scheduled end time passed, no check-in, never
+ * cancelled/completed/NO_SHOW) but never changes its status. `can_mark_no_show`
+ * is the existing workflow rule, so the UI can say when the administrator
+ * action becomes available without duplicating that policy.
+ */
+export interface AwaitingNoShowReview {
+  /** Database id of the reservation (used for the detail link). */
+  reservation: number
+  reference: string
+  event_name: string
+  facility: string
+  facility_id: number
+  requester: string
+  requester_id: number | null
+  date: string
+  start_time: string
+  end_time: string
+  status: ReservationStatus
+  status_label: string
+  link: string
+  /** "Ended 2 hours ago" — computed by the backend clock. */
+  time_label: string
+  minutes_since_end: number
+  no_check_in_label: string
+  can_mark_no_show: boolean
+}
+
+/** Dashboard no-show payload: two groups that are never merged. */
+export interface NoShowAlertsResponse {
+  count: number
+  unread: number
+  results: NoShowAlert[]
+  review_count: number
+  awaiting_review: AwaitingNoShowReview[]
+}
+
 /** Compact reservation row for server-computed dashboard lists. */
 export interface DashboardReservationRow {
   id: number

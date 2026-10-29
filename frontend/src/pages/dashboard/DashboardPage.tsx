@@ -32,7 +32,11 @@ import {
 } from '@/components/ui/ResponsiveTable'
 import { Backdrop } from '@/components/decor/Backdrop'
 import { cn, formatTime } from '@/lib/utils'
-import type { DashboardReservationRow, Facility } from '@/lib/types'
+import type {
+  AwaitingNoShowReview,
+  DashboardReservationRow,
+  Facility,
+} from '@/lib/types'
 
 // Compact caps — the dashboard surfaces only the most relevant rows and links
 // out to the full lists.
@@ -390,17 +394,24 @@ export function DashboardPage() {
 // ---------------------------------------------------------------------------
 
 /**
- * Live possible-no-show warnings for administrators.
+ * Live no-show review for administrators, split into two clearly separate
+ * groups:
  *
- * The backend owns the policy: it decides which reservations are eligible, their
- * stage, and how many minutes have elapsed. This section only renders that
- * response, shows an explicit empty state, and never invents data when the
- * request fails.
+ * 1. Possible No-Shows — reservations inside the existing detection window.
+ * 2. Awaiting No-Show Review — overdue reservations whose scheduled end time
+ *    has passed without a check-in, completed state, cancellation, or explicit
+ *    NO_SHOW decision.
+ *
+ * The backend owns both policies and computes every label. This section only
+ * renders the response and links to the reservation detail page, where the
+ * existing administrator action marks a reservation as No-Show. Nothing here
+ * changes a status automatically.
  */
 function PossibleNoShowSection() {
   const { data, isLoading, isError, refetch, isFetching } = useNoShowAlerts(true)
   const alerts = data?.results ?? []
   const unread = data?.unread ?? 0
+  const review = data?.awaiting_review ?? []
 
   return (
     <Card className="mt-4">
@@ -409,9 +420,9 @@ function PossibleNoShowSection() {
         description={
           isLoading
             ? 'Checking approved reservations with no recorded check-in…'
-            : `${alerts.length} active alert${alerts.length === 1 ? '' : 's'}${
+            : `${alerts.length} possible no-show${alerts.length === 1 ? '' : 's'}${
                 unread > 0 ? ` · ${unread} unread` : ''
-              }`
+              } · ${review.length} awaiting review`
         }
       />
 
@@ -443,52 +454,159 @@ function PossibleNoShowSection() {
           <Skeleton className="h-16" />
           <Skeleton className="h-16" />
         </div>
-      ) : alerts.length === 0 ? (
-        <div className="mt-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-body">
-          No reservations currently require no-show attention.
-        </div>
       ) : (
-        <ul className="mt-3 divide-y divide-line">
-          {alerts.map((alert) => (
-            <li
-              key={alert.id}
-              className={cn(
-                'flex flex-col gap-2 px-1 py-3 sm:flex-row sm:items-center sm:justify-between',
-                !alert.acknowledged && 'bg-brand-soft/20',
-              )}
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link
-                    to={alert.link}
-                    className="text-sm font-semibold text-ink hover:text-brand"
+        <div className="mt-4 space-y-6">
+          <section aria-labelledby="possible-no-shows-heading">
+            <GroupHeader
+              id="possible-no-shows-heading"
+              title="Possible No-Shows"
+              count={alerts.length}
+              hint="Identified by the existing no-show detection logic"
+            />
+            {alerts.length === 0 ? (
+              <GroupEmpty>
+                No possible no-shows detected right now — approved reservations with no
+                recorded check-in will appear here.
+              </GroupEmpty>
+            ) : (
+              <ul className="mt-1 divide-y divide-line">
+                {alerts.map((alert) => (
+                  <li
+                    key={alert.id}
+                    className={cn(
+                      'flex flex-col gap-2 px-1 py-3 sm:flex-row sm:items-center sm:justify-between',
+                      !alert.acknowledged && 'bg-brand-soft/20',
+                    )}
                   >
-                    {alert.reference}
-                  </Link>
-                  <StageBadge stage={alert.stage} label={alert.stage_label} />
-                  <span className="text-[11px] font-medium text-muted">
-                    {alert.no_check_in_label}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-[13px] text-body">
-                  {alert.event_name} · {alert.facility} · {alert.requester || 'No requester account'}
-                </p>
-                <p className="text-xs tabular-nums text-muted">
-                  {alertDateTime(alert)} · {alert.time_label}
-                </p>
-              </div>
-              <Link
-                to={alert.link}
-                className="inline-flex shrink-0 items-center gap-1 self-start rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand hover:text-brand sm:self-center"
-              >
-                Review reservation
-                <ArrowRight className="size-3.5" aria-hidden />
-              </Link>
-            </li>
-          ))}
-        </ul>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          to={alert.link}
+                          className="text-sm font-semibold text-ink hover:text-brand"
+                        >
+                          {alert.reference}
+                        </Link>
+                        <StageBadge stage={alert.stage} label={alert.stage_label} />
+                        <span className="text-[11px] font-medium text-muted">
+                          {alert.no_check_in_label}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-[13px] text-body">
+                        {alert.event_name} · {alert.facility} ·{' '}
+                        {alert.requester || 'No requester account'}
+                      </p>
+                      <p className="text-xs tabular-nums text-muted">
+                        {alertDateTime(alert)} · {alert.time_label}
+                      </p>
+                    </div>
+                    <Link
+                      to={alert.link}
+                      className="inline-flex shrink-0 items-center gap-1 self-start rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand hover:text-brand sm:self-center"
+                    >
+                      Review reservation
+                      <ArrowRight className="size-3.5" aria-hidden />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section aria-labelledby="awaiting-review-heading">
+            <GroupHeader
+              id="awaiting-review-heading"
+              title="Awaiting No-Show Review"
+              count={review.length}
+              hint="Scheduled end time passed · no check-in"
+            />
+            {review.length === 0 ? (
+              <GroupEmpty>
+                No overdue reservations are awaiting a no-show decision.
+              </GroupEmpty>
+            ) : (
+              <ul className="mt-1 divide-y divide-line">
+                {review.map((reservation) => (
+                  <AwaitingReviewRow key={reservation.reservation} reservation={reservation} />
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
       )}
     </Card>
+  )
+}
+
+function GroupHeader({
+  id,
+  title,
+  count,
+  hint,
+}: {
+  id: string
+  title: string
+  count: number
+  hint: string
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+      <div className="flex items-center gap-2">
+        <h3 id={id} className="text-[13px] font-semibold text-ink">
+          {title}
+        </h3>
+        <Badge tone={count > 0 ? 'amber' : 'neutral'}>{count}</Badge>
+      </div>
+      <p className="text-[11.5px] text-muted">{hint}</p>
+    </div>
+  )
+}
+
+function GroupEmpty({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-body">
+      {children}
+    </div>
+  )
+}
+
+function AwaitingReviewRow({ reservation }: { reservation: AwaitingNoShowReview }) {
+  return (
+    <li className="flex flex-col gap-2 px-1 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to={reservation.link}
+            className="text-sm font-semibold text-ink hover:text-brand"
+          >
+            {reservation.reference}
+          </Link>
+          <Badge tone="amber">Awaiting no-show review</Badge>
+          <span className="text-[11px] font-medium text-muted">
+            {reservation.no_check_in_label}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-[13px] text-body">
+          {reservation.event_name} · {reservation.facility} ·{' '}
+          {reservation.requester || 'No requester account'}
+        </p>
+        <p className="text-xs tabular-nums text-muted">
+          {alertDateTime(reservation)} · {formatTime(reservation.start_time)} –{' '}
+          {formatTime(reservation.end_time)} · {reservation.time_label}
+        </p>
+        {!reservation.can_mark_no_show && (
+          <p className="mt-0.5 text-[11.5px] text-muted">
+            Can be marked as a no-show from the day after the scheduled date.
+          </p>
+        )}
+      </div>
+      <Link
+        to={reservation.link}
+        className="inline-flex shrink-0 items-center gap-1 self-start rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand hover:text-brand sm:self-center"
+      >
+        Review &amp; mark no-show
+        <ArrowRight className="size-3.5" aria-hidden />
+      </Link>
+    </li>
   )
 }
 

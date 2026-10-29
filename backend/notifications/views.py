@@ -10,7 +10,11 @@ from accounts.permissions import IsSasStaff
 
 from . import no_show_alerts as alerts_service
 from .models import Notification, PossibleNoShowAlert
-from .serializers import NotificationSerializer, PossibleNoShowAlertSerializer
+from .serializers import (
+    AwaitingNoShowReviewSerializer,
+    NotificationSerializer,
+    PossibleNoShowAlertSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +143,16 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 @api_view(["GET"])
 @permission_classes([IsSasStaff])
 def no_show_alert_list(request):
-    """Active possible-no-show alerts, refreshed first so they are current."""
+    """Active possible-no-show alerts plus overdue reservations to review.
+
+    Two distinct groups, never merged: ``results`` are reservations inside the
+    existing no-show warning window, while ``awaiting_review`` are reservations
+    whose scheduled end time has already passed and that nobody has checked in,
+    completed, cancelled, or marked ``NO_SHOW``. The latter are review prompts
+    only — listing them never changes their status. ``awaiting_review`` already
+    excludes any reservation that appears in ``results``, so no reservation is
+    shown twice.
+    """
     try:
         alerts_service.refresh_alerts()
     except Exception:  # noqa: BLE001 — serve what is already persisted
@@ -147,11 +160,17 @@ def no_show_alert_list(request):
 
     alerts = list(alerts_service.active_alerts())
     payload = PossibleNoShowAlertSerializer(alerts, many=True).data
+    review = list(alerts_service.awaiting_review())
+    review_payload = AwaitingNoShowReviewSerializer(
+        review, many=True, context={"request": request}
+    ).data
     return Response(
         {
             "count": len(payload),
             "unread": sum(1 for alert in alerts if alert.is_unread),
             "results": payload,
+            "review_count": len(review_payload),
+            "awaiting_review": review_payload,
         }
     )
 

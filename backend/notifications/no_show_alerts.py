@@ -9,6 +9,14 @@ Nothing here changes a reservation's status. A reservation only becomes an
 official NO_SHOW when an administrator explicitly marks it (see
 ``reservations.services.workflow.mark_no_show``); these rows are review prompts.
 
+Two review sources feed the dashboard, always kept separate:
+
+* active alerts — reservations inside the warning window (described below);
+* :func:`awaiting_review` — APPROVED reservations whose scheduled end time has
+  already passed and that were never checked in, completed, cancelled, or
+  marked no-show. They are listed exactly as they are; nothing is marked
+  automatically.
+
 Eligibility (all evaluated in the project's configured timezone):
 
 * status is ``APPROVED`` — pending requests, expired requests, cancelled,
@@ -43,7 +51,7 @@ import math
 from datetime import timedelta
 
 from django.db import IntegrityError
-from django.db.models import Case, IntegerField, Value, When
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
 from notifications.models import PossibleNoShowAlert
@@ -233,6 +241,63 @@ def active_alerts():
         .annotate(_urgency=urgency)
         .order_by("_urgency", "reservation__date", "reservation__start_time", "id")
     )
+
+
+def awaiting_review(now=None):
+    """Overdue APPROVED reservations that still need an explicit no-show review.
+
+    These are the rows the alert sweep deliberately stops tracking once the
+    event has ended: the scheduled end date/time is in the past, nobody checked
+    in or out, and the reservation was never cancelled, completed, or marked
+    ``NO_SHOW``. Nothing here changes a status — the administrator decides, via
+    the existing ``workflow.mark_no_show`` action.
+
+    The end boundary is computed in the project's configured timezone
+    (``settings.TIME_ZONE``), so "today, 12:00" means local noon rather than
+    UTC. Reservations that already have an ACTIVE possible-no-show alert are
+    excluded so the dashboard never lists the same reservation twice.
+    """
+    current = _aware(now)
+    local_now = timezone.localtime(current)
+    today = local_now.date()
+    active_alert_reservation_ids = PossibleNoShowAlert.objects.filter(
+        resolved_at__isnull=True
+    ).values("reservation_id")
+
+    return (
+        Reservation.objects.filter(
+            status=Reservation.Status.APPROVED,
+            checked_in_at__isnull=True,
+            checked_out_at__isnull=True,
+        )
+        .filter(
+            # Scheduled END time passed: earlier days entirely, or today once
+            # the local end time is behind the clock.
+            Q(date__lt=today) | Q(date=today, end_time__lt=local_now.time())
+        )
+        .exclude(pk__in=active_alert_reservation_ids)
+        .select_related("facility", "requester")
+        .order_by("date", "start_time", "id")
+    )
+
+
+def review_timing(reservation: Reservation, now=None) -> dict:
+    """How long ago the reservation's scheduled end time passed."""
+    current = _aware(now)
+    seconds = (current - reservation.end_datetime).total_seconds()
+    minutes = max(0, int(seconds // 60))
+
+    if minutes < 1:
+        label = "Ended just now"
+    elif minutes < 60:
+        label = f"Ended {minutes} minute{'s' if minutes != 1 else ''} ago"
+    elif minutes < 24 * 60:
+        hours = minutes // 60
+        label = f"Ended {hours} hour{'s' if hours != 1 else ''} ago"
+    else:
+        days = minutes // (24 * 60)
+        label = f"Ended {days} day{'s' if days != 1 else ''} ago"
+    return {"minutes_since_end": minutes, "time_label": label}
 
 
 def acknowledge(alert: PossibleNoShowAlert, actor, now=None) -> PossibleNoShowAlert:
