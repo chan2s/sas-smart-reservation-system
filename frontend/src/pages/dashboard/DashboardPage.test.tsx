@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type {
   AwaitingNoShowReview,
   NoShowAlert,
@@ -101,6 +101,44 @@ function review(overrides: Partial<AwaitingNoShowReview> = {}): AwaitingNoShowRe
     can_mark_no_show: true,
     ...overrides,
   }
+}
+
+function reviewRow(index: number): AwaitingNoShowReview {
+  const reservation = 2000 + index
+  return review({
+    reservation,
+    reference: `SAS-2026-${reservation}`,
+    event_name: `Review event ${index + 1}`,
+    date: `2026-10-${String(10 + index).padStart(2, '0')}`,
+    start_time: '09:00',
+    end_time: '11:00',
+    time_label: 'Ended 2 days ago',
+  })
+}
+
+function alertRow(index: number): NoShowAlert {
+  const reservation = 3000 + index
+  return alert({
+    id: 500 + index,
+    reservation,
+    reference: `SAS-2026-${reservation}`,
+    event_name: `Alert event ${index + 1}`,
+    date: '2026-10-15',
+    start_time: `${String(9 + index).padStart(2, '0')}:00`,
+    end_time: `${String(11 + index).padStart(2, '0')}:00`,
+  })
+}
+
+function pagination() {
+  return screen.getByRole('navigation', {
+    name: /possible no-show alerts pagination/i,
+  })
+}
+
+function visibleReferences(): string[] {
+  return screen
+    .queryAllByRole('link', { name: /^SAS-2026-/ })
+    .map((link) => link.textContent ?? '')
 }
 
 beforeEach(() => {
@@ -240,4 +278,157 @@ describe('DashboardPage possible no-show section', () => {
 
     expect(screen.queryByText('Possible No-Show Alerts')).toBeNull()
   })
+
+  it('hides pagination when every reservation fits on one page', () => {
+    const rows = [reviewRow(0), reviewRow(1), reviewRow(2)]
+    state.alerts = {
+      count: 0,
+      unread: 0,
+      results: [],
+      review_count: rows.length,
+      awaiting_review: rows,
+    }
+    render(<DashboardPage />)
+
+    expect(visibleReferences()).toHaveLength(3)
+    expect(screen.queryByText(/Page 1 of/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /previous/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /next/i })).toBeNull()
+  })
+
+  it('pages the combined list three at a time without dropping or duplicating rows', () => {
+    const alerts = [0, 1, 2, 3].map(alertRow)
+    const reviews = [0, 1, 2].map(reviewRow)
+    state.alerts = {
+      count: alerts.length,
+      unread: alerts.length,
+      results: alerts,
+      review_count: reviews.length,
+      awaiting_review: reviews,
+    }
+    render(<DashboardPage />)
+
+    const nav = pagination()
+    const previous = within(nav).getByRole('button', { name: /previous/i })
+    const next = within(nav).getByRole('button', { name: /next/i })
+
+    // Page 1 — most overdue (earliest scheduled) first.
+    expect(within(nav).getByText('Page 1 of 3')).toBeTruthy()
+    expect((previous as HTMLButtonElement).disabled).toBe(true)
+    expect((next as HTMLButtonElement).disabled).toBe(false)
+    expect(visibleReferences()).toEqual([
+      'SAS-2026-2000',
+      'SAS-2026-2001',
+      'SAS-2026-2002',
+    ])
+
+    const seen: string[] = visibleReferences()
+
+    fireEvent.click(next)
+    expect(within(nav).getByText('Page 2 of 3')).toBeTruthy()
+    expect((previous as HTMLButtonElement).disabled).toBe(false)
+    expect((next as HTMLButtonElement).disabled).toBe(false)
+    expect(visibleReferences()).toEqual([
+      'SAS-2026-3000',
+      'SAS-2026-3001',
+      'SAS-2026-3002',
+    ])
+    seen.push(...visibleReferences())
+
+    fireEvent.click(next)
+    expect(within(nav).getByText('Page 3 of 3')).toBeTruthy()
+    expect((next as HTMLButtonElement).disabled).toBe(true)
+    expect(visibleReferences()).toEqual(['SAS-2026-3003'])
+    seen.push(...visibleReferences())
+
+    const expected = [...alerts, ...reviews].map((row) => row.reference)
+    expect(seen).toHaveLength(expected.length)
+    expect(new Set(seen).size).toBe(expected.length)
+    expect([...seen].sort()).toEqual([...expected].sort())
+
+    fireEvent.click(previous)
+    expect(within(nav).getByText('Page 2 of 3')).toBeTruthy()
+  })
+
+  it('applies the three-row limit to each group on a mixed page', () => {
+    state.alerts = {
+      count: 2,
+      unread: 0,
+      results: [alertRow(0), alertRow(1)],
+      review_count: 2,
+      awaiting_review: [reviewRow(0), reviewRow(1)],
+    }
+    render(<DashboardPage />)
+
+    const nav = pagination()
+    expect(within(nav).getByText('Page 1 of 2')).toBeTruthy()
+    expect(visibleReferences()).toHaveLength(3)
+    // Group headers and their totals survive pagination.
+    expect(screen.getByText('Possible No-Shows')).toBeTruthy()
+    expect(screen.getByText('Awaiting No-Show Review')).toBeTruthy()
+
+    expect(visibleReferences()).toEqual([
+      'SAS-2026-3000',
+      'SAS-2026-2000',
+      'SAS-2026-2001',
+    ])
+
+    fireEvent.click(within(nav).getByRole('button', { name: /next/i }))
+
+    expect(visibleReferences()).toEqual(['SAS-2026-3001'])
+    expect(screen.getByText('Nothing from this group on this page.')).toBeTruthy()
+    // The alert row keeps its own review action on the next page.
+    expect(screen.getByRole('link', { name: /review reservation/i })).toBeTruthy()
+  })
+
+  it.each([0, 1, 3, 4, 6, 7])(
+    'paginates %i reservations with at most three per page',
+    (count) => {
+      const rows = Array.from({ length: count }, (_, index) => reviewRow(index))
+      state.alerts = {
+        count: 0,
+        unread: 0,
+        results: [],
+        review_count: count,
+        awaiting_review: rows,
+      }
+      render(<DashboardPage />)
+
+      if (count === 0) {
+        expect(screen.queryByText(/Page 1 of/)).toBeNull()
+        expect(visibleReferences()).toHaveLength(0)
+        expect(
+          screen.getByText('No overdue reservations are awaiting a no-show decision.'),
+        ).toBeTruthy()
+        return
+      }
+
+      const pageCount = Math.ceil(count / 3)
+      if (pageCount === 1) {
+        expect(screen.queryByText(/Page 1 of/)).toBeNull()
+      } else {
+        expect(screen.getByText(`Page 1 of ${pageCount}`)).toBeTruthy()
+      }
+
+      const seen: string[] = []
+      for (let page = 1; page <= pageCount; page += 1) {
+        const refs = visibleReferences()
+        expect(refs.length).toBeLessThanOrEqual(3)
+        if (page < pageCount) {
+          expect(refs).toHaveLength(3)
+        } else {
+          expect(refs).toHaveLength(count - 3 * (pageCount - 1))
+        }
+        seen.push(...refs)
+        if (page < pageCount) {
+          fireEvent.click(
+            within(pagination()).getByRole('button', { name: /next/i }),
+          )
+        }
+      }
+
+      expect(new Set(seen).size).toBe(count)
+      expect(seen).toHaveLength(count)
+    },
+  )
 })

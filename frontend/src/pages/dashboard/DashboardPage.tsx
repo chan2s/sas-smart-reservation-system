@@ -1,9 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
   Building2,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   FileSignature,
   Package,
@@ -36,6 +38,7 @@ import type {
   AwaitingNoShowReview,
   DashboardReservationRow,
   Facility,
+  NoShowAlert,
 } from '@/lib/types'
 
 // Compact caps — the dashboard surfaces only the most relevant rows and links
@@ -44,6 +47,9 @@ const MAX_MY_RESERVATIONS = 3
 const MAX_FACILITIES = 5
 const MAX_UPCOMING = 5
 const MAX_UTILIZATION_BARS = 5
+
+// One page of the combined no-show review list (both categories together).
+const NO_SHOW_PAGE_SIZE = 3
 
 const upcomingColumns: ResponsiveTableColumn[] = [
   { key: 'facility', label: 'Facility' },
@@ -407,11 +413,76 @@ export function DashboardPage() {
  * existing administrator action marks a reservation as No-Show. Nothing here
  * changes a status automatically.
  */
+type NoShowEntry =
+  | { kind: 'alert'; key: string; scheduled: number; alert: NoShowAlert }
+  | { kind: 'review'; key: string; scheduled: number; review: AwaitingNoShowReview }
+
+/**
+ * Merge both review sources into one stable, most-overdue-first sequence.
+ *
+ * The API already keeps the groups separate and never returns the same
+ * reservation twice; deduplicating by reservation id here makes that guarantee
+ * hold for the combined list too (an active alert wins over a review row).
+ */
+function buildNoShowEntries(
+  alerts: NoShowAlert[],
+  review: AwaitingNoShowReview[],
+): NoShowEntry[] {
+  const seen = new Set<number>()
+  const entries: NoShowEntry[] = []
+
+  for (const alert of alerts) {
+    if (seen.has(alert.reservation)) continue
+    seen.add(alert.reservation)
+    entries.push({
+      kind: 'alert',
+      key: `alert-${alert.id}`,
+      scheduled: Date.parse(`${alert.date}T${alert.start_time}`),
+      alert,
+    })
+  }
+
+  for (const item of review) {
+    if (seen.has(item.reservation)) continue
+    seen.add(item.reservation)
+    entries.push({
+      kind: 'review',
+      key: `review-${item.reservation}`,
+      scheduled: Date.parse(`${item.date}T${item.start_time}`),
+      review: item,
+    })
+  }
+
+  // Earliest scheduled slot first: the most overdue reservation leads. The key
+  // tie-break keeps the order deterministic (and therefore page-stable).
+  return entries.sort(
+    (a, b) => a.scheduled - b.scheduled || a.key.localeCompare(b.key),
+  )
+}
+
 function PossibleNoShowSection() {
   const { data, isLoading, isError, refetch, isFetching } = useNoShowAlerts(true)
   const alerts = data?.results ?? []
   const unread = data?.unread ?? 0
   const review = data?.awaiting_review ?? []
+  const [page, setPage] = useState(1)
+
+  const entries = useMemo(
+    () => buildNoShowEntries(data?.results ?? [], data?.awaiting_review ?? []),
+    [data],
+  )
+  const pageCount = Math.max(1, Math.ceil(entries.length / NO_SHOW_PAGE_SIZE))
+  // A refresh can shrink the list; never strand the administrator on a page
+  // that no longer exists.
+  const currentPage = Math.min(page, pageCount)
+  const pageStart = (currentPage - 1) * NO_SHOW_PAGE_SIZE
+  const pageEntries = entries.slice(pageStart, pageStart + NO_SHOW_PAGE_SIZE)
+  const pageAlerts = pageEntries.flatMap((entry) =>
+    entry.kind === 'alert' ? [entry.alert] : [],
+  )
+  const pageReview = pageEntries.flatMap((entry) =>
+    entry.kind === 'review' ? [entry.review] : [],
+  )
 
   return (
     <Card className="mt-4">
@@ -468,9 +539,11 @@ function PossibleNoShowSection() {
                 No possible no-shows detected right now — approved reservations with no
                 recorded check-in will appear here.
               </GroupEmpty>
+            ) : pageAlerts.length === 0 ? (
+              <GroupOffPage />
             ) : (
               <ul className="mt-1 divide-y divide-line">
-                {alerts.map((alert) => (
+                {pageAlerts.map((alert) => (
                   <li
                     key={alert.id}
                     className={cn(
@@ -523,17 +596,81 @@ function PossibleNoShowSection() {
               <GroupEmpty>
                 No overdue reservations are awaiting a no-show decision.
               </GroupEmpty>
+            ) : pageReview.length === 0 ? (
+              <GroupOffPage />
             ) : (
               <ul className="mt-1 divide-y divide-line">
-                {review.map((reservation) => (
+                {pageReview.map((reservation) => (
                   <AwaitingReviewRow key={reservation.reservation} reservation={reservation} />
                 ))}
               </ul>
             )}
           </section>
+
+          <NoShowPagination
+            page={currentPage}
+            pageCount={pageCount}
+            total={entries.length}
+            onChange={setPage}
+          />
         </div>
       )}
     </Card>
+  )
+}
+
+/**
+ * Previous / Next paging for the combined list. Hidden while everything fits on
+ * one page, so the section looks exactly as it did before pagination existed.
+ */
+function NoShowPagination({
+  page,
+  pageCount,
+  total,
+  onChange,
+}: {
+  page: number
+  pageCount: number
+  total: number
+  onChange: (page: number) => void
+}) {
+  if (pageCount <= 1) return null
+
+  const first = (page - 1) * NO_SHOW_PAGE_SIZE + 1
+  const last = Math.min(page * NO_SHOW_PAGE_SIZE, total)
+
+  return (
+    <nav
+      aria-label="Possible no-show alerts pagination"
+      className="flex flex-col items-center justify-between gap-2 border-t border-line pt-3 sm:flex-row"
+    >
+      <p className="text-[12px] tabular-nums text-muted">
+        Showing {first}–{last} of {total}
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onChange(page - 1)}
+          disabled={page <= 1}
+          icon={<ChevronLeft className="size-3.5" aria-hidden />}
+        >
+          Previous
+        </Button>
+        <p className="text-[12px] font-medium tabular-nums text-body" aria-live="polite">
+          Page {page} of {pageCount}
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onChange(page + 1)}
+          disabled={page >= pageCount}
+        >
+          Next
+          <ChevronRight className="size-3.5" aria-hidden />
+        </Button>
+      </div>
+    </nav>
   )
 }
 
@@ -566,6 +703,15 @@ function GroupEmpty({ children }: { children: React.ReactNode }) {
     <div className="mt-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-body">
       {children}
     </div>
+  )
+}
+
+/** A category with rows overall, but none of them on the page being viewed. */
+function GroupOffPage() {
+  return (
+    <p className="mt-2 px-1 text-[12px] text-muted">
+      Nothing from this group on this page.
+    </p>
   )
 }
 
