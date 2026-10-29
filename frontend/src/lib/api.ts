@@ -375,7 +375,9 @@ export const api = {
   },
   register: (payload: Record<string, unknown>) =>
     api.post<User>('/api/auth/register/', payload),
-  me: () => api.get<User>('/api/auth/me/'),
+  // This profile contains live approval state; never reuse a cached response
+  // when refreshing it after an organization verification decision.
+  me: () => request<User>('/api/auth/me/', { cache: 'no-store' }),
 
   // Affiliation + external organizations ---------------------------------
   // The organization is never chosen from the client: the backend resolves

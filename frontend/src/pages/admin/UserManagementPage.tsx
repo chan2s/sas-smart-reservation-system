@@ -16,6 +16,10 @@ import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Form'
 import { Modal } from '@/components/ui/Modal'
 import {
+  VERIFICATION_LABEL,
+  VERIFICATION_TONE,
+} from '@/components/organizations/OrganizationStatusNotice'
+import {
   CardActions,
   CardField,
   ResponsiveTable,
@@ -384,7 +388,7 @@ export function UserManagementPage() {
     { key: 'user', label: 'User' },
     { key: 'email', label: 'Email' },
     { key: 'role', label: 'Role' },
-    { key: 'status', label: 'Status' },
+    { key: 'status', label: 'Account / organization' },
     { key: 'joined', label: 'Joined' },
     { key: 'actions', label: 'Actions', align: 'right' as const },
   ]
@@ -502,7 +506,7 @@ export function UserManagementPage() {
               <CardField label="Email">
                 <span className="break-all">{item.email || '—'}</span>
               </CardField>
-              <CardField label="Status">
+              <CardField label="Account / organization">
                 <AccountStatusBadge user={item} />
               </CardField>
               <CardField label="Joined">
@@ -873,11 +877,21 @@ export function UserManagementPage() {
 /** Active / Inactive pill, driven purely by the backend's `is_active` flag. */
 function AccountStatusBadge({ user }: { user: AdminUser }) {
   return (
-    <TableStatusBadge
-      status={user.is_active ? 'ACTIVE' : 'INACTIVE'}
-      label={user.is_active ? 'Active' : 'Inactive'}
-      tone={user.is_active ? 'emerald' : 'gray'}
-    />
+    <div className="space-y-1">
+      <TableStatusBadge
+        status={user.is_active ? 'ACTIVE' : 'INACTIVE'}
+        label={user.is_active ? 'Active' : 'Inactive'}
+        tone={user.is_active ? 'emerald' : 'gray'}
+      />
+      {user.organization_ref && !user.organization_ref.is_internal && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-muted">Organization</span>
+          <Badge tone={VERIFICATION_TONE[user.organization_ref.verification_status]}>
+            {VERIFICATION_LABEL[user.organization_ref.verification_status]}
+          </Badge>
+        </div>
+      )}
+    </div>
   )
 }
 

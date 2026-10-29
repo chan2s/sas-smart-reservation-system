@@ -24,7 +24,7 @@ import {
 import { usePreferredBuiltinAmenities } from '@/hooks/usePreferredBuiltinAmenities'
 import { useSuggestedResources } from '@/hooks/useSuggestedResources'
 import { useToast } from '@/components/ui/Toast'
-import { ApiError } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Input, Select } from '@/components/ui/Form'
@@ -99,8 +99,27 @@ export function ReservationWizardPage() {
   const { id: routeId } = useParams()
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
-  const { user, isStaff, loading: authLoading } = useAuth()
+  const { user, isStaff, loading: authLoading, updateUser } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
+
+  // Organization approval can change while this SPA session remains open.
+  // Refresh the server-authoritative profile on wizard entry so the banner and
+  // client-side submit state reflect the current organization verification.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .me()
+      .then((profile) => {
+        if (!cancelled) updateUser(profile)
+      })
+      .catch(() => {
+        // The reservation API remains authoritative; keep the current profile
+        // if this best-effort display refresh is temporarily unavailable.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [updateUser])
 
   // A refresh must not wipe the wizard: the draft is restored from
   // sessionStorage on mount and written back on every change below.
