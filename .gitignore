@@ -33,3 +33,9 @@ frontend/otp-desktop.png
 frontend/otp-mobile.png
 frontend/otp-diag.mjs
 frontend/otp-ui-check.mjs
+backups/
+
+# Production backups
+/backups/
+/backend/.env.backup-before-https
+/compose.prod.yaml.backup-before-healthcheck
