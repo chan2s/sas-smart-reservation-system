@@ -1,9 +1,72 @@
 from rest_framework import serializers
+import base64
+import binascii
+import hashlib
+from urllib.parse import urlparse
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from notifications import no_show_alerts
 from reservations.models import Reservation
 
-from .models import Notification, PossibleNoShowAlert
+from .models import Notification, PossibleNoShowAlert, PushSubscription
+
+
+class PushSubscriptionSerializer(serializers.ModelSerializer):
+    endpoint_fingerprint = serializers.SerializerMethodField()
+    # Uniqueness is handled after owner validation so a user's own browser can
+    # safely refresh/reactivate its existing subscription.
+    endpoint = serializers.URLField(max_length=2048, write_only=True, validators=[])
+
+    class Meta:
+        model = PushSubscription
+        fields = ("id", "device_name", "endpoint_fingerprint", "endpoint", "p256dh", "auth", "active", "created_at", "updated_at", "last_successful_delivery")
+        read_only_fields = ("id", "endpoint_fingerprint", "created_at", "updated_at", "last_successful_delivery")
+        extra_kwargs = {"endpoint": {"write_only": True}, "p256dh": {"write_only": True}, "auth": {"write_only": True}}
+
+    def validate_endpoint(self, value):
+        parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError:
+            raise serializers.ValidationError("The push endpoint has an invalid port.")
+        if parsed.scheme != "https" or parsed.username or parsed.password or port not in (None, 443):
+            raise serializers.ValidationError("Push endpoints must use HTTPS.")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        trusted_provider = (
+            host == "fcm.googleapis.com"
+            or host == "push.services.mozilla.com"
+            or host.endswith(".push.services.mozilla.com")
+            or host == "web.push.apple.com"
+            or host.endswith(".notify.windows.com")
+        )
+        if not trusted_provider:
+            raise serializers.ValidationError("The push endpoint is not from a supported browser push service.")
+        return value
+
+    def get_endpoint_fingerprint(self, obj):
+        return hashlib.sha256(obj.endpoint.encode("utf-8")).hexdigest()
+
+    def validate(self, attrs):
+        for key_name, expected_length in (("p256dh", 65), ("auth", 16)):
+            encoded = attrs.get(key_name)
+            if encoded:
+                try:
+                    decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+                except (ValueError, binascii.Error):
+                    raise serializers.ValidationError({key_name: "Invalid subscription key encoding."})
+                if len(decoded) != expected_length:
+                    raise serializers.ValidationError({key_name: "Invalid subscription key length."})
+                if key_name == "p256dh":
+                    try:
+                        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), decoded)
+                    except ValueError:
+                        raise serializers.ValidationError({key_name: "Invalid P-256 subscription public key."})
+        endpoint = attrs.get("endpoint")
+        existing = PushSubscription.objects.filter(endpoint=endpoint).first() if endpoint else None
+        request = self.context.get("request")
+        if existing and request and existing.user_id != request.user.pk:
+            raise serializers.ValidationError({"endpoint": "This device is already registered to another account."})
+        return attrs
 
 
 class NotificationSerializer(serializers.ModelSerializer):

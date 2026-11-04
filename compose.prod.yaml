@@ -24,6 +24,10 @@ services:
       dockerfile: Dockerfile.prod
     env_file:
       - ./backend/.env
+    environment:
+      VAPID_PRIVATE_KEY: /run/secrets/vapid_private_key
+    secrets:
+      - vapid_private_key
     volumes:
       - static_data:/app/staticfiles
       - media_data:/app/media
@@ -72,6 +76,10 @@ volumes:
   postgres_data:
   static_data:
   media_data:
+
+secrets:
+  vapid_private_key:
+    file: ./backend/private_key.pem
 
 networks:
   app:

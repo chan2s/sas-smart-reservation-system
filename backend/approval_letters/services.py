@@ -129,6 +129,7 @@ def create_letter_for_reservation(reservation) -> ApprovalLetter:
                 "Approval letter awaiting signature",
                 message,
                 link,
+                event_key=f"approval-letter:{letter.pk}:awaiting-signature",
             )
         if not signatories.exists():
             logger.warning(
@@ -323,6 +324,7 @@ def _after_signature_committed(letter_id: int, reservation_pk: int) -> None:
                 "to download."
             ),
             f"/reservations/{reservation_pk}",
+            event_key=f"approval-letter:{letter.pk}:signed",
         )
     except Exception:  # noqa: BLE001 — the notice is best-effort
         logger.exception(

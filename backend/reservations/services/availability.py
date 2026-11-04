@@ -180,7 +180,16 @@ def check_availability(facility_id, target_date, start, end, items=None, exclude
                 built_in_token = next(
                     token
                     for token in configured
-                    if eq and eq.name.lower() == token.strip().lower()
+                    if eq
+                    and " ".join(eq.name.lower().split()).endswith(
+                        " "
+                        + " ".join(
+                            token.strip().lower().replace("_", " ").split()
+                        )
+                    )
+                    or eq
+                    and " ".join(eq.name.lower().split())
+                    == " ".join(token.strip().lower().replace("_", " ").split())
                 )
             except StopIteration:
                 built_in_token = None
@@ -380,7 +389,10 @@ def find_alternatives(
         if oh is None or oh.is_closed:
             continue
 
-        candidates = [oh.open_time]
+        # An opening time before the system-wide earliest booking time cannot
+        # be proposed. Start at the first actually reservable time instead of
+        # dropping the day's only candidate and returning no alternatives.
+        candidates = [max(oh.open_time, EARLIEST_START_TIME)]
         existing = list(
             Reservation.objects.filter(
                 facility=facility,

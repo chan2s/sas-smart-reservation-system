@@ -3,6 +3,9 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     NotificationViewSet,
+    PushSubscriptionDetailView,
+    PushSubscriptionListView,
+    VapidPublicKeyView,
     no_show_alert_acknowledge,
     no_show_alert_acknowledge_all,
     no_show_alert_list,
@@ -16,6 +19,9 @@ router.register("notifications", NotificationViewSet, basename="notification")
 # Static alert routes must precede the router's "<pk>/" detail pattern,
 # otherwise "no-show-alerts" would be read as a notification primary key.
 urlpatterns = [
+    path("push/public-key/", VapidPublicKeyView.as_view(), name="push-public-key"),
+    path("push/subscriptions/", PushSubscriptionListView.as_view(), name="push-subscriptions"),
+    path("push/subscriptions/<int:pk>/", PushSubscriptionDetailView.as_view(), name="push-subscription-detail"),
     path(
         "notifications/no-show-alerts/",
         no_show_alert_list,

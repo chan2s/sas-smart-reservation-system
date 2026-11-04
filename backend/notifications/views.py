@@ -2,21 +2,77 @@ import logging
 
 from django.utils import timesince
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets
+from rest_framework import viewsets, status as http_status
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from accounts.permissions import IsSasStaff
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
 
 from . import no_show_alerts as alerts_service
-from .models import Notification, PossibleNoShowAlert
+from .models import Notification, PossibleNoShowAlert, PushSubscription
 from .serializers import (
     AwaitingNoShowReviewSerializer,
     NotificationSerializer,
     PossibleNoShowAlertSerializer,
+    PushSubscriptionSerializer,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class VapidPublicKeyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.conf import settings
+        if not settings.VAPID_PUBLIC_KEY:
+            return Response({"detail": "Web Push is not configured."}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"public_key": settings.VAPID_PUBLIC_KEY})
+
+
+class PushSubscriptionListView(APIView):
+    permission_classes = [IsAuthenticated, IsAccountApprovedOrReadOnly]
+
+    def get(self, request):
+        rows = PushSubscription.objects.filter(user=request.user)
+        return Response(PushSubscriptionSerializer(rows, many=True).data)
+
+    def post(self, request):
+        serializer = PushSubscriptionSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        endpoint = serializer.validated_data["endpoint"]
+        subscription = PushSubscription.objects.filter(endpoint=endpoint).first()
+        if subscription and subscription.user_id != request.user.pk:
+            return Response({"detail": "This device is already registered to another account."}, status=http_status.HTTP_409_CONFLICT)
+        if subscription:
+            for key, value in serializer.validated_data.items():
+                setattr(subscription, key, value)
+            subscription.user = request.user
+            subscription.active = True
+            subscription.save()
+        else:
+            subscription = serializer.save(user=request.user)
+        return Response(PushSubscriptionSerializer(subscription).data, status=http_status.HTTP_201_CREATED)
+
+
+class PushSubscriptionDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAccountApprovedOrReadOnly]
+
+    def patch(self, request, pk):
+        if not isinstance(request.data.get("active"), bool):
+            return Response({"active": ["A boolean value is required."]}, status=http_status.HTTP_400_BAD_REQUEST)
+        subscription = PushSubscription.objects.filter(user=request.user, pk=pk).first()
+        if not subscription:
+            return Response(status=http_status.HTTP_404_NOT_FOUND)
+        subscription.active = request.data["active"]
+        subscription.save(update_fields=["active", "updated_at"])
+        return Response(PushSubscriptionSerializer(subscription).data)
+
+    def delete(self, request, pk):
+        deleted, _ = PushSubscription.objects.filter(user=request.user, pk=pk).delete()
+        return Response(status=http_status.HTTP_204_NO_CONTENT if deleted else http_status.HTTP_404_NOT_FOUND)
 
 
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):

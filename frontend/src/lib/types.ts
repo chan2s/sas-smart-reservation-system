@@ -954,6 +954,22 @@ export interface Notification {
   no_check_in_label?: string
 }
 
+export interface PushDevice {
+  id: number
+  device_name: string
+  endpoint_fingerprint: string
+  active: boolean
+  created_at: string
+  updated_at: string
+  last_successful_delivery: string | null
+}
+
+export interface PushSubscriptionPayload {
+  device_name: string
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}
+
 /**
  * Administrator warning for an APPROVED reservation with no recorded check-in.
  *

@@ -15,6 +15,7 @@ Covers the new dual interpretation of ``built_ins``:
 """
 
 from datetime import date, time
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -86,6 +87,21 @@ class ConfiguredBuiltInAmenityTests(TestCase):
         )
 
     def test_configured_resource_injection_is_a_noop(self):
+        self._auth()
+        FacilityResource.objects.create(
+            facility=self.avr, equipment=self.projector, quantity=1
+        )
+        report = check_availability(
+            self.avr.id,
+            EVENT_DATE,
+            time(9, 0),
+            time(10, 0),
+            [{"equipment_id": self.projector.id, "quantity": 1}],
+        )
+        self.assertFalse(report["overall"]["ok"])
+        self.assertTrue(
+            any(problem["type"] == "equipment" for problem in report["problems"])
+        )
 
     def test_empty_declared_list_yields_no_configured_tokens(self):
         self._auth()
@@ -132,7 +148,8 @@ class ConfiguredBuiltInAmenityTests(TestCase):
         FacilityResource.objects.create(
             facility=self.avr, equipment=self.projector, quantity=1
         )
-        body = self.client.get(f"/api/facilities/{self.avr.id}/").json()
+        with patch("equipment.services._configured_builtin_enabled", False):
+            body = self.client.get(f"/api/facilities/{self.avr.id}/").json()
         self.assertEqual(body["built_in_amenities"], [])
 
     def test_facility_serializer_rejects_unconfigured_token_as_built_in_amenity(self):

@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from reservations.models import ReservationItem
 
 from accounts.models import AuditLog
+from notifications.models import Notification
+from notifications.services import notify_staff
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
     IsSasStaff,
@@ -403,7 +405,31 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             object_repr=equipment.name,
             detail="Permanently deleted (no history)",
         )
-        return super().destroy(request, *args, **kwargs)
+
+        image_files = []
+        seen_names = set()
+        fields = [equipment.image, *(image.image for image in equipment.equipment_images.all())]
+        for image in fields:
+            if image and image.name not in seen_names:
+                image_files.append((image.storage, image.name))
+                seen_names.add(image.name)
+
+        response = super().destroy(request, *args, **kwargs)
+
+        def delete_unreferenced_images():
+            for storage, name in image_files:
+                still_referenced = (
+                    Equipment.objects.filter(image=name).exists()
+                    or EquipmentImage.objects.filter(image=name).exists()
+                )
+                if not still_referenced:
+                    storage.delete(name)
+
+        # Defer storage changes until the database deletion commits. Shared
+        # paths remain intact while any legacy image or gallery row references
+        # them.
+        transaction.on_commit(delete_unreferenced_images)
+        return response
 
     @action(detail=False, methods=["get"])
     def stats(self, request):
@@ -562,6 +588,13 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 raise
             return self._duplicate_report_response(existing)
 
+        notify_staff(
+            Notification.Type.MAINTENANCE,
+            "Equipment maintenance report requires attention",
+            f"An equipment issue was reported for {record.equipment.name}.",
+            f"/equipment/{record.equipment_id}",
+            event_key=f"maintenance-report:{record.pk}:opened",
+        )
         return Response(
             MaintenanceRecordSerializer(record).data,
             status=status.HTTP_201_CREATED,

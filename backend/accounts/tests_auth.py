@@ -124,7 +124,7 @@ class GoogleOAuthSecurityTests(APITestCase):
     def test_callback_returns_to_state_origin(self):
         """Callback redirects go to the origin the browser started from."""
         # Forged state → error redirect must use the Referer origin.
-        with override_settings(DEBUG=True):
+        with override_settings(DEBUG=True, ALLOW_DEV_TUNNELS=True):
             response = self.client.get(
                 "/api/auth/google/callback/",
                 {"code": "x", "state": "forged"},

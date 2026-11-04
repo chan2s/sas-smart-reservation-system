@@ -185,6 +185,7 @@ def _send_in_app_reminder(reservation: Reservation, now) -> bool:
             REMINDER_TITLE,
             build_reminder_message(reservation),
             f"/reservations/{reservation.id}",
+            event_key=f"reservation:{reservation.pk}:reminder",
         )
         ReservationEvent.objects.create(
             reservation=reservation,

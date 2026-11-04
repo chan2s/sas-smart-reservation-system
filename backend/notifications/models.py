@@ -18,12 +18,35 @@ class Notification(models.Model):
     link = models.CharField(max_length=200, blank=True)
     read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    event_key = models.CharField(max_length=180, null=True, blank=True, unique=True)
 
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
         return self.title
+
+
+class PushSubscription(models.Model):
+    """One browser installation's Web Push endpoint and encryption keys."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="push_subscriptions"
+    )
+    device_name = models.CharField(max_length=120, blank=True)
+    endpoint = models.URLField(max_length=2048, unique=True)
+    p256dh = models.CharField(max_length=255)
+    auth = models.CharField(max_length=255)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_successful_delivery = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self) -> str:
+        return f"Push device {self.pk} for user {self.user_id}"
 
 
 class PossibleNoShowAlert(models.Model):

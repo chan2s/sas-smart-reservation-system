@@ -50,7 +50,7 @@ import logging
 import math
 from datetime import timedelta
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
@@ -170,6 +170,7 @@ def refresh_alerts(now=None) -> dict:
             continue
 
         alert, was_created = _open_or_create(reservation, stage, current)
+        should_send_push = was_created
         if was_created:
             created += 1
         else:
@@ -179,7 +180,9 @@ def refresh_alerts(now=None) -> dict:
                 alert.resolved_at = None
                 alert.resolved_reason = ""
                 changed_fields += ["resolved_at", "resolved_reason"]
+                should_send_push = True
             if alert.stage != stage:
+                should_send_push = True
                 if STAGE_ORDER[stage] > STAGE_ORDER[alert.stage]:
                     # A more urgent state must not stay "read".
                     alert.acknowledged_at = None
@@ -192,6 +195,11 @@ def refresh_alerts(now=None) -> dict:
             if changed_fields:
                 alert.save(update_fields=changed_fields + ["updated_at"])
                 updated += 1
+        if should_send_push:
+            transaction.on_commit(
+                lambda reservation_id=reservation.pk, alert_stage=stage, stamp=current.isoformat():
+                _send_possible_no_show_push(reservation_id, alert_stage, stamp)
+            )
         active_ids.append(reservation.pk)
 
     resolved = 0
@@ -221,6 +229,22 @@ def refresh_alerts(now=None) -> dict:
             "resolved." % summary
         )
     return summary
+
+
+def _send_possible_no_show_push(reservation_id, stage, stamp):
+    """Wake staff devices with a generic link; never include requester data."""
+    from django.contrib.auth import get_user_model
+    from notifications.services import send_push_to_user
+
+    User = get_user_model()
+    recipients = User.objects.filter(role__in=[User.Role.ADMIN, User.Role.STAFF]).values_list("id", flat=True)
+    for user_id in recipients:
+        send_push_to_user(
+            user_id,
+            "RESERVATION",
+            f"/reservations/{reservation_id}",
+            event_key=f"possible-no-show:{reservation_id}:{stage}:{stamp}",
+        )
 
 
 def active_alerts():

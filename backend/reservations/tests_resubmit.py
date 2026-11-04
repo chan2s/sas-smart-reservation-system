@@ -165,6 +165,46 @@ class ReservationResubmitTests(TestCase):
             ).exists()
         )
 
+    def test_repeat_approval_cycles_notify_each_transition(self):
+        """A second approval/change-request cycle notifies again.
+
+        Notification idempotency is scoped to the recorded timeline event, so
+        the same transition cannot notify twice but a genuinely new approval
+        or change request must not be mistaken for a retry.
+        """
+        def approve():
+            self.client.force_authenticate(self.admin)
+            response = self.client.post(
+                f"/api/reservations/{self.reservation.id}/approve/", {}
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+
+        self._request_changes("First review")
+        self._resubmit()
+        approve()
+        self._request_changes("Second review")
+        self._resubmit()
+        approve()
+
+        self.assertEqual(
+            Notification.objects.filter(
+                user=self.requester, title="Reservation approved"
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            Notification.objects.filter(
+                user=self.requester, title="Changes requested"
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            Notification.objects.filter(
+                user=self.admin, title="Reservation resubmitted"
+            ).count(),
+            2,
+        )
+
     def test_edit_eligibility_flags_follow_the_workflow(self):
         """can_edit/changes_requested only hold for a pending, owned reservation."""
         self.client.force_authenticate(self.requester)

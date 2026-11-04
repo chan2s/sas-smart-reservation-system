@@ -79,6 +79,10 @@ export default defineConfig(({ command }) => {
           ],
         },
         workbox: {
+          // Keep notification event handlers in a small, separately testable
+          // script imported by this generated worker; the existing Workbox
+          // cache and offline strategies remain unchanged.
+          importScripts: ['/push-handler.js'],
           // Precache the application shell and build assets so the app can boot
           // offline. In production the SPA fallback stays, because Chrome's
           // installability checker requires a worker with a responding fetch

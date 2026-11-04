@@ -61,6 +61,17 @@ def record_event(reservation, event_type, actor=None, message="", from_status=""
     )
 
 
+def _event_notification_key(event, kind: str) -> str:
+    """Idempotency key for a notification about one recorded timeline event.
+
+    The event's primary key distinguishes repeated transitions of the same
+    type (for example a second approval after a change request) while a retry
+    of the same transition reuses the key and therefore never duplicates the
+    notification.
+    """
+    return f"reservation-event:{event.pk}:{kind}"
+
+
 def _reservation_link(reservation) -> str:
     return f"/reservations/{reservation.id}"
 
@@ -289,7 +300,7 @@ def auto_approve(reservation, actor, message=""):
         locked.approved_by = actor
         locked.approved_at = timezone.now()
         locked.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
-        record_event(
+        approved_event = record_event(
             locked,
             ReservationEvent.EventType.APPROVED,
             actor=actor,
@@ -311,6 +322,7 @@ def auto_approve(reservation, actor, message=""):
             "Reservation approved",
             f"{locked.event_name} on {locked.date} was automatically approved.",
             _reservation_link(locked),
+            event_key=_event_notification_key(approved_event, "approved"),
         )
         notify_staff(
             Notification.Type.RESERVATION,
@@ -318,6 +330,7 @@ def auto_approve(reservation, actor, message=""):
             f"{locked.event_name} on {locked.date} was automatically approved.",
             _reservation_link(locked),
             exclude_user=actor,
+            event_key=_event_notification_key(approved_event, "approved-staff"),
         )
         if from_status != Reservation.Status.APPROVED:
             _schedule_approval_email(locked, actor)
@@ -349,7 +362,7 @@ def approve_reservation(reservation, actor, comment=""):
             locked.status,
             getattr(actor, "pk", None),
         )
-        record_event(
+        approved_event = record_event(
             locked,
             ReservationEvent.EventType.APPROVED,
             actor=actor,
@@ -371,6 +384,7 @@ def approve_reservation(reservation, actor, comment=""):
             "Reservation approved",
             f"{locked.event_name} on {locked.date} has been approved.",
             _reservation_link(locked),
+            event_key=_event_notification_key(approved_event, "approved"),
         )
         notify_staff(
             Notification.Type.RESERVATION,
@@ -378,6 +392,7 @@ def approve_reservation(reservation, actor, comment=""):
             f"{locked.event_name} on {locked.date} was approved.",
             _reservation_link(locked),
             exclude_user=actor,
+            event_key=_event_notification_key(approved_event, "approved-staff"),
         )
         _schedule_approval_email(locked, actor)
         _schedule_approval_letter(locked)
@@ -421,6 +436,7 @@ def reject_reservation(reservation, actor, reason):
         "Reservation rejected",
         f"{reservation.event_name} on {reservation.date} was rejected. Reason: {reason}",
         _reservation_link(reservation),
+        event_key=f"reservation:{reservation.pk}:rejected",
     )
     notify_staff(
         Notification.Type.RESERVATION,
@@ -428,6 +444,7 @@ def reject_reservation(reservation, actor, reason):
         f"{reservation.event_name} on {reservation.date} was rejected. Reason: {reason}",
         _reservation_link(reservation),
         exclude_user=actor,
+        event_key=f"reservation:{reservation.pk}:rejected-staff",
     )
     # Send email notification
     _send_reservation_email(
@@ -459,7 +476,7 @@ def resubmit_reservation(reservation, actor, message=""):
         if actor.is_sas_staff
         else "Reservation updated and resubmitted by requester."
     )
-    record_event(
+    updated_event = record_event(
         reservation,
         ReservationEvent.EventType.UPDATED,
         actor=actor,
@@ -484,6 +501,7 @@ def resubmit_reservation(reservation, actor, message=""):
             "revised and is awaiting approval again."
         ),
         _reservation_link(reservation),
+        event_key=_event_notification_key(updated_event, "resubmitted"),
     )
     return reservation
 
@@ -501,7 +519,7 @@ def request_changes(reservation, actor, message):
         raise ValueError("A change request message is required.")
     reservation.status = Reservation.Status.PENDING
     reservation.save(update_fields=["status", "updated_at"])
-    record_event(
+    changes_event = record_event(
         reservation,
         ReservationEvent.EventType.CHANGES_REQUESTED,
         actor=actor,
@@ -515,6 +533,7 @@ def request_changes(reservation, actor, message):
         "Changes requested",
         f"Changes were requested for {reservation.event_name}: {message}",
         _reservation_link(reservation),
+        event_key=_event_notification_key(changes_event, "changes-requested"),
     )
     notify_staff(
         Notification.Type.RESERVATION,
@@ -522,6 +541,7 @@ def request_changes(reservation, actor, message):
         f"Changes were requested for {reservation.event_name}: {message}",
         _reservation_link(reservation),
         exclude_user=actor,
+        event_key=_event_notification_key(changes_event, "changes-requested-staff"),
     )
     return reservation
 
@@ -640,6 +660,7 @@ def cancel_reservation(reservation, actor, reason=""):
                 "Reservation cancelled",
                 f"{locked.event_name} on {locked.date} was cancelled by the requester.",
                 _reservation_link(locked),
+                event_key=f"reservation:{locked.pk}:cancelled-staff",
             )
         else:
             notify(
@@ -648,6 +669,7 @@ def cancel_reservation(reservation, actor, reason=""):
                 "Reservation cancelled",
                 f"{locked.event_name} on {locked.date} was cancelled.",
                 _reservation_link(locked),
+                event_key=f"reservation:{locked.pk}:cancelled",
             )
             notify_staff(
                 Notification.Type.RESERVATION,
@@ -655,6 +677,7 @@ def cancel_reservation(reservation, actor, reason=""):
                 f"{locked.event_name} on {locked.date} was cancelled by SAS staff.",
                 _reservation_link(locked),
                 exclude_user=actor,
+                event_key=f"reservation:{locked.pk}:cancelled-staff",
             )
     # Keep the caller's in-memory instance in sync with the persisted write,
     # so the API layer serializes the cancelled state it just recorded.
@@ -787,6 +810,14 @@ def mark_no_show(reservation, actor, now=None):
             object_id=locked.reservation_id,
             object_repr=locked.event_name,
             detail=detail,
+        )
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "Reservation marked as no-show",
+            "A reservation was marked as a no-show. Sign in to review the record.",
+            _reservation_link(locked),
+            exclude_user=actor,
+            event_key=f"reservation:{locked.pk}:no-show-staff",
         )
 
         # Notify the requester once the transition has committed. A delivery
@@ -950,6 +981,17 @@ def _send_no_show_notice_after_commit(reservation, actor):
     delivery failure is logged and never raises back into the committing
     transaction.
     """
+    try:
+        notify(
+            reservation.requester,
+            Notification.Type.RESERVATION,
+            "Reservation marked as no-show",
+            "A reservation was marked as a no-show. Sign in to review the details.",
+            _reservation_link(reservation),
+            event_key=f"reservation:{reservation.pk}:no-show",
+        )
+    except Exception:
+        logger.exception("No-show in-app notification failed for reservation id %s.", reservation.pk)
     ok, reason = send_reservation_no_show_notice(reservation, actor)
     if ok:
         logger.info(

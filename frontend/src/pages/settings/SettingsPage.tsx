@@ -9,6 +9,7 @@ import {
 } from '@/components/organizations/OrganizationStatusNotice'
 import { ViewOnlyNotice } from '@/components/auth/ViewOnlyNotice'
 import { InstallAppSection } from '@/components/pwa/InstallAppSection'
+import { PushNotificationsSection } from '@/components/notifications/PushNotificationsSection'
 import type { User } from '@/lib/types'
 import { useToast } from '@/components/ui/Toast'
 import { api } from '@/lib/api'
@@ -125,6 +126,8 @@ export function SettingsPage() {
       {/* Installable app                                            */}
       {/* ---------------------------------------------------------- */}
       <InstallAppSection />
+
+      <PushNotificationsSection />
 
       {/* ---------------------------------------------------------- */}
       {/* Affiliation & organization                                */}

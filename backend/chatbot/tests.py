@@ -576,7 +576,9 @@ class SuggestionTests(TestCase):
         result = self._ask("What facilities are available tomorrow?")
         texts = [s["text"] for s in result["suggestions"]]
         next_day = self.today + timedelta(days=2)
-        expected = f"September {next_day.day}"
+        expected = f"{next_day.strftime('%B')} {next_day.day}"
+        if next_day.year != self.today.year:
+            expected += f", {next_day.year}"
         self.assertTrue(
             any(expected in t for t in texts),
             f"expected a computed next-date suggestion containing {expected!r}, got {texts}",

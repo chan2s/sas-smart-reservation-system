@@ -227,7 +227,9 @@ class ManageEquipmentAdminPageTests(TestCase):
         )
         self.client.force_login(self.admin)
         self.facility = Facility.objects.create(
-            name="Gymnasium", facility_type=Facility.FacilityType.GYMNASIUM
+            name="Gymnasium",
+            facility_type=Facility.FacilityType.GYMNASIUM,
+            built_ins=["Sound System"],
         )
         OperatingHour.objects.create(
             facility=self.facility,
@@ -249,6 +251,16 @@ class ManageEquipmentAdminPageTests(TestCase):
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sound System")
+
+    def test_page_shows_configured_builtin_tokens(self):
+        FacilityResource.objects.create(
+            facility=self.facility, equipment=self.sound, quantity=2
+        )
+
+        response = self.client.get(self._url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["configured_builtin_tokens"], ["Sound System"])
 
     def test_post_assigns_and_removes(self):
         response = self.client.post(

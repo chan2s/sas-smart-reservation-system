@@ -116,7 +116,8 @@ def configured_builtin_tokens_for_facility(facility_id) -> set:
 
     These are the built-in amenities whose existence is backed by a real
     ``FacilityResource`` row. A ``built_ins`` token without a matching active
-    resource is still stored on the facility, but it is not an effective
+    resource is still stored on the facility, but it is not an effective
+
     built-in amenity for reservation purposes — it is a free-form facility
     attribute (kept for backward compatibility and for items that are physically
     installed but not tracked as reservable inventory).
@@ -167,17 +168,9 @@ def configured_builtin_tokens_for_facility(facility_id) -> set:
     return configured
 
 
-_effective_builtin_token_cache: dict[int, set[str]] = {}
-
-
 def configured_builtin_tokens_for_facility_cached(facility_id: int) -> set[str]:
-    """Cached variant used by tests that call the helper twice in one case."""
-    cached = _effective_builtin_token_cache.get(facility_id)
-    if cached is not None:
-        return cached
-    result = configured_builtin_tokens_for_facility(facility_id)
-    _effective_builtin_token_cache[facility_id] = result
-    return result
+    """Compatibility alias that reflects current resource assignments."""
+    return configured_builtin_tokens_for_facility(facility_id)
 
 #: Allow the helper to be toggled off during tests that exercise the older
 #: global-equipment behavior before any facility resource is configured.
@@ -189,7 +182,8 @@ def configured_builtin_tokens_for_facility(facility_id: int) -> set[str]:
 
     These are the built-in amenities whose existence is backed by a real
     ``FacilityResource`` row. A ``built_ins`` token without a matching active
-    resource is still stored on the facility, but it is not an effective
+    resource is still stored on the facility, but it is not an effective
+
     built-in amenity for reservation purposes — it is a free-form facility
     attribute (kept for backward compatibility and for items that are physically
     installed but not tracked as reservable inventory).
@@ -234,7 +228,14 @@ def configured_builtin_tokens_for_facility(facility_id: int) -> set[str]:
             equipment = Equipment.objects.filter(pk=eq_id, is_active=True).first()
             if equipment is None:
                 continue
-            if equipment.name.lower() == normalized:
+            normalized_name = " ".join(equipment.name.lower().split())
+            normalized_token = " ".join(normalized.replace("_", " ").split())
+            # built_ins historically uses short labels ("chairs", "tables",
+            # "sound_system") while inventory uses descriptive names such as
+            # "Foldable Chairs" and "Training Tables".
+            if normalized_name == normalized_token or normalized_name.endswith(
+                f" {normalized_token}"
+            ):
                 configured.add(token)
                 break
     return configured

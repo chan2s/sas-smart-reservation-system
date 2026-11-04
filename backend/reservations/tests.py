@@ -139,6 +139,7 @@ class AvailabilityServiceTests(TestCase):
         # At least one fully-available alternative is proposed, and every
         # proposal must differ from the requested slot and actually be free.
         self.assertTrue(alternatives)
+        self.assertEqual(alternatives[0]["start_time"], "08:00")
         for alternative in alternatives:
             self.assertNotEqual(
                 (

@@ -38,6 +38,8 @@ import type {
   OrganizationType,
   Paginated,
   PricingQuote,
+  PushDevice,
+  PushSubscriptionPayload,
   Recommendation,
   ReportDefinition,
   ReportDetail,
@@ -856,6 +858,19 @@ export const endpoints = {
     api.post<{ acknowledged: number; unread: number }>(
       '/api/notifications/no-show-alerts/acknowledge-all/',
     ),
+
+  pushPublicKey: () => api.get<{ public_key: string }>('/api/push/public-key/'),
+  pushSubscriptions: () => api.get<PushDevice[]>('/api/push/subscriptions/'),
+  registerPushSubscription: (body: PushSubscriptionPayload) =>
+    api.post<PushDevice>('/api/push/subscriptions/', {
+      device_name: body.device_name,
+      endpoint: body.endpoint,
+      p256dh: body.keys.p256dh,
+      auth: body.keys.auth,
+    }),
+  updatePushSubscription: (id: number, active: boolean) =>
+    api.patch<PushDevice>(`/api/push/subscriptions/${id}/`, { active }),
+  removePushSubscription: (id: number) => api.delete<void>(`/api/push/subscriptions/${id}/`),
 
   chatbot: (message: string) =>
     api.post<ChatbotResponse>('/api/chatbot/', { message }),

@@ -221,6 +221,15 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 "New reservation request",
                 f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
                 f"/reservations/{reservation.id}",
+                event_key=f"reservation:{reservation.pk}:submitted",
+            )
+            notify(
+                reservation.requester,
+                Notification.Type.RESERVATION,
+                "Reservation submitted",
+                "Your reservation request was submitted and is awaiting review.",
+                f"/reservations/{reservation.id}",
+                event_key=f"reservation:{reservation.pk}:submitted-requester",
             )
         # Booking confirmation email. Scheduled AFTER the creation has been
         # saved and the final status has been decided above, so the message

@@ -389,7 +389,7 @@ class ExpirationTestCase(TestCase):
             {"status": "PENDING", "event_name": "Hijacked"},
             format="json",
         )
-        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.status_code, 405, response.content)
         reservation.refresh_from_db()
         self.assertEqual(reservation.status, Reservation.Status.EXPIRED)
         self.assertEqual(reservation.event_name, "Students Seminar")

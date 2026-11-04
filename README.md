@@ -398,7 +398,12 @@ Do not consider deployment complete until these checks pass.
 
 ---
 
-## 4. Current Deployment Status
+## 4. Previous Deployment Status (Before Server Reset)
+
+The checks below describe the old server and are historical only. The Ubuntu
+server has since been reset; none of its former Docker access, files, database,
+ports, certificates, or running services should be assumed to exist. Use the
+Web Push production checklist in Section 9 to verify the rebuilt host.
 
 | Item | Status |
 |---|---|
@@ -414,7 +419,7 @@ Do not consider deployment complete until these checks pass.
 | SAS Reserve deployed remotely | Not completed |
 | Production configuration | Requires preparation and verification |
 
-### Current blocker
+### Historical blocker
 
 The immediate blocker is **remote Docker permissions**. The server is reachable over SSH and Docker is installed, but the `sas` account cannot manage containers and has no `sudo` privileges.
 
@@ -539,6 +544,166 @@ still be scheduled with the host's cron (or a Render cron job):
 
 Verify endpoint paths against the current Django URL configuration before relying on them in integrations.
 
+---
+
+## 9. Web Push notifications
+
+Push delivery extends the existing in-app notification events. The push payload
+contains a generic message and an authenticated route; reservation details and
+personal information remain in the application. Notifications require a working
+internet connection and browser and operating-system notification permission.
+There is no Firebase, Redis, or Celery requirement.
+
+### Generate VAPID keys for local development
+
+Run from `backend/` after installing the requirements. The `vapid` command
+creates PEM files in the current directory; both filenames are ignored by Git.
+The private key must remain private. Do not regenerate a key after devices have
+subscribed unless those devices will subscribe again with the new public key.
+
+```powershell
+cd backend
+python -m pip install -r requirements.txt
+vapid --gen
+vapid --applicationServerKey
+```
+
+Copy the output of `vapid --applicationServerKey` into `VAPID_PUBLIC_KEY` in
+`backend/.env`. Set `VAPID_PRIVATE_KEY=private_key.pem` and set
+`VAPID_CLAIMS_EMAIL` to a monitored `mailto:` address. The private key value is
+a file path, not the PEM contents. Restart Django after changing `.env`.
+
+### Local setup
+
+```powershell
+cd backend
+python manage.py migrate
+python manage.py runserver
+```
+
+In a second terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Sign in, open **Settings → Push Notifications**, and select **Enable
+notifications**. The browser permission prompt appears only after that click.
+The local development server at `localhost` is treated as a secure context by
+modern browsers. A production or remote test domain must use HTTPS.
+
+The settings control enables or disables push for the current browser/device.
+It does not change in-app or email notifications, and removing a device leaves
+other registered devices intact.
+
+### API
+
+All endpoints require the existing JWT authentication:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/push/public-key/` | Return the public VAPID key |
+| `GET`, `POST` | `/api/push/subscriptions/` | List the caller's devices or register/reuse a subscription |
+| `PATCH`, `DELETE` | `/api/push/subscriptions/{id}/` | Activate/deactivate or remove one caller-owned device |
+
+Subscription endpoints and encryption keys are write-only in API responses.
+The API returns a one-way endpoint fingerprint so Settings can identify the
+current device without returning its push endpoint. Only known browser push
+service hosts are accepted, and production subscriptions must use HTTPS.
+
+### Browser and device support
+
+| Platform | Setup |
+|---|---|
+| Windows: Google Chrome | Use a current browser version, allow site notifications, and keep Windows notifications enabled. |
+| Windows: Microsoft Edge | Use a current browser version, allow site notifications, and keep Windows notifications enabled. |
+| Android: Google Chrome | Allow notifications in Chrome; install SAS RESERVE as a PWA for app-like access. |
+| iPhone/iPad | Requires iOS/iPadOS 16.4 or later. Add SAS RESERVE to the Home Screen, open the installed app, enable notifications there, and allow OS notifications. |
+
+Browser, push-service, and OS policies can limit delivery or background activity.
+Push cannot arrive while the device has no internet connection or when browser
+or OS notification permission is blocked. Verify each target browser and OS with
+a real device before announcing support to users; automated tests mock push
+services and do not verify platform delivery.
+
+### Production secrets and deployment
+
+The production Compose service reads the private key from the Docker secret
+`/run/secrets/vapid_private_key`, sourced from
+`backend/private_key.pem`. Provision that file securely on the Ubuntu server;
+it is intentionally ignored by Git. Configure `VAPID_PUBLIC_KEY` and
+`VAPID_CLAIMS_EMAIL` in the server-only `backend/.env`, set restrictive file
+permissions on both secret and `.env`, and ensure the backend container can make
+outbound HTTPS connections to browser push services. Keep the public application
+on HTTPS so browsers can register the service worker and use Push APIs.
+
+The production server was reset. Before deployment, the server administrator
+must restore/verify Ubuntu access, Docker and Compose, the approved deployment
+account's Docker permissions, persistent PostgreSQL storage, the public HTTPS
+reverse proxy, DNS/certificate, firewall rules, and an outbound HTTPS route.
+The compose service listens on loopback port `4817`; retain the separately
+managed production Nginx configuration and verify its public proxy route (the
+existing deployment targets port `4816`). No deployment is run by this feature
+change.
+
+From an authorized workstation, after obtaining the server's pinned SSH host
+key and approved account, provision the server-only `.env` and private key using
+the approved secret-transfer process. Configure these VAPID values there:
+
+```dotenv
+VAPID_PUBLIC_KEY=<generated applicationServerKey>
+VAPID_CLAIMS_EMAIL=mailto:<monitored-address>
+```
+
+The production Compose file supplies `VAPID_PRIVATE_KEY` as
+`/run/secrets/vapid_private_key`; the PEM secret file itself must be present at
+`backend/private_key.pem` on the server before Compose starts. Keep production
+`DJANGO_DEBUG=false`, `DJANGO_ALLOWED_HOSTS`, `PUBLIC_FRONTEND_URL`, database
+credentials, and HTTPS settings aligned with the real domain and TLS proxy.
+
+After an authorized deployment checkout is prepared and the database/storage
+target has been confirmed, run these commands from the repository directory on
+the server. Back up any database that must be retained before the migration.
+These commands migrate schema and start services; they do not configure the
+server, create credentials, open firewall ports, or restore lost production
+data.
+
+```bash
+docker compose -f compose.prod.yaml config --quiet
+docker compose -f compose.prod.yaml build backend frontend
+docker compose -f compose.prod.yaml up -d db
+docker compose -f compose.prod.yaml run --rm backend python manage.py migrate --noinput
+docker compose -f compose.prod.yaml up -d backend frontend
+docker compose -f compose.prod.yaml ps
+docker compose -f compose.prod.yaml logs --tail=100 backend frontend
+```
+
+The deployment workflow runs the same migration before replacing the live
+backend. Configure its existing GitHub Actions secrets only after the rebuilt
+server administrator confirms access: `DEPLOY_HOST`, `DEPLOY_USER`,
+`DEPLOY_PATH`, `DEPLOY_KNOWN_HOSTS`, and `DEPLOY_SSH_KEY`. Do not trust a newly
+reset server host key without independently verifying it. The workflow refuses
+to deploy if the account lacks Docker access or the server checkout has diverged.
+After startup, verify the public HTTPS site, `/api/health/`, the worker file at
+`/push-handler.js`, Settings subscription, and an end-to-end notification on
+each target platform.
+
+### Local verification commands
+
+```powershell
+cd backend
+python manage.py check
+python manage.py test notifications.tests_push
+python manage.py test
+cd ..\frontend
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
+```
+
 ## 7. Design System
 
 The frontend defines its design tokens in `frontend/src/index.css` using Tailwind CSS v4's `@theme` configuration.
@@ -553,4 +718,4 @@ The design uses a neutral palette, semantic status colors, Inter typography, sof
 - Development seed credentials must never be used for a public production deployment.
 - Local Docker development and remote production deployment are separate configurations.
 - Changes to local Docker files do not deploy the application to the remote server automatically.
-- Pushing to GitHub only triggers a remote deployment if an appropriate deployment pipeline is configured.
+- The existing `.github/workflows/deploy.yml` runs CI for pushes and deploys `master` only when its deployment secrets and remote Docker access are configured. This feature work has not been deployed.

@@ -69,6 +69,9 @@ jobs:
       DJANGO_SECRET_KEY: github-actions-ci-only-key-not-for-deployment
       DJANGO_DEBUG: "false"
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+      PUBLIC_FRONTEND_URL: https://sas-reserve.test
+      ALLOW_DEV_TUNNELS: "true"
       DATABASE_URL: ""
       DB_CONNECTION: pgsql
       DB_DATABASE: sas_test
@@ -187,7 +190,10 @@ jobs:
 
           git merge --ff-only origin/master
 
-          docker compose -f compose.prod.yaml up -d --build frontend backend
+          docker compose -f compose.prod.yaml build frontend backend
+          docker compose -f compose.prod.yaml up -d db
+          docker compose -f compose.prod.yaml run --rm backend python manage.py migrate --noinput
+          docker compose -f compose.prod.yaml up -d frontend backend
 
           for service in db backend frontend; do
             container_id="$(docker compose -f compose.prod.yaml ps -q "$service")"

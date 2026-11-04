@@ -345,8 +345,10 @@ class ReminderTestCase(TestCase):
         second = reminders._process_reminder(second_worker, now)
 
         self.assertTrue(first["delivered"])
+        self.assertEqual(first["email_result"], "sent")
         self.assertFalse(second["delivered"])
         self.assertEqual(second["email_result"], "skipped")
+        self.assertFalse(second["failed"])
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(
             Notification.objects.filter(user=self.requester).count(), 1

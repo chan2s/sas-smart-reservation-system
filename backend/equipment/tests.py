@@ -2,6 +2,8 @@ from datetime import date, time
 from io import BytesIO
 
 import threading
+import struct
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 
 from django.contrib.auth import get_user_model
@@ -30,6 +32,28 @@ def _png():
     data = BytesIO()
     PilImage.new("RGB", (4, 4), color=(59, 130, 246)).save(data, format="PNG")
     return ContentFile(data.getvalue(), name="sound-system.png")
+
+
+def _png_at_size(size):
+    """Return a valid PNG padded with a CRC-checked text chunk to ``size``."""
+    png = _png().read()
+    iend = png.rfind(b"\x00\x00\x00\x00IEND")
+    if iend < 0:
+        raise AssertionError("PNG fixture has no IEND chunk")
+
+    chunk_type = b"tEXt"
+    prefix = b"Comment\x00"
+    data_length = size - len(png) - 12
+    if data_length < len(prefix):
+        raise ValueError("Target size is too small for padded PNG fixture")
+    chunk_data = prefix + (b"x" * (data_length - len(prefix)))
+    chunk_body = chunk_type + chunk_data
+    chunk = (
+        struct.pack(">I", len(chunk_data))
+        + chunk_body
+        + struct.pack(">I", zlib.crc32(chunk_body) & 0xFFFFFFFF)
+    )
+    return ContentFile(png[:iend] + chunk + png[iend:], name="at-limit.png")
 
 
 def _jpeg():
@@ -611,8 +635,9 @@ class EquipmentManagementApiTests(TestCase):
 
     def test_image_exactly_5_mb_is_accepted(self):
         self._auth(self.admin)
-        at_limit = ContentFile(b"x" * MAX_SIZE, name="at-limit.png")
+        at_limit = _png_at_size(MAX_SIZE)
         at_limit.content_type = PNG
+        self.assertEqual(at_limit.size, MAX_SIZE)
 
         response = self.client.post(
             "/api/equipment/",
@@ -663,11 +688,34 @@ class EquipmentManagementApiTests(TestCase):
         )
         saved_name = item.image.name
 
-        response = self.client.delete(f"/api/equipment/{item.id}/")
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(f"/api/equipment/{item.id}/")
         self.assertEqual(response.status_code, 204, response.content)
         self.assertFalse(Equipment.objects.filter(pk=item.id).exists())
         # The model instance still references the old path, but the file must be gone.
         self.assertFalse(item.image.storage.exists(saved_name))
+
+    def test_deleted_equipment_keeps_an_image_referenced_by_another_record(self):
+        self._auth(self.admin)
+        item = Equipment.objects.create(
+            name="Shared image source", category=self.category, image=_png()
+        )
+        saved_name = item.image.name
+        other = Equipment.objects.create(
+            name="Shared image reference", category=self.category, image=saved_name
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(f"/api/equipment/{item.id}/")
+
+        self.assertEqual(response.status_code, 204, response.content)
+        self.assertTrue(other.image.storage.exists(saved_name))
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(f"/api/equipment/{other.id}/")
+
+        self.assertEqual(response.status_code, 204, response.content)
+        self.assertFalse(other.image.storage.exists(saved_name))
 
 
 class EquipmentGalleryApiTests(TestCase):

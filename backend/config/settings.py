@@ -70,6 +70,27 @@ def _normalize_from_email(value: str) -> str:
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
+def _vapid_private_key(value: str) -> str:
+    """Anchor a relative VAPID PEM filename at BASE_DIR.
+
+    pywebpush treats the value as a file path only when it exists, otherwise as
+    an inline encoded key; a relative path would then depend on the process
+    working directory, and a path that is not found makes py_vapid silently
+    generate (and write) a brand-new key. Inline encoded keys pass through.
+    """
+    if not value or "\n" in value or not value.lower().endswith((".pem", ".der")):
+        return value
+    path = Path(value)
+    return str(path if path.is_absolute() else BASE_DIR / path)
+
+
+# Web Push uses VAPID keys supplied at deploy time; never commit private keys.
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+# A path to the PEM key on disk (recommended) or the encoded key itself.
+# Production Compose points this at the /run/secrets/vapid_private_key secret.
+VAPID_PRIVATE_KEY = _vapid_private_key(os.environ.get("VAPID_PRIVATE_KEY", "").strip())
+VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:admin@example.com").strip()
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 

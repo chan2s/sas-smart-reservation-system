@@ -153,7 +153,9 @@ class FacilityAdmin(admin.ModelAdmin):
         return TemplateResponse(
             request, "admin/facilities/facility/manage_equipment.html", context
         )
-        """Built-in amenity tokens that are backed by an active facility resource."""
+
+    def _configured_builtin_tokens(self, facility):
+        """Built-in amenity tokens backed by an active facility resource."""
         from equipment.services import configured_builtin_tokens_for_facility
 
         return sorted(configured_builtin_tokens_for_facility(facility.id))

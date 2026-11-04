@@ -22,6 +22,13 @@ vi.mock('@/components/ui/Toast', () => ({
 
 vi.mock('@/lib/api', () => ({
   api: { patch: vi.fn() },
+  endpoints: {
+    pushSubscriptions: vi.fn().mockResolvedValue([]),
+    pushPublicKey: vi.fn(),
+    registerPushSubscription: vi.fn(),
+    updatePushSubscription: vi.fn(),
+    removePushSubscription: vi.fn(),
+  },
 }))
 
 vi.mock('@/hooks/usePwa', () => ({
