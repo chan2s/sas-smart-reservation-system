@@ -210,6 +210,7 @@ export function ReservationWizardPage() {
   const [contact, setContact] = useState<ContactDraft>(
     restored?.contact ?? { name: '', phone: '' },
   )
+  const [approvalLetterFile, setApprovalLetterFile] = useState<File | null>(null)
   const [items, setItems] = useState<Record<number, number>>(restored?.items ?? {})
   // Operator/service opt-in per equipment id (e.g. the Gymnasium sound system
   // operator). Only resources the facility marks operator-available appear.
@@ -892,6 +893,7 @@ export function ReservationWizardPage() {
       ...(isExternalRequester
         ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
         : {}),
+      ...(approvalLetterFile ? { approval_letter_image: approvalLetterFile } : {}),
     })
 
     createReservation.mutate(payload, {
@@ -951,6 +953,18 @@ export function ReservationWizardPage() {
               <Badge tone="amber">Pending approval</Badge>
             )}
           </div>
+          {publicFlow && submitted.approval_document_status === 'AWAITING' && (
+            <p role="status" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-pending/25 bg-status-pending-bg p-4 text-left text-sm leading-6 text-status-pending">
+              Your reservation is awaiting the required event approval letter. SAS cannot approve it until the document is submitted. You can upload it later from the{' '}
+              <Link
+                to={`/track-reservation?reservation_id=${encodeURIComponent(submitted.reservation_id)}`}
+                className="font-semibold underline underline-offset-2"
+              >
+                reservation tracking page
+              </Link>{' '}
+              using the representative email from your request.
+            </p>
+          )}
 
           <dl className="mt-6 divide-y divide-line rounded-xl border border-line bg-soft/60 px-5 text-left">
             <ConfirmationRow label="Reservation ID" value={submitted.reservation_id} />
@@ -1151,6 +1165,9 @@ export function ReservationWizardPage() {
             resourcesLoading={resourcesLoading}
             focusAttempt={focusAttempt}
             showAllErrors={stepError != null}
+            approvalLetterFile={approvalLetterFile}
+            onApprovalLetterFile={setApprovalLetterFile}
+            allowApprovalLetterUpload={!isEditing}
           />
         )}
 

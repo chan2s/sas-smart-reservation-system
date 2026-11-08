@@ -1,4 +1,8 @@
 import re
+from pathlib import Path
+
+from PIL import Image
+from PIL import UnidentifiedImageError
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
@@ -19,6 +23,36 @@ from .services.pricing import snapshot_reservation_fees
 from .services import workflow
 
 User = get_user_model()
+
+
+def validate_approval_letter_file(upload):
+    if upload is None:
+        return upload
+    max_bytes = 5 * 1024 * 1024
+    expected_formats = {
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".webp": "WEBP",
+    }
+    if upload.size > max_bytes:
+        raise serializers.ValidationError("The approval letter image must be 5 MB or smaller.")
+    extension = Path(upload.name).suffix.lower()
+    if extension not in expected_formats:
+        raise serializers.ValidationError("Upload a JPG, JPEG, PNG, or WEBP image.")
+    try:
+        upload.seek(0)
+        with Image.open(upload) as image:
+            if image.format != expected_formats[extension]:
+                raise serializers.ValidationError("Upload a valid JPG, PNG, or WEBP image.")
+            if image.width * image.height > 40_000_000:
+                raise serializers.ValidationError("The image dimensions are too large to upload safely.")
+            image.verify()
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+        raise serializers.ValidationError("The uploaded file is not a valid image.")
+    finally:
+        upload.seek(0)
+    return upload
 
 # Public label map for organization types (also used by the public serializers
 # module without importing account/user machinery).
@@ -191,6 +225,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     approval_email_status_label = serializers.CharField(
         source="get_approval_email_status_display", read_only=True
     )
+    approval_document_status = serializers.CharField(read_only=True)
+    approval_document_status_label = serializers.CharField(
+        source="get_approval_document_status_display", read_only=True
+    )
 
     class Meta:
         model = Reservation
@@ -241,6 +279,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "fees",
             "approval_email_status",
             "approval_email_status_label",
+            "approval_document_status",
+            "approval_document_status_label",
             "created_at",
         )
 
@@ -658,6 +698,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         max_length=20,
         default=None,
     )
+    approval_letter_image = serializers.ImageField(
+        required=False, allow_null=True, write_only=True
+    )
 
     class Meta:
         model = Reservation
@@ -676,6 +719,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "contact_person",
             "contact_email",
             "contact_phone",
+            "approval_letter_image",
             "special_requirements",
             "notes",
             "items",
@@ -683,6 +727,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "requester_type",
             "rebooked_from_id",
         )
+
+    def validate_approval_letter_image(self, upload):
+        return validate_approval_letter_file(upload)
 
     def validate(self, attrs):
         if self.context.get("public_submission"):
@@ -934,6 +981,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             organization_ref=organization_ref,
             rebooked_from=rebooked_from,
             created_by=(user if authenticated and not self.context.get("public_submission") else None),
+            approval_letter_required=True,
         )
         for item in items:
             ReservationItem.objects.create(
@@ -1048,6 +1096,10 @@ class PublicTrackSerializer(serializers.Serializer):
     reservation_id = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    approval_document_status = serializers.CharField(read_only=True)
+    approval_document_status_label = serializers.CharField(
+        source="get_approval_document_status_display", read_only=True
+    )
     event_name = serializers.CharField(read_only=True)
     organization = serializers.CharField(read_only=True)
     facility = serializers.CharField(source="facility.name", read_only=True)
@@ -1055,3 +1107,12 @@ class PublicTrackSerializer(serializers.Serializer):
     start_time = serializers.TimeField(read_only=True)
     end_time = serializers.TimeField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
+
+
+class PublicApprovalLetterUploadSerializer(serializers.Serializer):
+    reservation_id = serializers.CharField(max_length=20, required=False)
+    contact_email = serializers.EmailField(required=False)
+    approval_letter_image = serializers.ImageField()
+
+    def validate_approval_letter_image(self, upload):
+        return validate_approval_letter_file(upload)

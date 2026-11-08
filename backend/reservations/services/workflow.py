@@ -295,6 +295,10 @@ def auto_approve(reservation, actor, message=""):
             raise ValueError(
                 "This reservation has expired and can no longer be approved."
             )
+        if locked.approval_letter_required and not locked.has_approval_letter_document:
+            raise ValueError(
+                "Cannot approve this reservation because the event approval letter has not been submitted."
+            )
         from_status = locked.status
         locked.status = Reservation.Status.APPROVED
         locked.approved_by = actor
@@ -351,6 +355,10 @@ def approve_reservation(reservation, actor, comment=""):
         from_status = locked.status
         if locked.status != Reservation.Status.PENDING:
             raise ValueError("Only pending reservations can be approved.")
+        if locked.approval_letter_required and not locked.has_approval_letter_document:
+            raise ValueError(
+                "Cannot approve this reservation because the event approval letter has not been submitted."
+            )
         locked.status = Reservation.Status.APPROVED
         locked.approved_by = actor
         locked.approved_at = timezone.now()

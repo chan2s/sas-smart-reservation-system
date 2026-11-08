@@ -1,11 +1,15 @@
 import re
 from datetime import date, datetime, time, timedelta
+from io import BytesIO
+import tempfile
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+from PIL import Image
 
 from equipment.models import (
     Equipment,
@@ -494,6 +498,7 @@ class RecommendationDescriptionSyncTests(TestCase):
         self.assertGreater(checked, 0, "sweep asserted nothing")
 
 
+@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/sas-reservation-api-tests")
 class ReservationApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -521,6 +526,19 @@ class ReservationApiTests(TestCase):
 
     def _auth(self, user):
         self.client.force_authenticate(user)
+
+    def _upload_approval_letter(self, reservation_id):
+        buffer = BytesIO()
+        Image.new("RGB", (8, 8), color="navy").save(buffer, format="PNG")
+        self._auth(self.admin)
+        response = self.client.post(
+            f"/api/reservations/{reservation_id}/approval-letter-image/",
+            {"approval_letter_image": SimpleUploadedFile(
+                f"authorization-{reservation_id}.png", buffer.getvalue(), content_type="image/png"
+            )},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
 
     def _payload(self, **overrides):
         payload = dict(
@@ -710,6 +728,7 @@ class ReservationApiTests(TestCase):
         self._auth(self.requester)
         created = self.client.post("/api/reservations/", self._payload(), format="json").json()
         self._auth(self.admin)
+        self._upload_approval_letter(created["id"])
         self.client.post(f"/api/reservations/{created['id']}/approve/", {}, format="json")
 
         for status_value, expected in (("PENDING", 0), ("APPROVED", 1), ("COMPLETED", 0)):
@@ -752,6 +771,7 @@ class ReservationApiTests(TestCase):
         first = self.client.post("/api/reservations/", self._payload(), format="json")
         self.assertEqual(first.status_code, 201)
         self.client.force_authenticate(self.admin)
+        self._upload_approval_letter(first.json()["id"])
         self.client.post(f"/api/reservations/{first.json()['id']}/approve/", {}, format="json")
 
         # Same slot by another requester → conflict.
@@ -763,7 +783,7 @@ class ReservationApiTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("availability", response.json())
 
-    def test_administrator_created_reservation_is_auto_approved(self):
+    def test_administrator_created_reservation_waits_for_document_review(self):
         self._auth(self.admin)
         response = self.client.post(
             "/api/reservations/",
@@ -772,13 +792,14 @@ class ReservationApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
-        self.assertEqual(body["status"], "APPROVED")
+        self.assertEqual(body["status"], "PENDING")
+        self.assertEqual(body["approval_document_status"], "AWAITING")
         event_types = [event["event_type"] for event in body["events"]]
-        self.assertIn("APPROVED", event_types)
-        # The requester (the admin) is notified that it was approved.
+        self.assertNotIn("APPROVED", event_types)
+        # The requester (the admin) is notified that the request was submitted.
         notifications = self.client.get("/api/notifications/").json()
         self.assertTrue(
-            any(n["title"] == "Reservation approved" for n in notifications["results"])
+            any(n["title"] == "Reservation submitted" for n in notifications["results"])
         )
 
     def test_requester_cannot_forge_status(self):
@@ -800,6 +821,7 @@ class ReservationApiTests(TestCase):
         self.assertEqual(created["status"], "PENDING")
 
         self._auth(self.admin)
+        self._upload_approval_letter(created['id'])
         response = self.client.post(
             f"/api/reservations/{created['id']}/approve/", {}, format="json"
         )
@@ -838,6 +860,7 @@ class ReservationApiTests(TestCase):
         reservation_id = created["id"]
 
         self._auth(self.admin)
+        self._upload_approval_letter(reservation_id)
         response = self.client.post(
             f"/api/reservations/{reservation_id}/approve/",
             {"comment": "Approved for orientation"},
@@ -864,6 +887,7 @@ class ReservationApiTests(TestCase):
             "/api/reservations/", self._payload(), format="json"
         ).json()
         self._auth(self.admin)
+        self._upload_approval_letter(created['id'])
         self.client.post(f"/api/reservations/{created['id']}/approve/", {}, format="json")
 
         # The reservation is dated in the future, so the 3-hour window has not
@@ -1693,10 +1717,10 @@ class RequesterTypeApiTests(TestCase):
         return payload
 
     # ------------------------------------------------------------------
-    # Admin creates for a campus user -> auto-approved, requester kept
+    # Admin-created reservations require the letter and manual review.
     # ------------------------------------------------------------------
 
-    def test_admin_creates_for_campus_user_auto_approved(self):
+    def test_admin_creates_for_campus_user_pending_document_review(self):
         self.client.force_authenticate(self.admin)
         response = self.client.post(
             "/api/reservations/",
@@ -1717,19 +1741,16 @@ class RequesterTypeApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
-        # Admin-created -> APPROVED immediately, no pending review.
-        self.assertEqual(body["status"], "APPROVED")
+        self.assertEqual(body["status"], "PENDING")
+        self.assertEqual(body["approval_document_status"], "AWAITING")
         # Requester is Juan (not the admin); created_by is the admin.
         self.assertEqual(body["requester"], self.requester.display_name)
         self.assertEqual(body["requester_type"], "CAMPUS")
         self.assertIn("on behalf", body["created_by_name"])
         from django.utils import timezone
         reservation = Reservation.objects.get(pk=body["id"])
-        self.assertEqual(reservation.approved_by, self.admin)
-        self.assertIsNotNone(reservation.approved_at)
-        self.assertLessEqual(
-            (timezone.now() - reservation.approved_at).total_seconds(), 60
-        )
+        self.assertIsNone(reservation.approved_by)
+        self.assertIsNone(reservation.approved_at)
 
     def test_requester_cannot_create_for_someone_else(self):
         other = User.objects.create_user(username="other", password="pass12345", role=User.Role.REQUESTER)
@@ -1753,14 +1774,15 @@ class RequesterTypeApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_admin_external_reservation_auto_approved(self):
+    def test_admin_external_reservation_pending_document_review(self):
         self.client.force_authenticate(self.admin)
         response = self.client.post(
             "/api/reservations/", self._external_payload(), format="json"
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
-        self.assertEqual(body["status"], "APPROVED")
+        self.assertEqual(body["status"], "PENDING")
+        self.assertEqual(body["approval_document_status"], "AWAITING")
         self.assertEqual(body["requester_type"], "EXTERNAL")
         self.assertEqual(body["requester"], "ABC National High School")
         self.assertEqual(body["contact_email"], "juan@example.com")

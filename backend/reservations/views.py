@@ -1,9 +1,13 @@
 import datetime
+import json
+import mimetypes
+from pathlib import Path
 
+from django.http import FileResponse
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, authentication_classes, permission_classes
+from rest_framework.decorators import action, api_view, authentication_classes, permission_classes, throttle_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -13,6 +17,7 @@ from accounts.permissions import (
     IsApprovalModuleScopeAllowed,
     IsSasStaff,
 )
+from accounts.throttling import PublicReservationThrottle
 from facilities.models import Facility
 from equipment.services import unassigned_equipment_for_facility
 from notifications.models import Notification
@@ -24,6 +29,7 @@ from .serializers import (
     ReservationListSerializer,
     ReservationResubmitSerializer,
     PublicTrackSerializer,
+    PublicApprovalLetterUploadSerializer,
 )
 from .services import confirmations, expiration, workflow
 from .services.availability import check_availability, find_alternatives
@@ -86,17 +92,99 @@ def _trusted_requester_type(request, requested) -> str:
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([PublicReservationThrottle])
 def public_reservation_track(request):
-    """Return a minimal status view for the holder of a private tracking link."""
-    token = request.data.get("token") if isinstance(request.data, dict) else None
-    reservation = reservation_for_tracking_token(token)
+    """Resolve a guest reservation using its reference and contact email.
+
+    Old signed links remain valid for compatibility; new links use the public
+    reference plus the representative's email. Both paths return the same
+    minimal, non-sensitive response.
+    """
+    data = request.data if hasattr(request.data, "get") else {}
+    token = data.get("token")
+    if token:
+        reservation = reservation_for_tracking_token(token)
+    else:
+        reference = str(data.get("reservation_id", "")).strip().upper()
+        email = str(data.get("contact_email", "")).strip()
+        reservation = None
+        if reference and email:
+            reservation = Reservation.objects.select_related("facility").filter(
+                reservation_id__iexact=reference,
+                contact_email__iexact=email,
+                requester__isnull=True,
+                created_by__isnull=True,
+            ).first()
     if reservation is None:
         return Response(
-            {"detail": "This tracking link is invalid. Check the link in your email."},
+            {"detail": "We could not verify that reservation. Check the reservation ID and representative email."},
             status=status.HTTP_404_NOT_FOUND,
         )
     return Response(PublicTrackSerializer(reservation).data)
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationThrottle])
+def public_reservation_upload_approval_letter(request):
+    """Allow the verified reservation contact to provide a missing image."""
+    data = request.data if hasattr(request.data, "get") else {}
+    reference = str(data.get("reservation_id", "")).strip().upper()
+    email = str(data.get("contact_email", "")).strip()
+    reservation = None
+    if reference and email:
+        reservation = Reservation.objects.filter(
+            reservation_id__iexact=reference,
+            contact_email__iexact=email,
+            requester__isnull=True,
+            created_by__isnull=True,
+        ).first()
+    if reservation is None:
+        return Response(
+            {"detail": "We could not verify that reservation. Check the reservation ID and representative email."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    if reservation.status != Reservation.Status.PENDING:
+        return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
+
+    serializer = PublicApprovalLetterUploadSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    previous_name = reservation.approval_letter_image.name if reservation.approval_letter_image else ""
+    reservation.approval_letter_image = serializer.validated_data["approval_letter_image"]
+    reservation.approval_letter_required = True
+    reservation.save(update_fields=["approval_letter_image", "approval_letter_required", "approval_document_status", "updated_at"])
+    if previous_name and previous_name != reservation.approval_letter_image.name:
+        reservation.approval_letter_image.storage.delete(previous_name)
+    notify_staff(
+        Notification.Type.RESERVATION,
+        "Event approval letter submitted",
+        f"The approval letter for {reservation.reservation_id} is ready for review.",
+        f"/reservations/{reservation.pk}",
+        event_key=f"reservation:{reservation.pk}:approval-letter:{reservation.approval_letter_image.name}",
+    )
+    return Response(PublicTrackSerializer(reservation).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsSasStaff])
+def reservation_approval_letter_image(request, pk):
+    """Stream a requester-uploaded image only to authorized SAS staff."""
+    reservation = Reservation.objects.filter(pk=pk).first()
+    if reservation is None or not reservation.has_approval_letter_document:
+        return Response({"detail": "Approval letter image not found."}, status=404)
+    name = Path(reservation.approval_letter_image.name).name
+    response = FileResponse(
+        reservation.approval_letter_image.open("rb"),
+        as_attachment=False,
+        filename=name,
+        content_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @api_view(["GET"])
@@ -244,8 +332,14 @@ def public_pricing_rates(request):
 @permission_classes([AllowAny])
 def public_reservation_submit(request):
     """Create a guest reservation through the existing validation/workflow."""
+    incoming = {key: request.data.get(key) for key in request.data}
+    if isinstance(incoming.get("items"), str):
+        try:
+            incoming["items"] = json.loads(incoming["items"])
+        except (TypeError, ValueError):
+            return Response({"items": ["Expected a valid list of reservation resources."]}, status=400)
     serializer = ReservationCreateSerializer(
-        data=request.data,
+        data=incoming,
         context={"request": request, "public_submission": True},
     )
     try:
@@ -283,6 +377,8 @@ def public_reservation_submit(request):
         "start_time": reservation.start_time,
         "end_time": reservation.end_time,
         "requester": reservation.organization or reservation.contact_person,
+        "approval_document_status": reservation.approval_document_status,
+        "approval_document_status_label": reservation.get_approval_document_status_display(),
     }, status=status.HTTP_201_CREATED)
 
 
@@ -376,7 +472,13 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return ReservationListSerializer
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data, context={"request": request})
+        incoming = {key: request.data.get(key) for key in request.data}
+        if isinstance(incoming.get("items"), str):
+            try:
+                incoming["items"] = json.loads(incoming["items"])
+            except (TypeError, ValueError):
+                return Response({"items": ["Expected a valid list of reservation resources."]}, status=400)
+        serializer = self.get_serializer(data=incoming, context={"request": request})
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as exc:
@@ -407,17 +509,17 @@ class ReservationViewSet(viewsets.ModelViewSet):
         if is_rebook:
             _record_rebook_lineage(request, reservation)
 
-        # The backend is the source of truth for status: reservations created
-        # by an administrator are approved immediately (campus or external
-        # requester alike); everyone else enters the normal pending review
-        # queue. A status value sent by the client is never trusted (the
-        # serializer does not even accept one).
+        # Legacy administrator-created reservations without the document
+        # requirement retain their immediate-approval behavior. New requests
+        # require staff review of the uploaded authorization, so they stay in
+        # the pending queue even when created by an administrator. A status
+        # value sent by the client is never trusted.
         #
         # Exception: a rebook / request-new-schedule is deliberately NOT
         # auto-approved even for an administrator — recreating an expired
         # reservation must go through the normal review (Requirement: the new
         # reservation always starts PENDING).
-        if request.user.is_admin and not is_rebook:
+        if request.user.is_admin and not is_rebook and not reservation.approval_letter_required:
             workflow.auto_approve(reservation, request.user)
         else:
             notify_staff(
@@ -552,6 +654,33 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 reservation, context={"request": request}
             ).data
         )
+
+    @action(detail=True, methods=["post"], url_path="approval-letter-image")
+    def upload_approval_letter_image(self, request, pk=None):
+        """Upload the required requester image while a reservation is pending."""
+        reservation = self.get_object()
+        if not request.user.is_sas_staff and reservation.requester_id != request.user.id:
+            return Response({"detail": "You cannot update this reservation."}, status=403)
+        if reservation.status != Reservation.Status.PENDING:
+            return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
+        serializer = PublicApprovalLetterUploadSerializer(
+            data={"approval_letter_image": request.data.get("approval_letter_image")}
+        )
+        serializer.is_valid(raise_exception=True)
+        previous_name = reservation.approval_letter_image.name if reservation.approval_letter_image else ""
+        reservation.approval_letter_image = serializer.validated_data["approval_letter_image"]
+        reservation.approval_letter_required = True
+        reservation.save(update_fields=["approval_letter_image", "approval_letter_required", "approval_document_status", "updated_at"])
+        if previous_name and previous_name != reservation.approval_letter_image.name:
+            reservation.approval_letter_image.storage.delete(previous_name)
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "Event approval letter submitted",
+            f"The approval letter for {reservation.reservation_id} is ready for review.",
+            f"/reservations/{reservation.pk}",
+            event_key=f"reservation:{reservation.pk}:approval-letter:{reservation.approval_letter_image.name}",
+        )
+        return Response(ReservationDetailSerializer(reservation, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def retry_approval_email(self, request, pk=None):

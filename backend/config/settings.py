@@ -316,6 +316,7 @@ REST_FRAMEWORK = {
         "auth_register": "5/min",
         "auth_refresh": "30/min",
         "google_start": "10/min",
+        "public_reservation": "5/min",
         # Chatbot Q&A — modest per-user limit; visitors are IP-limited
         # because the endpoint also serves the public landing/login pages.
         "chatbot": "30/min",

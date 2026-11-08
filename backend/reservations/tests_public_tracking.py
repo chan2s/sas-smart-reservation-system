@@ -1,10 +1,7 @@
-"""Legacy guest reservation tracking.
+"""Public reservation tracking and compatibility for old signed links.
 
-Guest submission has been retired in favour of the shared authenticated
-reservation workflow, but links emailed before that change must keep working.
-The tracking endpoint is the only unauthenticated reservation surface, so these
-tests pin down exactly what it exposes: the holder of a signed token gets a
-minimal status view for that one guest reservation, and nothing else.
+The current public path uses a reservation reference plus representative email.
+Previously emailed signed links remain valid and expose the same minimal view.
 """
 
 from datetime import date, time
@@ -17,7 +14,6 @@ from facilities.models import Facility
 from notifications import email_service
 from reservations.models import Reservation
 from reservations.services.public_tracking import (
-    tracking_path_for,
     tracking_token_for,
 )
 
@@ -127,12 +123,12 @@ class PublicTrackingApiTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     @override_settings(PUBLIC_FRONTEND_URL=PUBLIC_URL, IS_PRODUCTION=True)
-    def test_guest_email_link_uses_the_tracking_route(self):
+    def test_guest_email_link_uses_reservation_id_tracking_route(self):
         reservation = self.make_guest_reservation()
 
         self.assertEqual(
             email_service.build_reservation_url(reservation),
-            f"{PUBLIC_URL}{tracking_path_for(reservation)}",
+            f"{PUBLIC_URL}/track-reservation?reservation_id={reservation.reservation_id}",
         )
 
     @override_settings(PUBLIC_FRONTEND_URL=PUBLIC_URL, IS_PRODUCTION=True)

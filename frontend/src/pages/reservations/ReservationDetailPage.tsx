@@ -11,6 +11,7 @@ import {
   MailWarning,
   MessageSquareWarning,
   QrCode,
+  Upload,
   UserX,
   XCircle,
 } from 'lucide-react'
@@ -20,8 +21,9 @@ import {
   useReservationAction,
   useRetryApprovalEmail,
   useRetryLetterEmail,
+  useUploadApprovalLetterImage,
 } from '@/hooks/queries'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, endpoints } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
@@ -29,7 +31,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { Field, Textarea } from '@/components/ui/Form'
+import { Field, Input, Textarea } from '@/components/ui/Form'
 import { draftFromReservation, saveDraft } from '@/lib/reservationDraft'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
@@ -44,11 +46,13 @@ export function ReservationDetailPage() {
   const { data: reservation, isLoading } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
   const retryEmail = useRetryApprovalEmail(reservationId)
+  const uploadApprovalImage = useUploadApprovalLetterImage(reservationId)
 
   const [modal, setModal] = useState<
     null | 'reject' | 'changes' | 'cancel' | 'checkin-override' | 'no-show'
   >(null)
   const [reason, setReason] = useState('')
+  const [approvalImageFile, setApprovalImageFile] = useState<File | null>(null)
 
   if (isLoading || !reservation) {
     return (
@@ -138,7 +142,9 @@ export function ReservationDetailPage() {
     })
   }
 
-  const canApprove = !isViewOnly && isStaff && reservation.status === 'PENDING'
+  const canApprove =
+    !isViewOnly && isStaff && reservation.status === 'PENDING' &&
+    reservation.approval_document_status !== 'AWAITING'
   const canReject = !isViewOnly && isStaff && reservation.status === 'PENDING'
   const canRequestChanges =
     !isViewOnly && isStaff && reservation.status === 'PENDING'
@@ -507,6 +513,103 @@ export function ReservationDetailPage() {
 
         {/* Right column */}
         <div className="space-y-6">
+          <Card>
+            <CardHeader
+              title="Event Approval Letter"
+              description="Requester authorization document required before approval"
+            />
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Badge tone={reservation.approval_document_status === 'SUBMITTED' ? 'emerald' : 'amber'}>
+                {reservation.approval_document_status_label}
+              </Badge>
+            </div>
+            {reservation.approval_document_status === 'NOT_REQUIRED' ? (
+              <p className="mt-3 text-sm text-body">This existing reservation predates the event approval letter requirement.</p>
+            ) : reservation.approval_document_status === 'SUBMITTED' ? (
+              <p className="mt-3 text-sm text-body">An image has been uploaded and is available for review.</p>
+            ) : (
+              <p role="status" className="mt-3 rounded-lg border border-status-pending/25 bg-status-pending-bg p-3 text-sm text-status-pending">
+                Missing document. This reservation cannot be approved until the event approval letter is submitted.
+              </p>
+            )}
+            {isStaff && reservation.approval_document_status === 'SUBMITTED' && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const preview = window.open('about:blank', '_blank')
+                    if (preview) preview.opener = null
+                    try {
+                      const url = await api.fileUrl(endpoints.reservationApprovalLetterFile(reservation.id))
+                      if (preview) preview.location.href = url
+                      else {
+                        const anchor = document.createElement('a')
+                        anchor.href = url
+                        anchor.download = `approval-letter-${reservation.reservation_id}`
+                        anchor.click()
+                      }
+                      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+                    } catch (error) {
+                      preview?.close()
+                      toast(error instanceof ApiError ? error.message : 'The document could not be opened.', 'error')
+                    }
+                  }}
+                >
+                  View image
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void api.downloadFile(
+                    endpoints.reservationApprovalLetterFile(reservation.id),
+                    `approval-letter-${reservation.reservation_id}`,
+                  )}
+                >
+                  Download image
+                </Button>
+              </div>
+            )}
+            {reservation.status === 'PENDING' && reservation.approval_document_status === 'AWAITING' && (isStaff || isOwner) && (
+              <div className="mt-4 space-y-3">
+                <Field label="Upload image" htmlFor="admin-approval-letter-upload" hint="JPG, JPEG, PNG, or WEBP; maximum 5 MB.">
+                  <Input
+                    id="admin-approval-letter-upload"
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null
+                      const extension = file?.name.split('.').pop()?.toLowerCase()
+                      if (file && !['jpg', 'jpeg', 'png', 'webp'].includes(extension ?? '')) {
+                        setApprovalImageFile(null)
+                        toast('Choose a JPG, JPEG, PNG, or WEBP image.', 'error')
+                      } else if (file && file.size > 5 * 1024 * 1024) {
+                        setApprovalImageFile(null)
+                        toast('The image must be 5 MB or smaller.', 'error')
+                      } else {
+                        setApprovalImageFile(file)
+                      }
+                    }}
+                  />
+                </Field>
+                <Button
+                  disabled={!approvalImageFile}
+                  loading={uploadApprovalImage.isPending}
+                  icon={<Upload className="size-4" aria-hidden />}
+                  onClick={() => approvalImageFile && uploadApprovalImage.mutate(approvalImageFile, {
+                    onSuccess: () => {
+                      setApprovalImageFile(null)
+                      toast('Event approval letter uploaded.')
+                    },
+                    onError: (error) => toast(error instanceof ApiError ? error.message : 'Upload failed.', 'error'),
+                  })}
+                >
+                  Submit approval letter
+                </Button>
+              </div>
+            )}
+          </Card>
+
           {/* Approval letter — issued automatically once the reservation was
               approved. The letter's own status is independent of the
               reservation status. */}

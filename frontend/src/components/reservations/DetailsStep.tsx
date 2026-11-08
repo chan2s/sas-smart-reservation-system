@@ -57,6 +57,9 @@ export function DetailsStep({
   resourcesLoading,
   focusAttempt,
   showAllErrors,
+  approvalLetterFile,
+  onApprovalLetterFile,
+  allowApprovalLetterUpload,
 }: {
   details: EventDetailsDraft
   onDetailsChange: (next: EventDetailsDraft) => void
@@ -85,6 +88,9 @@ export function DetailsStep({
   focusAttempt: number
   /** True immediately after a failed Continue — reveals every error, not just touched ones. */
   showAllErrors: boolean
+  approvalLetterFile: File | null
+  onApprovalLetterFile: (file: File | null) => void
+  allowApprovalLetterUpload: boolean
 }) {
   const errors = useMemo(
     () => reservationFieldErrors({ details, contact, capacity, facilityName }),
@@ -95,6 +101,7 @@ export function DetailsStep({
   const [editingContact, setEditingContact] = useState(() => !contact.phone.trim())
   const [contactSnapshot, setContactSnapshot] = useState<ContactDraft>(contact)
   const [showPicker, setShowPicker] = useState(false)
+  const [approvalLetterError, setApprovalLetterError] = useState('')
   const contactTouched = useRef(false)
   const handledFocusAttempt = useRef(0)
   const formRef = useRef<HTMLDivElement>(null)
@@ -388,6 +395,46 @@ export function DetailsStep({
               placeholder="Special setup, accessibility needs, or anything else we should know."
             />
           </Field>
+          {allowApprovalLetterUpload && (
+            <Field
+              label="Event Approval Letter"
+              htmlFor="event-approval-letter"
+              className="sm:col-span-2"
+              hint="Upload an image of your official event approval letter or authorization document. This document is required before your reservation can be approved. Optional during submission; you can provide it later. JPG, JPEG, PNG, or WEBP, up to 5 MB."
+              error={approvalLetterError || undefined}
+            >
+              <Input
+                id="event-approval-letter"
+                type="file"
+                accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null
+                  if (!file) {
+                    onApprovalLetterFile(null)
+                    setApprovalLetterError('')
+                    return
+                  }
+                  const extension = file.name.split('.').pop()?.toLowerCase()
+                  if (!['jpg', 'jpeg', 'png', 'webp'].includes(extension ?? '')) {
+                    onApprovalLetterFile(null)
+                    setApprovalLetterError('Choose a JPG, JPEG, PNG, or WEBP image.')
+                    event.target.value = ''
+                  } else if (file.size > 5 * 1024 * 1024) {
+                    onApprovalLetterFile(null)
+                    setApprovalLetterError('The image must be 5 MB or smaller.')
+                    event.target.value = ''
+                  } else {
+                    onApprovalLetterFile(file)
+                    setApprovalLetterError('')
+                  }
+                }}
+                aria-invalid={Boolean(approvalLetterError)}
+              />
+              {approvalLetterFile && (
+                <p className="mt-1 text-xs text-muted">Selected: {approvalLetterFile.name}</p>
+              )}
+            </Field>
+          )}
         </div>
       </Card>
 

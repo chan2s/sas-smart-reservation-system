@@ -87,15 +87,13 @@ def build_reservation_url(reservation) -> str:
     """Link to the appropriate SPA reservation view for ``reservation``.
 
     Account holders use the authenticated ``/reservations/:id`` route. Guest
-    external requesters receive a signed public tracking link instead.
+    reservations use their public reference route; older signed links remain
+    accepted by the tracking endpoint.
     """
-    if (
-        reservation.requester_type == reservation.RequesterType.EXTERNAL
-        and reservation.requester_id is None
-    ):
-        from reservations.services.public_tracking import tracking_path_for
-
-        return build_frontend_url(tracking_path_for(reservation))
+    if reservation.requester_id is None and reservation.created_by_id is None:
+        return build_frontend_url(
+            f"track-reservation?reservation_id={reservation.reservation_id}"
+        )
     return build_frontend_url(f"reservations/{reservation.pk}")
 
 
@@ -784,6 +782,13 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
     context["is_approved"] = status == ReservationModel.Status.APPROVED
     context["is_pending"] = status == ReservationModel.Status.PENDING
     context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
+    context["approval_letter_missing"] = not bool(reservation.approval_letter_image)
+    if context["approval_letter_missing"] and status == ReservationModel.Status.PENDING:
+        context["next_action"] = (
+            "Your reservation is awaiting the required event approval letter. "
+            "Approval cannot proceed until you upload it. Open the reservation "
+            "status link and enter the representative email used on the request."
+        )
 
     try:
         html_message = render_to_string(

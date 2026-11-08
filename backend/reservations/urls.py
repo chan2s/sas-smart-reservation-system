@@ -13,6 +13,8 @@ from .views import (
     public_reservation_submit,
     public_resource_recommendation,
     public_reservation_track,
+    public_reservation_upload_approval_letter,
+    reservation_approval_letter_image,
     reservation_by_checkin_code,
     resources_recommendation,
 )
@@ -23,12 +25,21 @@ router.include_root_view = False
 router.register("reservations", ReservationViewSet, basename="reservation")
 
 urlpatterns = [
-    # Token-protected status view for guest links sent before external
-    # organizations moved into the shared authenticated workflow.
+    # Reference/email tracking plus support for previously emailed signed links.
     path(
         "public/reservations/track/",
         public_reservation_track,
         name="public-reservation-track",
+    ),
+    path(
+        "public/reservations/approval-letter/",
+        public_reservation_upload_approval_letter,
+        name="public-reservation-approval-letter",
+    ),
+    path(
+        "reservations/<int:pk>/approval-letter-image/file/",
+        reservation_approval_letter_image,
+        name="reservation-approval-letter-image",
     ),
     path("public/reservations/catalog/", public_reservation_catalog, name="public-reservation-catalog"),
     path("public/reservations/submit/", public_reservation_submit, name="public-reservation-submit"),

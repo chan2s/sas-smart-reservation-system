@@ -1,4 +1,4 @@
-"""Signed bearer links for unauthenticated external reservation tracking."""
+"""Compatibility helpers for signed links sent before reference tracking."""
 
 from urllib.parse import urlencode
 
@@ -38,6 +38,6 @@ def reservation_for_tracking_token(token: str) -> Reservation | None:
 
 
 def tracking_path_for(reservation: Reservation) -> str:
-    """Relative frontend link suitable for email and the confirmation page."""
+    """Build a legacy signed-token URL for compatibility callers."""
     query = urlencode({"token": tracking_token_for(reservation)})
     return f"/track-reservation?{query}"

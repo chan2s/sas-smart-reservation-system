@@ -504,6 +504,17 @@ export function useCreateReservation(publicReservation = false) {
   })
 }
 
+export function useUploadApprovalLetterImage(id: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => endpoints.uploadApprovalLetterImage(id, file),
+    onSuccess: (reservation) => {
+      queryClient.setQueryData(['reservation', id], reservation)
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+    },
+  })
+}
+
 /**
  * Revise + resubmit a reservation that is awaiting review (the edit flow for
  * "administrator requested changes"). The reservation stays PENDING — this

@@ -1,13 +1,21 @@
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from decimal import Decimal
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
 from facilities.models import Facility
+
+
+def approval_letter_upload_path(instance, filename):
+    """Store requester documents under the private approval-letter namespace."""
+    suffix = Path(filename).suffix.lower()
+    return f"approval_letters/requester/{uuid.uuid4().hex}{suffix}"
 
 
 class RecommendationRule(models.Model):
@@ -336,6 +344,11 @@ class Reservation(models.Model):
         FAILED = "FAILED", "Failed"
         NO_EMAIL = "NO_EMAIL", "No requester email"
 
+    class ApprovalDocumentStatus(models.TextChoices):
+        NOT_REQUIRED = "NOT_REQUIRED", "Not required for this reservation"
+        AWAITING = "AWAITING", "Awaiting Approval Letter"
+        SUBMITTED = "SUBMITTED", "Document Submitted · Ready for Review"
+
     class EventType(models.TextChoices):
         SEMINAR = "SEMINAR", "Seminar"
         MEETING = "MEETING", "Meeting"
@@ -454,6 +467,19 @@ class Reservation(models.Model):
 
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.PENDING
+    )
+    approval_letter_image = models.ImageField(
+        upload_to=approval_letter_upload_path, blank=True, null=True
+    )
+    approval_letter_required = models.BooleanField(
+        default=False,
+        help_text="Whether this reservation follows the event approval letter requirement.",
+    )
+    approval_document_status = models.CharField(
+        max_length=16,
+        choices=ApprovalDocumentStatus.choices,
+        default=ApprovalDocumentStatus.NOT_REQUIRED,
+        db_index=True,
     )
     notes = models.TextField(blank=True)
     rejection_reason = models.TextField(blank=True)
@@ -577,10 +603,50 @@ class Reservation(models.Model):
             models.Index(fields=["status", "reminder_sent_at"]),
             models.Index(fields=["status", "reminder_email_sent_at"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status="APPROVED")
+                    | models.Q(approval_letter_required=False)
+                    | (
+                        models.Q(approval_letter_image__isnull=False)
+                        & ~models.Q(approval_letter_image="")
+                    )
+                ),
+                name="approved_reservation_has_required_letter",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if (
+            self.status == self.Status.APPROVED
+            and self.approval_letter_required
+            and not self.approval_letter_image
+        ):
+            raise ValidationError(
+                {
+                    "approval_letter_image": (
+                        "Cannot approve this reservation because the event approval "
+                        "letter has not been submitted."
+                    )
+                }
+            )
+
+    @property
+    def has_approval_letter_document(self):
+        image = self.approval_letter_image
+        return bool(image and image.storage.exists(image.name))
 
     def save(self, *args, **kwargs):
         if not self.reservation_id:
             self.reservation_id = self._next_reservation_id()
+        if self.approval_letter_image:
+            self.approval_document_status = self.ApprovalDocumentStatus.SUBMITTED
+        elif self.approval_letter_required:
+            self.approval_document_status = self.ApprovalDocumentStatus.AWAITING
+        else:
+            self.approval_document_status = self.ApprovalDocumentStatus.NOT_REQUIRED
         super().save(*args, **kwargs)
 
     def _next_reservation_id(self) -> str:

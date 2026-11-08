@@ -545,6 +545,7 @@ export interface CreateReservationPayload {
   requester_type?: RequesterType
   /** Rebook / "request new schedule": the expired reservation this one is from. */
   rebooked_from_id?: number
+  approval_letter_image?: File
 }
 
 /**
@@ -582,6 +583,8 @@ export interface PublicReservationTracking {
   start_time: string
   end_time: string
   created_at: string
+  approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
+  approval_document_status_label: string
 }
 
 export interface PublicReservationSubmission {
@@ -595,6 +598,8 @@ export interface PublicReservationSubmission {
   start_time: string
   end_time: string
   requester: string
+  approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
+  approval_document_status_label: string
 }
 
 export const endpoints = {
@@ -655,8 +660,35 @@ export const endpoints = {
   },
   trackPublicReservation: (token: string) =>
     api.post<PublicReservationTracking>('/api/public/reservations/track/', { token }),
-  submitPublicReservation: (payload: CreateReservationPayload) =>
-    api.post<PublicReservationSubmission>('/api/public/reservations/submit/', payload),
+  trackReservationById: (reservation_id: string, contact_email: string) =>
+    api.post<PublicReservationTracking>('/api/public/reservations/track/', {
+      reservation_id,
+      contact_email,
+    }),
+  uploadPublicApprovalLetter: (reservation_id: string, contact_email: string, file: File) => {
+    const form = new FormData()
+    form.append('reservation_id', reservation_id)
+    form.append('contact_email', contact_email)
+    form.append('approval_letter_image', file)
+    return api.postForm<PublicReservationTracking>(
+      '/api/public/reservations/approval-letter/',
+      form,
+    )
+  },
+  submitPublicReservation: (payload: CreateReservationPayload) => {
+    if (!payload.approval_letter_image) {
+      return api.post<PublicReservationSubmission>('/api/public/reservations/submit/', payload)
+    }
+    const { approval_letter_image, ...fields } = payload
+    const form = new FormData()
+    Object.entries(fields).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        form.append(key, Array.isArray(value) ? JSON.stringify(value) : String(value))
+      }
+    })
+    form.append('approval_letter_image', approval_letter_image)
+    return api.postForm<PublicReservationSubmission>('/api/public/reservations/submit/', form)
+  },
   /**
    * Admin configuration of facility <-> resource assignments (staff only).
    * The list is filterable by facility; `include_inactive=true` also returns
@@ -758,8 +790,25 @@ export const endpoints = {
   campusUser: (id: number) =>
     api.get<{ results: CampusUserOption[] }>(`/api/reservations/users/?id=${id}`),
   reservation: (id: number) => api.get<ReservationDetail>(`/api/reservations/${id}/`),
-  createReservation: (payload: CreateReservationPayload) =>
-    api.post<ReservationDetail>('/api/reservations/', payload),
+  createReservation: (payload: CreateReservationPayload) => {
+    if (!payload.approval_letter_image) return api.post<ReservationDetail>('/api/reservations/', payload)
+    const { approval_letter_image, ...fields } = payload
+    const form = new FormData()
+    Object.entries(fields).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        form.append(key, Array.isArray(value) ? JSON.stringify(value) : String(value))
+      }
+    })
+    form.append('approval_letter_image', approval_letter_image)
+    return api.postForm<ReservationDetail>('/api/reservations/', form)
+  },
+  uploadApprovalLetterImage: (id: number, file: File) => {
+    const form = new FormData()
+    form.append('approval_letter_image', file)
+    return api.postForm<ReservationDetail>(`/api/reservations/${id}/approval-letter-image/`, form)
+  },
+  reservationApprovalLetterFile: (id: number) =>
+    `/api/reservations/${id}/approval-letter-image/file/`,
   /**
    * Revise + resubmit a reservation that is awaiting review (owner/staff
    * only, PENDING only). Returns the updated reservation with its timeline.

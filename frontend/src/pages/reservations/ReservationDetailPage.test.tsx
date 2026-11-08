@@ -38,6 +38,7 @@ vi.mock('@/hooks/queries', () => ({
     mutate: state.retryMutate,
     isPending: false,
   }),
+  useUploadApprovalLetterImage: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -60,6 +61,8 @@ vi.mock('@/lib/api', () => ({
       this.status = status
     }
   },
+  api: { fileUrl: vi.fn(), downloadFile: vi.fn() },
+  endpoints: { reservationApprovalLetterFile: vi.fn() },
   apiErrorMessage: (error: unknown, fallback: string) =>
     error instanceof Error && error.message ? error.message : fallback,
 }))
@@ -119,6 +122,8 @@ function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDet
     fees: [],
     approval_email_status: '',
     approval_email_status_label: '',
+    approval_document_status: 'NOT_REQUIRED',
+    approval_document_status_label: 'Not required for this reservation',
     created_at: '2026-10-10T09:00:00+08:00',
     description: '',
     purpose: '',

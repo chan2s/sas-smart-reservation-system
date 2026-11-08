@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, CalendarDays, Check, CircleAlert, KeyRound, MapPin, Search, ShieldCheck } from 'lucide-react'
+import { ArrowRight, CalendarDays, Check, CircleAlert, MapPin, Search, ShieldCheck, Upload } from 'lucide-react'
 import { format } from 'date-fns'
 import { endpoints, type PublicReservationTracking } from '@/lib/api'
 import type { ReservationStatus } from '@/lib/types'
@@ -15,39 +15,73 @@ import { BrandMark } from '@/components/auth/AuthPanel'
 /**
  * Public status view for a guest reservation request.
  *
- * Guest submissions have been retired in favour of the shared authenticated
- * reservation workflow, but links emailed before that change must keep working.
+ * Public guest reservation status is available with a reservation ID and email;
+ * Legacy signed links are still supported.
  * The page deliberately reuses the application's own design tokens and
  * components — it is not a second portal. It exposes only the minimal status
- * payload returned by the token-protected endpoint.
+ * payload returned by the representative-email-verified endpoint.
  */
 export function ReservationTrackPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const urlToken = searchParams.get('token') ?? ''
-  const [tokenInput, setTokenInput] = useState(urlToken)
-  const [activeToken, setActiveToken] = useState(urlToken)
+  const urlReference = searchParams.get('reservation_id') ?? ''
+  const [reservationInput, setReservationInput] = useState(urlReference)
+  const [emailInput, setEmailInput] = useState('')
+  const [trackingArgs, setTrackingArgs] = useState<{ token?: string; id?: string; email?: string } | null>(null)
+  const [approvalFile, setApprovalFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (urlToken) {
-      setTokenInput(urlToken)
-      setActiveToken(urlToken)
+      setTrackingArgs({ token: urlToken })
     }
   }, [urlToken])
 
+  useEffect(() => {
+    if (urlReference) setReservationInput(urlReference)
+  }, [urlReference])
+
+  const queryKey = ['reservation-tracking', trackingArgs] as const
   const trackQuery = useQuery({
-    queryKey: ['reservation-tracking', activeToken],
-    queryFn: () => endpoints.trackPublicReservation(activeToken),
-    enabled: Boolean(activeToken),
+    queryKey,
+    queryFn: () => trackingArgs?.token
+      ? endpoints.trackPublicReservation(trackingArgs.token)
+      : endpoints.trackReservationById(trackingArgs?.id ?? '', trackingArgs?.email ?? ''),
+    enabled: Boolean(trackingArgs?.token || (trackingArgs?.id && trackingArgs?.email)),
     retry: false,
     staleTime: 0,
   })
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const token = tokenInput.trim()
-    if (!token) return
-    setSearchParams({ token }, { replace: true })
-    setActiveToken(token)
+    const id = reservationInput.trim().toUpperCase()
+    const email = emailInput.trim()
+    if (!id || !email) return
+    setSearchParams({ reservation_id: id }, { replace: true })
+    setTrackingArgs({ id, email })
+  }
+
+  async function uploadApprovalLetter() {
+    const id = trackingArgs?.id ?? trackQuery.data?.reservation_id
+    const email = trackingArgs?.email ?? emailInput.trim()
+    if (!approvalFile || !id || !email) return
+    setUploading(true)
+    setUploadError('')
+    try {
+      const result = await endpoints.uploadPublicApprovalLetter(
+        id,
+        email,
+        approvalFile,
+      )
+      queryClient.setQueryData(queryKey, result)
+      setApprovalFile(null)
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'The document could not be uploaded. Try again.')
+    } finally {
+      setUploading(false)
+    }
   }
 
   return (
@@ -83,43 +117,51 @@ export function ReservationTrackPage() {
           Track a reservation request
         </h1>
         <p className="mt-3 max-w-2xl text-[15px] leading-7 text-body">
-          Use the private tracking link sent to your representative email.
-          Reservation references alone cannot open a request.
+          Enter your reservation ID to check the current status of your reservation request.
         </p>
 
         {!trackQuery.data && (
           <Card className="mt-7">
             <form onSubmit={submit}>
               <Field
-                label="Private tracking token"
-                htmlFor="tracking-token"
-                hint="If you followed the email link, this check runs automatically. Otherwise, paste the token from that link."
+                label="Reservation ID"
+                htmlFor="reservation-id"
               >
-                <div className="relative">
-                  <KeyRound
-                    className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted"
-                    aria-hidden
-                  />
-                  <Input
-                    id="tracking-token"
-                    value={tokenInput}
-                    onChange={(event) => setTokenInput(event.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                    required
-                    placeholder="Paste private token"
-                    className="pl-10 font-mono text-sm"
-                  />
-                </div>
+                <Input
+                  id="reservation-id"
+                  value={reservationInput}
+                  onChange={(event) => setReservationInput(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  placeholder="SAS-2026-00024"
+                  className="font-mono text-sm"
+                />
+              </Field>
+              <Field
+                className="mt-4"
+                label="Representative email"
+                htmlFor="tracking-email"
+                hint="Enter the contact email used for the reservation."
+              >
+                <Input
+                  id="tracking-email"
+                  type="email"
+                  autoComplete="email"
+                  value={emailInput}
+                  onChange={(event) => setEmailInput(event.target.value)}
+                  required
+                  placeholder="name@example.com"
+                />
               </Field>
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   type="submit"
                   loading={trackQuery.isFetching}
-                  disabled={!tokenInput.trim()}
+                  disabled={!reservationInput.trim() || !emailInput.trim()}
                   icon={<Search className="size-4" aria-hidden />}
                 >
-                  View status
+                  Track Reservation
                 </Button>
                 <Link
                   to="/login"
@@ -131,30 +173,81 @@ export function ReservationTrackPage() {
               {trackQuery.isError && (
                 <p role="alert" className="mt-4 flex items-start gap-2 text-sm text-status-rejected">
                   <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  That tracking link could not be verified. Check that you copied the complete
-                  token from the email.
+                  We couldn&apos;t find a reservation matching that ID and representative email. Check both values and try again.
                 </p>
               )}
             </form>
           </Card>
         )}
 
-        {trackQuery.isLoading && activeToken && (
+        {trackQuery.isLoading && trackingArgs && (
           <Card className="mt-7 flex items-center gap-3">
             <Spinner />
             <p className="text-sm text-body" role="status">
-              Verifying your private tracking link…
+              Checking reservation status…
             </p>
           </Card>
         )}
 
         {trackQuery.data && <TrackingResult reservation={trackQuery.data} />}
 
+        {trackQuery.data && trackQuery.data.status === 'PENDING' &&
+          trackQuery.data.approval_document_status === 'AWAITING' && (
+            <Card className="mt-5">
+              <h2 className="text-base font-semibold text-ink">Event Approval Letter</h2>
+              <p className="mt-1 text-sm leading-6 text-body">
+                Upload an image of your official event approval letter or authorization document. This document is required before your reservation can be approved.
+              </p>
+              {!trackingArgs?.email && (
+                <Field className="mt-4" label="Representative email" htmlFor="upload-contact-email">
+                  <Input
+                    id="upload-contact-email"
+                    type="email"
+                    autoComplete="email"
+                    value={emailInput}
+                    onChange={(event) => setEmailInput(event.target.value)}
+                    required
+                  />
+                </Field>
+              )}
+              <Field className="mt-4" label="Choose an image" htmlFor="later-approval-letter" hint="JPG, JPEG, PNG, or WEBP; maximum 5 MB.">
+                <Input
+                  id="later-approval-letter"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null
+                    const extension = file?.name.split('.').pop()?.toLowerCase()
+                    if (file && !['jpg', 'jpeg', 'png', 'webp'].includes(extension ?? '')) {
+                      setApprovalFile(null)
+                      setUploadError('Choose a JPG, JPEG, PNG, or WEBP image.')
+                    } else if (file && file.size > 5 * 1024 * 1024) {
+                      setApprovalFile(null)
+                      setUploadError('The image must be 5 MB or smaller.')
+                    } else {
+                      setApprovalFile(file)
+                      setUploadError('')
+                    }
+                  }}
+                />
+              </Field>
+              {uploadError && <p role="alert" className="mt-3 text-sm text-status-rejected">{uploadError}</p>}
+              <Button
+                className="mt-4"
+                disabled={!approvalFile || !(trackingArgs?.email || emailInput.trim())}
+                loading={uploading}
+                icon={<Upload className="size-4" aria-hidden />}
+                onClick={() => void uploadApprovalLetter()}
+              >
+                Submit approval letter
+              </Button>
+            </Card>
+          )}
+
         <div className="mt-6 flex gap-3 rounded-xl border border-line bg-surface p-4">
           <ShieldCheck className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden />
           <p className="text-xs leading-5 text-body">
-            This view shows only the reservation reference, organization, event, facility,
-            schedule, and status. It never shows contact details or internal SAS notes.
+            Reservation ID and representative email are checked before status is shown. This view omits contact details, internal notes, and documents.
           </p>
         </div>
       </main>
@@ -216,6 +309,7 @@ function TrackingResult({ reservation }: { reservation: PublicReservationTrackin
             label="Time"
             value={`${reservation.start_time}–${reservation.end_time}`}
           />
+          <TrackingDetail label="Approval letter" value={reservation.approval_document_status_label} />
         </dl>
 
         <div className="mt-7 rounded-xl border border-line p-4 sm:p-5">
@@ -271,8 +365,7 @@ function TrackingResult({ reservation }: { reservation: PublicReservationTrackin
 
       <div className="flex flex-col gap-3 border-t border-line p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <p className="text-xs text-muted">
-          Keep the tracking link private. Only share the reservation reference with SAS for
-          follow-up.
+          Share your Reservation ID and representative email only with the reservation contact.
         </p>
         <Link
           to="/login"

@@ -153,7 +153,7 @@ class BookingConfirmationEmailTests(TestCase):
     # 4-5: the email reflects the status that was actually saved
     # ------------------------------------------------------------------
 
-    def test_auto_approved_reservation_is_described_as_approved(self):
+    def test_admin_created_reservation_waits_for_letter_and_says_so_in_email(self):
         self.client.force_authenticate(self.admin)
         response = self._create(
             self._payload(
@@ -164,11 +164,10 @@ class BookingConfirmationEmailTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.content)
         reservation = Reservation.objects.get(pk=response.json()["id"])
-        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertEqual(reservation.status, Reservation.Status.PENDING)
+        self.assertEqual(reservation.approval_document_status, "AWAITING")
 
-        # An auto-approved reservation now sends TWO emails by design: the
-        # booking confirmation and the approval notification. This test is
-        # about the confirmation's wording, so select it by subject.
+        # The requester is told the letter must be uploaded before approval.
         confirmations = [
             message
             for message in mail.outbox
@@ -177,10 +176,9 @@ class BookingConfirmationEmailTests(TestCase):
         self.assertEqual(len(confirmations), 1)
         sent = confirmations[0]
         self.assertEqual(sent.to, [self.requester.email])
-        self.assertIn("Approved", sent.body)
-        self.assertIn("Your booking is confirmed", sent.body)
-        self.assertIn("BOOKING INSTRUCTIONS", sent.body)
-        self.assertNotIn("awaiting administrator approval", sent.body)
+        self.assertIn("awaiting administrator approval", sent.body)
+        self.assertIn("event approval letter", sent.body)
+        self.assertIn("Approval cannot proceed until you upload it", sent.body)
 
     # ------------------------------------------------------------------
     # 6: a failed creation never sends an email

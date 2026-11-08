@@ -70,3 +70,9 @@ class GoogleStartThrottle(AnonRateThrottle):
     scope = "google_start"
 
 
+class PublicReservationThrottle(AnonRateThrottle):
+    """Strict IP limit for reservation reference lookup and guest uploads."""
+
+    scope = "public_reservation"
+
+

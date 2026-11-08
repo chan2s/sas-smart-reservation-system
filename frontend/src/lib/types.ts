@@ -789,6 +789,8 @@ export interface ReservationSummary {
   /** Staff-only diagnostic: delivery state of the approval email. */
   approval_email_status: string
   approval_email_status_label: string
+  approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
+  approval_document_status_label: string
   created_at: string
 }
 
