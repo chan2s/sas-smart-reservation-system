@@ -1,26 +1,25 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import {
   ArrowRight,
-  ArrowUpRight,
   Building2,
   CalendarCheck,
   CalendarDays,
   Check,
   Clock,
   LayoutDashboard,
-  Menu,
   Package,
   ShieldCheck,
   Users,
-  X,
 } from 'lucide-react'
 import { useEquipment, useEquipmentStats, useFacilities } from '@/hooks/queries'
 import { getEquipmentImageUrl, facilityPrimaryImageUrl, cn } from '@/lib/utils'
 import { BrandMark } from '@/components/auth/AuthPanel'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
+import { LandingNav, MobileMenu } from '@/components/landing/LandingNav'
+import { Eyebrow, Reveal, prefersReducedMotion } from '@/components/landing/LandingMotion'
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -28,59 +27,8 @@ gsap.registerPlugin(ScrollTrigger)
    Motion helpers
    --------------------------------------------------------------------------- */
 
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  )
-}
-
 function prefersLightMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
-}
-
-function Reveal({
-  children,
-  className,
-  delay = 0,
-}: {
-  children: ReactNode
-  className?: string
-  delay?: number
-}) {
-  const ref = useRef<HTMLDivElement | null>(null)
-
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (!element) return
-    if (prefersReducedMotion()) return
-
-    const context = gsap.context(() => {
-      gsap.fromTo(
-        element,
-        { opacity: 0, y: 32 },
-        {
-          opacity: 1,
-          y: 0,
-          duration: 0.8,
-          delay,
-          ease: 'power3.out',
-          scrollTrigger: {
-            trigger: element,
-            start: 'top 85%',
-            once: true,
-          },
-        },
-      )
-    }, element)
-    return () => context.revert()
-  }, [delay])
-
-  return (
-    <div ref={ref} className={className}>
-      {children}
-    </div>
-  )
 }
 
 function StaggeredHeading({
@@ -136,222 +84,6 @@ function StaggeredHeading({
   )
 }
 
-/* ---------------------------------------------------------------------------
-   Small editorial primitives
-   --------------------------------------------------------------------------- */
-
-function Eyebrow({
-  children,
-  onDark = false,
-  centered = false,
-}: {
-  children: ReactNode
-  onDark?: boolean
-  centered?: boolean
-}) {
-  return (
-    <p
-      className={cn(
-        'flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.2em]',
-        onDark ? 'text-brand-faint' : 'text-brand',
-        centered && 'justify-center',
-      )}
-    >
-      <span className="h-px w-8 bg-brand" aria-hidden />
-      {children}
-    </p>
-  )
-}
-
-/* ---------------------------------------------------------------------------
-   Navigation
-   --------------------------------------------------------------------------- */
-
-const NAV_LINKS = [
-  { label: 'Overview', id: 'overview' },
-  { label: 'Facilities', id: 'facilities' },
-  { label: 'Equipment', id: 'equipment' },
-  { label: 'About', id: 'about' },
-]
-
-function LandingNav({
-  activeSection,
-  scrolled,
-  onOpenMenu,
-}: {
-  activeSection: string
-  scrolled: boolean
-  onOpenMenu: () => void
-}) {
-  return (
-    <header className="fixed inset-x-0 top-0 z-40">
-      <div
-        className={cn(
-          'mx-auto max-w-[1400px] px-4 transition-all duration-300 ease-out sm:px-6',
-          scrolled ? 'pt-2' : 'pt-4',
-        )}
-      >
-        <nav
-          aria-label="Primary"
-          className={cn(
-            'flex items-center justify-between gap-3 rounded-2xl border px-4 backdrop-blur-md transition-all duration-300 ease-out sm:px-6',
-            scrolled
-              ? 'h-16 border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] shadow-float backdrop-blur-lg'
-              : 'h-[72px] bg-[var(--nav-background-applied)]',
-          )}
-        >
-          <Link
-            to="/"
-            className="rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-faint"
-            aria-label="SAS Reserve — back to top"
-          >
-            <BrandMark onDark />
-          </Link>
-
-          <div className="hidden items-center gap-8 lg:flex">
-            {NAV_LINKS.map((link) => (
-              <a
-                key={link.id}
-                href={`#${link.id}`}
-                aria-current={activeSection === link.id ? 'true' : undefined}
-                className={cn(
-                  'relative flex flex-col items-center gap-1 text-sm font-medium transition-colors',
-                  activeSection === link.id ? 'text-[var(--nav-foreground)]' : 'text-[var(--nav-foreground-muted)] hover:text-[var(--nav-foreground)]',
-                )}
-              >
-                {link.label}
-                <span
-                  aria-hidden
-                  className={cn(
-                    'h-0.5 rounded-full bg-[var(--nav-accent)] transition-all duration-300',
-                    activeSection === link.id ? 'w-5 opacity-100' : 'w-0 opacity-0',
-                  )}
-                />
-              </a>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <Link
-              to="/login"
-              className="hidden rounded-xl px-3.5 py-2 text-sm font-medium text-[var(--nav-foreground-muted)] transition-colors hover:bg-white/10 hover:text-[var(--nav-foreground)] sm:inline-flex"
-            >
-              Log In
-            </Link>
-            {/* Hidden on small phones — the mobile menu carries the same link,
-                and the pill would force the brand mark to wrap at 320px. */}
-            <Link
-              to="/register"
-              className="hidden h-10 items-center gap-1.5 rounded-full bg-[var(--nav-button-background)] px-4 text-sm font-semibold text-[var(--nav-button-foreground)] shadow-sm transition-colors hover:bg-brand-dark sm:inline-flex"
-            >
-              Create Account
-              <ArrowRight className="size-3.5" aria-hidden />
-            </Link>
-            <button
-              type="button"
-              onClick={onOpenMenu}
-              aria-label="Open menu"
-              aria-expanded="false"
-              className="ml-1 inline-flex size-9 items-center justify-center rounded-xl text-[var(--nav-foreground)] transition-colors hover:bg-white/10 lg:hidden"
-            >
-              <Menu className="size-5" aria-hidden />
-            </button>
-          </div>
-        </nav>
-      </div>
-    </header>
-  )
-}
-
-/* ---------------------------------------------------------------------------
-   Mobile menu
-   --------------------------------------------------------------------------- */
-
-function MobileMenu({
-  open,
-  onClose,
-}: {
-  open: boolean
-  onClose: () => void
-}) {
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = ''
-    }
-  }, [open, onClose])
-
-  if (!open) return null
-
-  return (
-    <div
-      className="fixed inset-0 z-50 lg:hidden"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Menu"
-    >
-      <div
-        className="absolute inset-0 bg-[var(--nav-background)]/60 backdrop-blur-sm"
-        onClick={onClose}
-        aria-hidden
-      />
-      <div className="absolute inset-x-3 top-3 rounded-3xl border border-[var(--nav-border)] bg-[var(--nav-background)] p-6 shadow-float">
-        <div className="flex items-center justify-between">
-          <BrandMark onDark />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close menu"
-            className="inline-flex size-9 items-center justify-center rounded-xl text-[var(--nav-foreground)] transition-colors hover:bg-[var(--nav-background)]/10"
-          >
-            <X className="size-5" aria-hidden />
-          </button>
-        </div>
-
-        <nav aria-label="Mobile" className="mt-8">
-          <ul>
-            {NAV_LINKS.map((link) => (
-              <li key={link.id}>
-                <a
-                  href={`#${link.id}`}
-                  onClick={onClose}
-                  className="flex items-center justify-between border-t border-[var(--nav-border)] py-4 text-2xl font-semibold tracking-tight text-[var(--nav-foreground)] transition-colors hover:text-[var(--nav-foreground)]"
-                >
-                  {link.label}
-                  <ArrowUpRight className="size-5 text-[var(--nav-foreground)]/40" aria-hidden />
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        <div className="mt-8 flex flex-col gap-3">
-          <Link
-            to="/login"
-            onClick={onClose}
-            className="inline-flex h-11 items-center justify-center rounded-full border border-[var(--nav-border)] text-sm font-semibold text-[var(--nav-foreground)] transition-colors hover:bg-[var(--nav-background)]/10"
-          >
-            Log In
-          </Link>
-          <Link
-            to="/register"
-            onClick={onClose}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[var(--nav-accent)] text-sm font-semibold text-[var(--nav-button-foreground)] transition-colors hover:bg-brand-dark"
-          >
-            Create Account
-            <ArrowRight className="size-4" aria-hidden />
-          </Link>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /* ---------------------------------------------------------------------------
    Content
@@ -362,9 +94,9 @@ const HERO_BENEFITS = ['Facility reservations', 'Equipment management', 'Real-ti
 const STEPS = [
   {
     number: '01',
-    title: 'Create an account',
+    title: 'Choose your organization',
     description:
-      'Sign up with your institutional details — every reservation starts with a secure SAS RESERVE account.',
+      'Select your organization type, then complete a reservation request without an account.',
   },
   {
     number: '02',
@@ -391,7 +123,7 @@ const STEPS = [
    --------------------------------------------------------------------------- */
 
 export function LandingPage() {
-  const { data: facilities, isLoading: facilitiesLoading } = useFacilities()
+  const { data: facilities, isLoading: facilitiesLoading } = useFacilities(undefined, true)
   const { data: equipment } = useEquipment()
   const { data: stats } = useEquipmentStats()
 
@@ -655,10 +387,10 @@ export function LandingPage() {
               style={{ animation: 'hero-rise 900ms var(--ease-out-soft) both 460ms' }}
             >
               <Link
-                to="/register"
+                to="/reserve"
                 className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-brand px-8 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-brand-dark hover:shadow-pop"
               >
-                Create an Account
+                Create Reservation
                 <ArrowRight className="size-4" aria-hidden />
               </Link>
               <a
@@ -736,7 +468,7 @@ export function LandingPage() {
                 icon: <ShieldCheck className="size-5" aria-hidden />,
                 title: 'Account-based access',
                 description:
-                  'Secure sign-in — every reservation is tied to an account.',
+                  'Open access — submit a request without creating an account.',
               },
             ].map((item) => (
               <Reveal key={item.title} delay={0.1}>
@@ -1158,6 +890,18 @@ export function LandingPage() {
                 ))}
               </div>
             </Reveal>
+            <Reveal delay={0.24}>
+              <Link
+                to="/about"
+                className="group mt-8 inline-flex items-center gap-2 text-sm font-semibold text-brand transition-colors hover:text-brand-dark"
+              >
+                More about SAS RESERVE
+                <ArrowRight
+                  className="size-4 transition-transform duration-300 group-hover:translate-x-0.5"
+                  aria-hidden
+                />
+              </Link>
+            </Reveal>
           </div>
         </div>
       </section>
@@ -1184,26 +928,26 @@ export function LandingPage() {
               Ready to plan your next event?
             </h2>
             <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-white/70">
-              Create an account and start managing your campus reservations in one place.
+              Choose an organization type, select a facility, and submit your request for SAS review.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Link
-                to="/register"
+                to="/reserve"
                 className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-brand px-8 text-[15px] font-semibold text-white shadow-sm transition-all duration-200 hover:bg-brand-dark hover:shadow-pop sm:w-auto"
               >
-                Create an Account
+                Create Reservation
                 <ArrowRight className="size-4" aria-hidden />
               </Link>
               <Link
                 to="/login"
                 className="inline-flex h-12 w-full items-center justify-center rounded-full border border-white/25 px-8 text-[15px] font-semibold text-white transition-all duration-200 hover:bg-white/10 sm:w-auto"
               >
-                Log In
+                Staff/Admin Login
               </Link>
             </div>
             <p className="mt-7 flex items-center justify-center gap-1.5 text-xs text-white/50">
               <ShieldCheck className="size-3.5 text-brand-faint" aria-hidden />
-              Reservations require an account — there is no guest option.
+              Internal and external organizations reserve through this same interface.
             </p>
           </Reveal>
         </div>
@@ -1223,7 +967,7 @@ export function LandingPage() {
               </p>
               <div className="mt-6 flex items-center gap-1.5 text-xs text-muted">
                 <ShieldCheck className="size-3.5 text-status-available" aria-hidden />
-                Account required for reservations
+                One reservation system for campus and external organizations
               </div>
             </div>
 
@@ -1248,9 +992,9 @@ export function LandingPage() {
                   </a>
                 </li>
                 <li>
-                  <a href="#about" className="text-body transition-colors hover:text-ink">
-                    About
-                  </a>
+                  <Link to="/about" className="text-body transition-colors hover:text-ink">
+                    About Us
+                  </Link>
                 </li>
               </ul>
             </div>
@@ -1262,12 +1006,12 @@ export function LandingPage() {
               <ul className="mt-5 space-y-3 text-sm">
                 <li>
                   <Link to="/login" className="text-body transition-colors hover:text-ink">
-                    Log In
+                    Staff/Admin Login
                   </Link>
                 </li>
                 <li>
-                  <Link to="/register" className="text-body transition-colors hover:text-ink">
-                    Create Account
+                  <Link to="/reserve" className="text-body transition-colors hover:text-ink">
+                    Create Reservation
                   </Link>
                 </li>
               </ul>

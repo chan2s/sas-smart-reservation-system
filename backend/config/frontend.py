@@ -141,17 +141,16 @@ def resolve_frontend_origin(request, state_origin: str | None = None) -> str:
 
 
 def _oauth_callback_path() -> str:
-    """URL path of accounts:google-callback, resolved once at import time.
+    """URL path of accounts:google-callback.
 
     The OAuth callback always lives on the Django backend — only the origin
-    varies per environment, never the path.
+    varies per environment, never the path. Resolve it when the OAuth flow
+    needs it, rather than while this module is imported: URL configuration
+    imports this module while Django is still building its URL resolver.
     """
     from django.urls import reverse
 
     return reverse("accounts:google-callback")
-
-
-_OAUTH_CALLBACK_PATH = _oauth_callback_path()
 
 
 def oauth_redirect_uri(request, state_origin: str | None = None) -> str:
@@ -185,4 +184,4 @@ def oauth_redirect_uri(request, state_origin: str | None = None) -> str:
     # No pin: use the (ALLOWED_HOSTS-checked) request host. Google redirects
     # the browser to this same backend URL, so start and callback always
     # agree byte-for-byte.
-    return request.build_absolute_uri(_OAUTH_CALLBACK_PATH)
+    return request.build_absolute_uri(_oauth_callback_path())

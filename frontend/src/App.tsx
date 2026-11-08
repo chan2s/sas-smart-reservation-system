@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import { PublicShell } from '@/components/layout/PublicShell'
 import { OfflineBanner } from '@/components/offline/OfflineBanner'
 import { PwaNotices } from '@/components/pwa/PwaNotices'
 import { ViewOnlyAccessDenied } from '@/components/auth/ViewOnlyNotice'
@@ -10,8 +11,14 @@ import { Spinner } from '@/components/ui/Misc'
 const LandingPage = lazy(() =>
   import('@/pages/public/LandingPage').then((module) => ({ default: module.LandingPage })),
 )
-const RegisterPage = lazy(() =>
-  import('@/pages/public/RegisterPage').then((module) => ({ default: module.RegisterPage })),
+const AboutPage = lazy(() =>
+  import('@/pages/public/AboutPage').then((module) => ({ default: module.AboutPage })),
+)
+const ReservationTrackPage = lazy(() =>
+  import('@/pages/public/ReservationTrackPage').then((module) => ({ default: module.ReservationTrackPage })),
+)
+const OrganizationSelectionPage = lazy(() =>
+  import('@/pages/public/OrganizationSelectionPage').then((module) => ({ default: module.OrganizationSelectionPage })),
 )
 const NotFoundPage = lazy(() =>
   import('@/pages/public/NotFoundPage').then((module) => ({ default: module.NotFoundPage })),
@@ -108,6 +115,20 @@ const AffiliationPage = lazy(() =>
 const OfflinePage = lazy(() =>
   import('@/pages/offline/OfflinePage').then((module) => ({ default: module.OfflinePage })),
 )
+
+/** Preserve a legacy tracking token while moving the page to its shared URL. */
+function LegacyTrackingRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={`/track-reservation${search}`} replace />
+}
+
+function PublicReservationRoute() {
+  const { organizationType } = useParams()
+  if (organizationType !== 'internal' && organizationType !== 'external') {
+    return <Navigate to="/reserve" replace />
+  }
+  return <ReservationWizardPage />
+}
 
 function PageLoader() {
   return (
@@ -230,8 +251,31 @@ export default function App() {
       <PwaNotices />
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/reserve" element={<OrganizationSelectionPage />} />
+        <Route
+          path="/reserve/:organizationType"
+          element={
+            <PublicShell>
+              <PublicReservationRoute />
+            </PublicShell>
+          }
+        />
+        {/*
+         * One application for internal and external organizations. Legacy
+         * external-portal URLs (bookmarks, already-sent emails) redirect into
+         * the shared authenticated pages instead of a second interface.
+         */}
+        <Route path="/external-reservation" element={<Navigate to="/reserve" replace />} />
+        <Route path="/external-reservation/facilities" element={<Navigate to="/reserve" replace />} />
+        <Route path="/external-reservation/guidelines" element={<Navigate to="/reserve" replace />} />
+        <Route path="/external-reservation/request" element={<Navigate to="/reserve/external" replace />} />
+        <Route path="/external-reservation/confirmation" element={<Navigate to="/reservations" replace />} />
+        <Route path="/external-reservation/track" element={<LegacyTrackingRedirect />} />
+        <Route path="/external-reservation/*" element={<Navigate to="/" replace />} />
+        <Route path="/track-reservation" element={<ReservationTrackPage />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/register" element={<Navigate to="/login" replace />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<DashboardPage />} />

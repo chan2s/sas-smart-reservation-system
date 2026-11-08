@@ -28,10 +28,10 @@ import type {
 // Facilities
 // ---------------------------------------------------------------------------
 
-export function useFacilities(params?: Record<string, string>) {
+export function useFacilities(params?: Record<string, string>, publicReservation = false) {
   return useQuery({
-    queryKey: ['facilities', params],
-    queryFn: () => endpoints.facilities(params),
+    queryKey: ['facilities', params, publicReservation],
+    queryFn: () => publicReservation ? endpoints.publicReservationFacilities() : endpoints.facilities(params),
   })
 }
 
@@ -144,10 +144,16 @@ export function useSaveFacilityGallery() {
  * amenities (``built_in_amenities``), which the reservation wizard uses to
  * know which equipment the facility already provides.
  */
-export function useFacilityResources(id: number | null, params?: Record<string, string>) {
+export function useFacilityResources(
+  id: number | null,
+  params?: Record<string, string>,
+  publicReservation = false,
+) {
   return useQuery({
-    queryKey: ['facility-resources', id, params],
-    queryFn: () => endpoints.facilityResources(id as number, params),
+    queryKey: ['facility-resources', id, params, publicReservation],
+    queryFn: () => publicReservation
+      ? endpoints.publicReservationResources(id as number, params)
+      : endpoints.facilityResources(id as number, params),
     enabled: id != null,
   })
 }
@@ -484,10 +490,12 @@ export function useCampusUser(id: number | null) {
   })
 }
 
-export function useCreateReservation() {
+export function useCreateReservation(publicReservation = false) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (payload: CreateReservationPayload) => endpoints.createReservation(payload),
+    mutationFn: (payload: CreateReservationPayload) => publicReservation
+      ? endpoints.submitPublicReservation(payload)
+      : endpoints.createReservation(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['reservations'] })
       void queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
@@ -560,7 +568,7 @@ export function useReservationAction(id: number | null) {
 // Availability & recommendations
 // ---------------------------------------------------------------------------
 
-export function useAvailabilityCheck() {
+export function useAvailabilityCheck(publicReservation = false) {
   return useMutation({
     mutationFn: (payload: {
       facility_id: number
@@ -569,11 +577,11 @@ export function useAvailabilityCheck() {
       end_time: string
       items: { equipment_id: number; quantity: number; operator?: boolean }[]
       requester_type?: RequesterType
-    }) => endpoints.checkAvailability(payload),
+    }) => endpoints.checkAvailability(payload, publicReservation),
   })
 }
 
-export function useRecommendResources() {
+export function useRecommendResources(publicReservation = false) {
   return useMutation({
     mutationFn: (payload: {
       event_type: string
@@ -585,7 +593,7 @@ export function useRecommendResources() {
       start_time?: string
       end_time?: string
       requester_type?: RequesterType
-    }) => endpoints.recommendResources(payload),
+    }) => endpoints.recommendResources(payload, publicReservation),
   })
 }
 

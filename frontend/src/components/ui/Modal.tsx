@@ -11,6 +11,8 @@ export function Modal({
   children,
   footer,
   size = 'md',
+  dismissible = true,
+  inertBackground = false,
 }: {
   open: boolean
   onClose: () => void
@@ -19,6 +21,8 @@ export function Modal({
   children: ReactNode
   footer?: ReactNode
   size?: 'sm' | 'md' | 'lg'
+  dismissible?: boolean
+  inertBackground?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -35,8 +39,17 @@ export function Modal({
   useEffect(() => {
     if (!open) return
     const panel = panelRef.current
+    const appRoot = inertBackground ? document.getElementById('root') : null
+    const previousInert = appRoot?.inert ?? false
+    const previousAriaHidden = appRoot?.getAttribute('aria-hidden') ?? null
+    const previousOverflow = document.body.style.overflow
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
+
+    if (appRoot) {
+      appRoot.inert = true
+      appRoot.setAttribute('aria-hidden', 'true')
+    }
 
     const getFocusables = () =>
       panel
@@ -49,7 +62,11 @@ export function Modal({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onCloseRef.current()
+        if (dismissible) onCloseRef.current()
+        else {
+          event.preventDefault()
+          event.stopPropagation()
+        }
         return
       }
       if (event.key !== 'Tab') return
@@ -75,10 +92,15 @@ export function Modal({
     document.body.style.overflow = 'hidden'
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = ''
+      document.body.style.overflow = previousOverflow
+      if (appRoot) {
+        appRoot.inert = previousInert
+        if (previousAriaHidden === null) appRoot.removeAttribute('aria-hidden')
+        else appRoot.setAttribute('aria-hidden', previousAriaHidden)
+      }
       previouslyFocused?.focus()
     }
-  }, [open])
+  }, [open, dismissible, inertBackground])
 
   if (!open) return null
 
@@ -91,7 +113,7 @@ export function Modal({
     >
       <div
         className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]"
-        onClick={onClose}
+        onClick={dismissible ? onClose : undefined}
         aria-hidden
       />
       <div
@@ -110,14 +132,16 @@ export function Modal({
             <h2 className="text-lg font-semibold text-ink">{title}</h2>
             {description && <p className="mt-0.5 text-sm text-body">{description}</p>}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-muted transition-colors hover:bg-soft hover:text-ink"
-            aria-label="Close dialog"
-          >
-            <X className="size-5" />
-          </button>
+          {dismissible && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-1.5 text-muted transition-colors hover:bg-soft hover:text-ink"
+              aria-label="Close dialog"
+            >
+              <X className="size-5" />
+            </button>
+          )}
         </div>
         <div className="px-6 py-5">{children}</div>
         {footer && (

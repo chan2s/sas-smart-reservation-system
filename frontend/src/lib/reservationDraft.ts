@@ -255,10 +255,11 @@ export function draftForReservationEdit(
 // ---------------------------------------------------------------------------
 
 const DRAFT_KEY = 'sas:reservation-wizard-draft:v1'
+const PUBLIC_DRAFT_KEY = 'sas:public-reservation-wizard-draft:v1'
 
-export function loadDraft(): WizardDraft | null {
+export function loadDraft(publicFlow = false): WizardDraft | null {
   try {
-    const raw = window.sessionStorage.getItem(DRAFT_KEY)
+    const raw = window.sessionStorage.getItem(publicFlow ? PUBLIC_DRAFT_KEY : DRAFT_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<WizardDraft>
     // Merge over a fresh draft so a draft written by an older build (or a
@@ -278,17 +279,17 @@ export function loadDraft(): WizardDraft | null {
   }
 }
 
-export function saveDraft(draft: WizardDraft): void {
+export function saveDraft(draft: WizardDraft, publicFlow = false): void {
   try {
-    window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+    window.sessionStorage.setItem(publicFlow ? PUBLIC_DRAFT_KEY : DRAFT_KEY, JSON.stringify(draft))
   } catch {
     // A full or disabled sessionStorage must never break the wizard.
   }
 }
 
-export function clearDraft(): void {
+export function clearDraft(publicFlow = false): void {
   try {
-    window.sessionStorage.removeItem(DRAFT_KEY)
+    window.sessionStorage.removeItem(publicFlow ? PUBLIC_DRAFT_KEY : DRAFT_KEY)
   } catch {
     // ignore
   }
@@ -435,6 +436,8 @@ export interface SubmitReservationContext {
   items: SubmitItems[]
   /** Organization the reservation is for — derived from the account, never typed. */
   organization: string
+  /** Public requester email for account-free campus submissions. */
+  contactEmail?: string
   /** Staff-only: create on behalf of another campus user. */
   requesterId?: number
   /** Staff-only: external requester block (replaces the campus fields). */
@@ -452,7 +455,7 @@ export interface SubmitReservationContext {
  */
 export function toCreateReservationPayload(
   draft: WizardDraft,
-  { items, organization, requesterId, external }: SubmitReservationContext,
+  { items, organization, requesterId, external, contactEmail }: SubmitReservationContext,
 ): CreateReservationPayload {
   const base = {
     facility_id: draft.facilityId as number,
@@ -485,7 +488,7 @@ export function toCreateReservationPayload(
       organization_type: external.organization_type,
       contact_person: external.contact_person,
       contact_email: external.contact_email,
-      contact_phone: null,
+      contact_phone: normalizePhone(draft.contact.phone) || null,
       requester_type: 'EXTERNAL',
       ...rebook,
     }
@@ -495,7 +498,7 @@ export function toCreateReservationPayload(
     ...base,
     organization,
     contact_person: draft.contact.name.trim(),
-    contact_email: undefined,
+    contact_email: contactEmail,
     contact_phone: normalizePhone(draft.contact.phone) || null,
     ...(requesterId ? { requester_id: requesterId } : {}),
     ...rebook,

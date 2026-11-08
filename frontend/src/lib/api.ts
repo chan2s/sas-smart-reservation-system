@@ -35,7 +35,6 @@ import type {
   NoShowAlertsResponse,
   Notification,
   Organization,
-  OrganizationType,
   Paginated,
   PricingQuote,
   PushDevice,
@@ -572,28 +571,44 @@ export interface ResubmitReservationPayload {
   items: { equipment_id: number; quantity: number; operator?: boolean }[]
 }
 
-export interface GuestReservationPayload {
-  facility_id: number
+export interface PublicReservationTracking {
+  reservation_id: string
+  status: string
+  status_label: string
+  event_name: string
+  organization: string
+  facility: string
   date: string
   start_time: string
   end_time: string
+  created_at: string
+}
+
+export interface PublicReservationSubmission {
+  id: number
+  reservation_id: string
+  status: ReservationStatus
   event_name: string
-  event_type: EventType
   organization: string
-  organization_type: OrganizationType
-  purpose: string
-  description: string
-  expected_participants: number
-  contact_person: string
-  contact_email: string
-  special_requirements: string
-  items: { equipment_id: number; quantity: number; operator?: boolean }[]
+  facility: string
+  date: string
+  start_time: string
+  end_time: string
+  requester: string
 }
 
 export const endpoints = {
   facilities: (params?: Record<string, string>) => {
     const qs = new URLSearchParams(params).toString()
     return api.get<Facility[]>(`/api/facilities/${qs ? `?${qs}` : ''}`)
+  },
+  publicReservationFacilities: () =>
+    api.get<Facility[]>('/api/public/reservations/catalog/'),
+  publicReservationResources: (id: number, params?: Record<string, string>) => {
+    const qs = new URLSearchParams(params).toString()
+    return api.get<{ facility_id: number; resources: FacilityResource[] }>(
+      `/api/public/reservations/facilities/${id}/resources/${qs ? `?${qs}` : ''}`,
+    )
   },
   facility: (id: number) => api.get<Facility>(`/api/facilities/${id}/`),
   // --- Admin facility management (SAS staff only) --------------------
@@ -638,6 +653,10 @@ export const endpoints = {
       `/api/facilities/${id}/resources/${qs ? `?${qs}` : ''}`,
     )
   },
+  trackPublicReservation: (token: string) =>
+    api.post<PublicReservationTracking>('/api/public/reservations/track/', { token }),
+  submitPublicReservation: (payload: CreateReservationPayload) =>
+    api.post<PublicReservationSubmission>('/api/public/reservations/submit/', payload),
   /**
    * Admin configuration of facility <-> resource assignments (staff only).
    * The list is filterable by facility; `include_inactive=true` also returns
@@ -775,7 +794,10 @@ export const endpoints = {
      * itself. Honoured server-side for the owner or staff only.
      */
     exclude_id?: number
-  }) => api.post<AvailabilityCheck>('/api/availability/check/', payload),
+  }, publicFlow = false) => api.post<AvailabilityCheck>(
+    publicFlow ? '/api/public/reservations/availability/' : '/api/availability/check/',
+    payload,
+  ),
   recommendResources: (payload: {
     event_type: string
     expected_participants: number
@@ -787,9 +809,9 @@ export const endpoints = {
     end_time?: string
     /** Staff only: EXTERNAL enables the external-organization fee estimate. */
     requester_type?: RequesterType
-  }) =>
+  }, publicFlow = false) =>
     api.post<{ recommendations: Recommendation[]; pricing: PricingQuote }>(
-      '/api/availability/resources/',
+      publicFlow ? '/api/public/reservations/recommendations/' : '/api/availability/resources/',
       payload,
     ),
 

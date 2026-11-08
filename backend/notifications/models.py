@@ -34,6 +34,12 @@ class PushSubscription(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="push_subscriptions"
     )
     device_name = models.CharField(max_length=120, blank=True)
+    #: Origin of the app this device subscribed from (``http://localhost:5173``
+    #: in development, the deployed origin in production). The browser shows
+    #: the notification on behalf of the origin whose service worker delivered
+    #: it, so a device registered on a different origin must not receive this
+    #: deployment's push (see ``notifications.services.push_origin_allowed``).
+    app_origin = models.CharField(max_length=255, blank=True, default="")
     endpoint = models.URLField(max_length=2048, unique=True)
     p256dh = models.CharField(max_length=255)
     auth = models.CharField(max_length=255)

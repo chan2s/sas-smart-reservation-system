@@ -55,7 +55,7 @@ const ORGANIZATION_TYPES: { value: ExternalOrganizationType; label: string }[] =
 
 interface OrganizationForm {
   organization_name: string
-  organization_type: ExternalOrganizationType
+  organization_type: ExternalOrganizationType | ''
   contact_person: string
   contact_email: string
   contact_number: string
@@ -65,7 +65,7 @@ interface OrganizationForm {
 
 const EMPTY_ORGANIZATION: OrganizationForm = {
   organization_name: '',
-  organization_type: 'NGO',
+  organization_type: '',
   contact_person: '',
   contact_email: '',
   contact_number: '',
@@ -91,7 +91,7 @@ export function AffiliationPage() {
 
   const { data: internalOrganizations } = useInternalOrganizations()
 
-  const [choice, setChoice] = useState<SelectableAffiliation>('NORSU_FACULTY_STAFF')
+  const [choice, setChoice] = useState<SelectableAffiliation | ''>('')
   const [internalOrganizationId, setInternalOrganizationId] = useState<number | ''>('')
   const [organization, setOrganization] = useState<OrganizationForm>(EMPTY_ORGANIZATION)
   const [submitting, setSubmitting] = useState(false)
@@ -131,10 +131,12 @@ export function AffiliationPage() {
   }, [data])
 
   const isExternal = choice === 'EXTERNAL_ORGANIZATION'
+  const isInternal = choice === 'NORSU_FACULTY_STAFF'
 
   const missing = useMemo(() => {
     if (!isExternal || lockedToOrganization) return []
     const gaps: string[] = []
+    if (!organization.organization_type) gaps.push('Organization type')
     if (!organization.organization_name.trim()) gaps.push('Organization name')
     if (!organization.contact_person.trim()) gaps.push('Representative / contact person')
     if (!organization.contact_email.trim()) gaps.push('Organization email')
@@ -144,6 +146,10 @@ export function AffiliationPage() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     setFormError('')
+    if (!choice) {
+      setFormError('Please choose an affiliation.')
+      return
+    }
     if (missing.length) {
       setFormError(`Please fill in: ${missing.join(', ')}.`)
       return
@@ -268,7 +274,7 @@ export function AffiliationPage() {
                 </p>
               )}
 
-              {!isExternal && (
+              {isInternal && (
                 <div className="mt-5">
                   <Field
                     label="Organization / College"
@@ -325,10 +331,12 @@ export function AffiliationPage() {
                         onChange={(event) =>
                           setOrganization((current) => ({
                             ...current,
-                            organization_type: event.target.value as ExternalOrganizationType,
+                            organization_type: event.target.value as ExternalOrganizationType | '',
                           }))
                         }
+                        required
                       >
+                        <option value="">Select organization type…</option>
                         {ORGANIZATION_TYPES.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}

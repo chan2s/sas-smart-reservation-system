@@ -1,25 +1,3 @@
-# ---------------------------------------------------------------------------
-# SAS RESERVE — local development stack
-#
-# Scope: LOCAL DEVELOPMENT ONLY.
-#
-#   * No production artifacts are built (no `vite build`, no `collectstatic`).
-#   * No migrations, seeding, or admin creation run automatically. Run them
-#     yourself, explicitly, when you want them.
-#   * Nothing here deletes data. `backend/db.sqlite3`, `backend/media/` and
-#     `backend/staticfiles/` are bind-mounted from the host, so they are the
-#     very same files your non-Docker workflow uses and they survive
-#     `docker compose down`, rebuilds, and `docker compose up` again.
-#   * Secrets are never baked into images: `backend/.env` is git-/docker-ignored
-#     and read at runtime from the bind mount.
-#
-# Container commands (dev server + autoreload/HMR) live in each Dockerfile's
-# CMD so there is a single source of truth:
-#   backend/Dockerfile  -> python manage.py runserver 0.0.0.0:8000  (autoreload)
-#   frontend/Dockerfile -> npm run dev -- --host 0.0.0.0            (HMR)
-#
-# Production deployment is deliberately out of scope for this file.
-# ---------------------------------------------------------------------------
 
 name: sas-reserve
 
@@ -27,31 +5,17 @@ services:
   backend:
     build:
       context: ./backend
-    # Django loads backend/.env itself (python-dotenv with override=True), so
-    # .env stays the single source of truth. env_file additionally exposes the
-    # same variables to the process environment for other tooling (e.g. a
-    # one-off `docker compose exec backend ...` shell).
     env_file:
       - ./backend/.env
     environment:
-      # backend/.env points DB_HOST at 127.0.0.1 because that is where the host
-      # workflow finds PostgreSQL. Inside this container 127.0.0.1 is the
-      # container itself, so Django booted, failed every database query, never
-      # bound port 8000 and left the frontend's /api proxy answering 502.
-      # Only the container is redirected; `python manage.py runserver` on the
-      # host keeps using 127.0.0.1 from .env.
+
       DB_HOST: ${DEV_DB_HOST:-host.docker.internal}
     extra_hosts:
-      # Docker Desktop defines this automatically; Linux engines do not.
       - "host.docker.internal:host-gateway"
     volumes:
-      # The whole backend directory is bind-mounted: code edits reload the dev
-      # server, and db.sqlite3 / media/ / staticfiles/ stay as host files.
       - ./backend:/app
     ports:
       - "8000:8000"
-    # /api/health/ is an unauthenticated, database-free probe, so a healthy
-    # backend never depends on the database being warm.
     healthcheck:
       test:
         - CMD
@@ -68,25 +32,16 @@ services:
     build:
       context: ./frontend
     environment:
-      # Vite proxies /api and /media to the Compose service name (see
-      # vite.config.ts). Outside Docker the default 127.0.0.1:8000 is used, so
-      # plain `npm run dev` on the host is unaffected.
+
       DEV_PROXY_TARGET: http://backend:8000
-      # Editing files through a Windows bind mount does not reliably produce
-      # inotify events inside the container, so Vite watches by polling here.
-      # Override per run, e.g. `DEV_USE_POLLING=false docker compose up -d frontend`.
+
       DEV_USE_POLLING: "${DEV_USE_POLLING:-true}"
     volumes:
-      # Source comes from the host (so HMR sees your edits)...
       - ./frontend:/app
-      # ...but node_modules must stay Linux-native: a named volume is created
-      # once from the image's installed dependencies and then hides the host's
-      # Windows-built copy, keeping platform-specific binaries out of the way.
+
       - frontend_node_modules:/app/node_modules
     ports:
       - "5173:5173"
-    # `depends_on` alone only orders container start; the health check condition
-    # waits until Django actually answers requests.
     depends_on:
       backend:
         condition: service_healthy

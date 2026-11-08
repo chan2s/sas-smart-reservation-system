@@ -89,6 +89,7 @@ export interface UseSuggestedResourcesArgs {
   /** Free-text notes; sent to the recommender as extra context only. */
   staffNotes: string
   requesterType: RequesterType
+  publicReservation?: boolean
 }
 
 /** First unmatched rule keyword wins; a resource is only suggested once. */
@@ -145,8 +146,9 @@ export function useSuggestedResources({
   purpose,
   staffNotes,
   requesterType,
+  publicReservation = false,
 }: UseSuggestedResourcesArgs): SuggestedResourcesState {
-  const recommendResources = useRecommendResources()
+  const recommendResources = useRecommendResources(publicReservation)
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null)
   const [fetchedFor, setFetchedFor] = useState<string | null>(null)
   // Stable handle to the latest request so a superseded response is discarded.

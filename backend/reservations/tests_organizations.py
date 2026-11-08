@@ -162,6 +162,29 @@ class ExternalOrganizationReservationTests(TestCase):
         self.assertEqual(reservation.contact_person, self.member.display_name)
         self.assertEqual(reservation.contact_email, "juan@abcfoundation.org")
 
+    def test_organization_address_is_snapshotted_from_the_profile(self):
+        """The shared detail view keeps the verified organization address."""
+        self.approved_org.address = "123 Foundation Avenue, Dumaguete City"
+        self.approved_org.save(update_fields=["address"])
+        self.client.force_authenticate(self.member)
+
+        response = self.client.post(
+            RESERVATIONS_URL,
+            self._payload(organization_address="A forged address"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(
+            response.json()["organization_address"],
+            "123 Foundation Avenue, Dumaguete City",
+        )
+        reservation = Reservation.objects.get(pk=response.json()["id"])
+        self.assertEqual(
+            reservation.organization_address,
+            "123 Foundation Avenue, Dumaguete City",
+        )
+
     # -- Unverified organizations are blocked ---------------------------
 
     def test_pending_organization_cannot_reserve(self):

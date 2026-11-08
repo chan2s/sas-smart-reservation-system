@@ -36,9 +36,9 @@ function LoginProbe() {
   return <p>login reached {location.search}</p>
 }
 
-function renderRegister() {
+function renderRegister(initialEntry = '/register') {
   return render(
-    <MemoryRouter initialEntries={['/register']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/login" element={<LoginProbe />} />
@@ -65,6 +65,17 @@ async function submitBasicRegistration() {
 }
 
 describe('RegisterPage', () => {
+  it('does not infer affiliation or organization type from a URL', () => {
+    renderRegister('/register?organization=external')
+
+    const affiliation = screen.getByLabelText('I am registering as') as HTMLSelectElement
+    expect(affiliation.value).toBe('')
+
+    fireEvent.change(affiliation, { target: { value: 'EXTERNAL_ORGANIZATION' } })
+    const organizationType = screen.getByLabelText('Organization type') as HTMLSelectElement
+    expect(organizationType.value).toBe('')
+  })
+
   it('shows backend field validation instead of a generic 400', async () => {
     apiState.register.mockRejectedValue(
       new ApiError(400, 'Request failed (400)', {

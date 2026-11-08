@@ -521,6 +521,7 @@ export interface FacilityResource {
   images: EquipmentImage[]
 }
 
+
 /**
  * Writable payload for configuring which equipment belongs to a facility.
  *
@@ -584,6 +585,7 @@ export type OrganizationType =
   | 'SCHOOL'
   | 'GOVERNMENT'
   | 'PRIVATE'
+  | 'NGO'
   | 'COMMUNITY'
   | 'SPORTS'
   | 'COMPANY'
@@ -867,6 +869,8 @@ export interface Recommendation {
 export interface ReservationDetail extends ReservationSummary {
   description: string
   purpose: string
+  organization_address?: string
+  representative_position?: string
   notes: string
   rejection_reason: string
   checkin_code: string
@@ -1203,62 +1207,6 @@ export interface LoginActivity {
   status: LoginStatus
   status_label: string
   ip_address: string | null
-  created_at: string
-}
-
-// ---------------------------------------------------------------------------
-// Public (unauthenticated) API types
-// ---------------------------------------------------------------------------
-
-export interface PublicFacility {
-  id: number
-  name: string
-  facility_type: FacilityType
-  facility_type_label: string
-  description: string
-  capacity: number
-  location: string
-  image: string | null
-  status: FacilityStatus
-}
-
-export interface GuestReservationResult {
-  detail: string
-  reservation_id: string
-  status: ReservationStatus
-  status_label: string
-  track: { code: string; email: string }
-}
-
-/** Tracking statuses as shown to external requesters. */
-export type TrackStatus =
-  | 'PENDING'
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'CANCELLED'
-  | 'COMPLETED'
-  | 'NO_SHOW'
-  | 'EXPIRED'
-  | 'CHECKED_IN'
-
-export interface TrackResult {
-  reservation_id: string
-  status: TrackStatus
-  status_label: string
-  event_name: string
-  event_type_label: string
-  organization: string
-  organization_type_label: string
-  contact_person: string
-  contact_email: string
-  facility: string
-  facility_id: number
-  date: string
-  start_time: string
-  end_time: string
-  expected_participants: number
-  purpose: string
-  resources: string[]
   created_at: string
 }
 

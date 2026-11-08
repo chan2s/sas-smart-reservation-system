@@ -538,6 +538,98 @@ class ReservationApiTests(TestCase):
         payload.update(overrides)
         return payload
 
+    @mock.patch("reservations.views.confirmations.schedule_booking_confirmation")
+    @mock.patch("reservations.views.notify_staff")
+    def test_public_internal_and_external_requests_submit_as_guest(self, _notify, _confirmation):
+        """Both public organization choices enter the regular pending queue."""
+        for index, organization in enumerate(("Campus Student Affairs", "Community Sports Club")):
+            payload = self._payload(
+                date=(self.day + timedelta(days=index * 7)).isoformat(),
+                organization=organization,
+                requester_type="CAMPUS" if index == 0 else "EXTERNAL",
+                organization_type="" if index == 0 else "COMMUNITY",
+                contact_person="Jordan Rivera",
+                contact_email="jordan@example.org",
+                contact_phone="09171234567",
+            )
+            response = self.client.post(
+                "/api/public/reservations/submit/", payload, format="json"
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            reservation = Reservation.objects.get(reservation_id=response.json()["reservation_id"])
+            self.assertEqual(reservation.requester_type, payload["requester_type"])
+            self.assertIsNone(reservation.requester_id)
+            self.assertIsNone(reservation.created_by_id)
+            self.assertEqual(reservation.contact_email, "jordan@example.org")
+            self.assertEqual(reservation.contact_phone, "09171234567")
+            self.assertEqual(reservation.status, Reservation.Status.PENDING)
+
+        self.assertEqual(Reservation.objects.count(), 2)
+        self.assertEqual(self.client.get("/api/reservations/").status_code, 401)
+        self.assertEqual(self.client.get("/api/reservations/1/").status_code, 401)
+
+    def test_public_reservation_requires_valid_contact_data(self):
+        payload = self._payload(
+            contact_person="Jordan Rivera",
+            contact_phone="123",
+            requester_type="CAMPUS",
+        )
+        response = self.client.post(
+            "/api/public/reservations/submit/", payload, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("contact_email", response.json())
+        self.assertEqual(Reservation.objects.count(), 0)
+
+        payload["contact_email"] = "jordan@example.org"
+        response = self.client.post(
+            "/api/public/reservations/submit/", payload, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("contact_phone", response.json())
+
+    def test_public_catalog_is_scoped_and_existing_reservation_reads_stay_private(self):
+        FacilityResource.objects.create(
+            facility=self.facility,
+            equipment=self.chairs,
+            quantity=80,
+            notes="Internal setup note",
+        )
+        catalog = self.client.get("/api/public/reservations/catalog/")
+        self.assertEqual(catalog.status_code, 200)
+        self.assertEqual(catalog.json()[0]["id"], self.facility.id)
+        self.assertNotIn("reservation_count", catalog.json()[0])
+        self.assertNotIn("has_history", catalog.json()[0])
+        self.assertEqual(self.client.get("/api/facilities/").status_code, 401)
+        resources = self.client.get(
+            f"/api/public/reservations/facilities/{self.facility.id}/resources/"
+        )
+        self.assertEqual(resources.status_code, 200, resources.content)
+        self.assertEqual(resources.json()["resources"][0]["name"], "Folding Chair")
+        self.assertNotIn("notes", resources.json()["resources"][0])
+        self.assertEqual(
+            self.client.get(f"/api/facilities/{self.facility.id}/resources/").status_code,
+            401,
+        )
+
+        self._auth(self.requester)
+        self.client.post("/api/reservations/", self._payload(), format="json")
+        self.client.force_authenticate(user=None)
+        report = self.client.post(
+            "/api/public/reservations/availability/",
+            {
+                "facility_id": self.facility.id,
+                "date": self.day.isoformat(),
+                "start_time": "09:00",
+                "end_time": "11:00",
+                "items": [],
+            },
+            format="json",
+        )
+        self.assertEqual(report.status_code, 200, report.content)
+        self.assertEqual(report.json()["facility"]["conflicts"], [])
+        self.assertNotIn("Orientation", report.content.decode())
+
     def test_create_reservation_and_list(self):
         self._auth(self.requester)
         response = self.client.post("/api/reservations/", self._payload(), format="json")
@@ -1678,8 +1770,9 @@ class RequesterTypeApiTests(TestCase):
 
     def test_campus_user_cannot_submit_external_type(self):
         """Authenticated non-staff callers cannot create EXTERNAL entries
-        through the authenticated endpoint — external requesters use the
-        public guest endpoint instead."""
+        through the authenticated endpoint. External organizations book for
+        themselves through the same endpoint once their account and
+        organization are approved."""
         self.client.force_authenticate(self.requester)
         response = self.client.post(
             "/api/reservations/", self._external_payload(), format="json"

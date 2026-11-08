@@ -68,9 +68,10 @@ import type {
   ReservationDetail,
   ReservableResource,
 } from '@/lib/types'
+import type { PublicReservationSubmission } from '@/lib/api'
 
 /**
- * The four-step reservation flow (staff see an extra "Requester" step first).
+ * Shared reservation flow with organization-specific intake and requester steps.
  *
  * Details and Resources are ONE step: the event form sits above the suggested
  * resources, so nothing captured in a previous step is ever asked for again.
@@ -84,6 +85,7 @@ const CAMPUS_STEPS = [
 ]
 
 const ADMIN_STEPS = [{ key: 'requester', label: 'Requester' }, ...CAMPUS_STEPS]
+const PUBLIC_STEPS = [{ key: 'requester', label: 'Organization' }, ...CAMPUS_STEPS]
 
 type StepKey = (typeof ADMIN_STEPS)[number]['key']
 
@@ -97,16 +99,20 @@ const EMPTY_EXTERNAL = {
 export function ReservationWizardPage() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
+  const { organizationType } = useParams()
+  const publicFlow = organizationType === 'internal' || organizationType === 'external'
+  const publicRequesterType = organizationType === 'external' ? 'EXTERNAL' : 'CAMPUS'
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
   const { user, isStaff, loading: authLoading, updateUser } = useAuth()
-  const isAdmin = user?.role === 'ADMIN'
+  const isAdmin = !publicFlow && user?.role === 'ADMIN'
 
   // Organization approval can change while this SPA session remains open.
   // Refresh the server-authoritative profile on wizard entry so the banner and
   // client-side submit state reflect the current organization verification.
   useEffect(() => {
     let cancelled = false
+    if (publicFlow) return
     api
       .me()
       .then((profile) => {
@@ -119,7 +125,7 @@ export function ReservationWizardPage() {
     return () => {
       cancelled = true
     }
-  }, [updateUser])
+  }, [updateUser, publicFlow])
 
   // A refresh must not wipe the wizard: the draft is restored from
   // sessionStorage on mount and written back on every change below.
@@ -132,7 +138,7 @@ export function ReservationWizardPage() {
   // leak onto the /new route as a fresh booking.
   const initial = useMemo(() => {
     const routeEditId = routeId != null && routeId !== '' ? Number(routeId) : null
-    const draft = loadDraft()
+    const draft = loadDraft(publicFlow)
     const param = searchParams.get('facility')
     const paramFacilityId = param ? Number(param) : null
     if (routeEditId != null) {
@@ -218,7 +224,7 @@ export function ReservationWizardPage() {
   const [stepError, setStepError] = useState<string | null>(null)
   // Bumped on a failed Continue so the Details step can focus the first error.
   const [focusAttempt, setFocusAttempt] = useState(0)
-  const [submitted, setSubmitted] = useState<ReservationDetail | null>(null)
+  const [submitted, setSubmitted] = useState<ReservationDetail | PublicReservationSubmission | null>(null)
 
   // Requester identification — administrators choose who the reservation is
   // FOR (campus user or external organization). Non-admins are always their
@@ -227,6 +233,7 @@ export function ReservationWizardPage() {
   // change identity on resubmission), so the step never appears either.
   const [requesterType, setRequesterType] = useState<'CAMPUS' | 'EXTERNAL'>(
     () =>
+      (publicFlow ? publicRequesterType : undefined) ??
       restored?.rebooker?.type ??
       (restored?.editRequesterType === 'EXTERNAL' ? 'EXTERNAL' : 'CAMPUS'),
   )
@@ -247,10 +254,10 @@ export function ReservationWizardPage() {
 
   // In edit mode the requester step never renders, so the step list is the
   // campus one for everyone.
-  const steps = isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
+  const steps = publicFlow ? PUBLIC_STEPS : isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
   const stepKey: StepKey = steps[Math.min(step, steps.length - 1)].key
 
-  const { data: facilities } = useFacilities()
+  const { data: facilities } = useFacilities(undefined, publicFlow)
   const campusUsers = useCampusUsers(
     userSearch,
     Boolean(isAdmin && requesterType === 'CAMPUS' && stepKey === 'requester'),
@@ -271,6 +278,7 @@ export function ReservationWizardPage() {
   const { data: resourcesData, isFetching: resourcesLoading } = useFacilityResources(
     facilityId,
     Object.keys(equipmentParams).length ? equipmentParams : undefined,
+    publicFlow,
   )
   const resources = resourcesData?.resources ?? []
   const equipment = useMemo<ReservableResource[]>(
@@ -304,12 +312,12 @@ export function ReservationWizardPage() {
     return config
   }, [resources])
 
-  const availabilityCheck = useAvailabilityCheck()
+  const availabilityCheck = useAvailabilityCheck(publicFlow)
   // Availability, conflicts and submission are computed by Django: none of
   // them can be answered from the local backup. While the backend is
   // unreachable the wizard refuses to continue or submit.
   const { online } = useOffline()
-  const createReservation = useCreateReservation()
+  const createReservation = useCreateReservation(publicFlow)
   const resubmitReservation = useResubmitReservation(editingId)
 
   const today = manilaCalendarDate()
@@ -324,7 +332,7 @@ export function ReservationWizardPage() {
   // submit at all — the backend enforces this regardless, but say so up front.
   // An EDIT always proceeds: the reservation was already accepted, and the
   // backend does not gate resubmission on organization status.
-  const canCreateReservations = user?.can_create_reservations ?? true
+  const canCreateReservations = publicFlow || (user?.can_create_reservations ?? true)
   const canProceed = isEditing || canCreateReservations
 
   const facility = facilities?.find((item) => item.id === facilityId)
@@ -346,7 +354,9 @@ export function ReservationWizardPage() {
   const reservingAs = isEditing
     ? // The stored organization snapshot — identity is not editable on resubmit.
       restored?.editOrganization ?? ''
-    : isAdmin
+    : publicFlow
+      ? external.organization.trim()
+      : isAdmin
       ? requesterType === 'CAMPUS'
         ? selectedUser?.organization?.trim() || ''
         : external.organization.trim()
@@ -355,7 +365,7 @@ export function ReservationWizardPage() {
   // The requester's own most recent reservation carries the last phone number
   // they used — the only place a phone number is stored (there is no phone
   // field on the account, by design).
-  const myReservations = useReservations({ requester: user?.id, page: 1 }, Boolean(user?.id))
+  const myReservations = useReservations({ requester: user?.id, page: 1 }, Boolean(user?.id) && !publicFlow)
   const contactPrefilled = useRef(false)
   useEffect(() => {
     if (!user) return
@@ -431,6 +441,7 @@ export function ReservationWizardPage() {
     purpose: details.purpose,
     staffNotes: details.staffNotes,
     requesterType,
+    publicReservation: publicFlow,
   })
 
   // Suggestions are checked by default: seed the quantities, but never touch a
@@ -601,7 +612,7 @@ export function ReservationWizardPage() {
       changeRequest: restored?.changeRequest ?? null,
       editRequesterType: restored?.editRequesterType ?? null,
       editOrganization: restored?.editOrganization ?? '',
-    })
+    }, publicFlow)
   }, [
     facilityId,
     dateISO,
@@ -613,6 +624,7 @@ export function ReservationWizardPage() {
     operatorSelections,
     userEditedItems,
     stepKey,
+    publicFlow,
   ])
 
   // Restore the step once the account is known (the step list differs for
@@ -691,7 +703,13 @@ export function ReservationWizardPage() {
   // configuration. Users not allowed to reserve (e.g. a pending external
   // organization) can never continue regardless of availability.
   const requesterStepValid = !isAdmin
-    ? true
+    ? publicFlow
+      ? Boolean(
+          external.organization.trim() &&
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(external.contact_email.trim()) &&
+          (requesterType !== 'EXTERNAL' || external.organization_type),
+        )
+      : true
     : requesterType === 'CAMPUS'
       ? selectedUser != null
       : Boolean(external.organization.trim() && external.contact_person.trim())
@@ -741,11 +759,11 @@ export function ReservationWizardPage() {
       )
       return
     }
-    if (stepKey === 'requester' && requesterType === 'CAMPUS' && !selectedUser) {
+    if (stepKey === 'requester' && isAdmin && requesterType === 'CAMPUS' && !selectedUser) {
       setStepError('Search for and select the campus user this reservation is for.')
       return
     }
-    if (stepKey === 'requester' && requesterType === 'EXTERNAL') {
+    if (stepKey === 'requester' && isAdmin && requesterType === 'EXTERNAL') {
       const missing: string[] = []
       if (!external.organization.trim()) missing.push('Organization / school name')
       if (!external.contact_person.trim()) missing.push('Contact person')
@@ -753,6 +771,10 @@ export function ReservationWizardPage() {
         setStepError(`Complete the requester information: ${missing.join(', ')}.`)
         return
       }
+    }
+    if (stepKey === 'requester' && publicFlow && !requesterStepValid) {
+      setStepError('Enter the organization name and a valid contact email before continuing.')
+      return
     }
     if (stepKey === 'facility' && facilityId == null) {
       setStepError('Select a facility to continue.')
@@ -787,7 +809,7 @@ export function ReservationWizardPage() {
   function goBack() {
     setStepError(null)
     if (step === 0) {
-      navigate(isEditing && editingId != null ? `/reservations/${editingId}` : '/reservations')
+      navigate(isEditing && editingId != null ? `/reservations/${editingId}` : publicFlow ? '/reserve' : '/reservations')
     } else {
       setStep(step - 1)
     }
@@ -835,7 +857,7 @@ export function ReservationWizardPage() {
     if (isEditing) {
       resubmitReservation.mutate(toResubmitPayload(draft, { items: itemsList }), {
         onSuccess: (reservation) => {
-          clearDraft()
+          clearDraft(publicFlow)
           toast('Reservation updated and resubmitted for approval.')
           navigate(`/reservations/${reservation.id}`)
         },
@@ -857,21 +879,24 @@ export function ReservationWizardPage() {
       return
     }
 
-    const isExternalRequester = isAdmin && requesterType === 'EXTERNAL'
+    const isExternalRequester = (isAdmin || publicFlow) && requesterType === 'EXTERNAL'
     const payload = toCreateReservationPayload(draft, {
       items: itemsList,
       // The backend resolves the same value from the authenticated user;
       // sending it only keeps the payload self-describing.
       organization: isExternalRequester ? external.organization : reservingAs,
+      ...(publicFlow && requesterType === 'CAMPUS' ? { contactEmail: external.contact_email } : {}),
       ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
         ? { requesterId: selectedUser.id }
         : {}),
-      ...(isExternalRequester ? { external } : {}),
+      ...(isExternalRequester
+        ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
+        : {}),
     })
 
     createReservation.mutate(payload, {
       onSuccess: (reservation) => {
-        clearDraft()
+        clearDraft(publicFlow)
         setSubmitted(reservation)
         document.querySelector('main')?.scrollTo({ top: 0 })
       },
@@ -887,7 +912,9 @@ export function ReservationWizardPage() {
             if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
           }
         }
-        toast('Unable to submit reservation. Please review the schedule.', 'error')
+        const message = validationMessage(error, 'Unable to submit reservation. Please review the request.')
+        setStepError(message)
+        toast(message, 'error')
       },
     })
   }
@@ -913,7 +940,9 @@ export function ReservationWizardPage() {
           <p className="mx-auto mt-2 max-w-sm text-[15px] text-body">
             {approved
               ? 'Your reservation has been automatically approved and confirmed. A confirmation email will be sent to your registered email address.'
-              : 'Your reservation has been submitted for approval. A confirmation email will be sent to your registered email address, and you will be notified once SAS reviews it.'}
+              : publicFlow
+                ? 'Your request has been submitted for SAS review. Keep your reservation ID for your records.'
+                : 'Your reservation has been submitted for approval. A confirmation email will be sent to your registered email address, and you will be notified once SAS reviews it.'}
           </p>
           <div className="mt-4 flex justify-center">
             {approved ? (
@@ -939,9 +968,9 @@ export function ReservationWizardPage() {
           </dl>
 
           <div className="mt-7 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
-            <Button onClick={() => navigate(`/reservations/${submitted.id}`)}>View reservation</Button>
-            <Button variant="outline" onClick={() => navigate('/reservations')}>
-              Back to reservations
+            {!publicFlow && <Button onClick={() => navigate(`/reservations/${submitted.id}`)}>View reservation</Button>}
+            <Button variant="outline" onClick={() => navigate(publicFlow ? '/' : '/reservations')}>
+              {publicFlow ? 'Return to SAS Reserve' : 'Back to reservations'}
             </Button>
           </div>
         </Card>
@@ -957,11 +986,11 @@ export function ReservationWizardPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <Link
-        to={isEditing && editingId != null ? `/reservations/${editingId}` : '/reservations'}
+        to={isEditing && editingId != null ? `/reservations/${editingId}` : publicFlow ? '/reserve' : '/reservations'}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-body transition-colors hover:text-ink"
       >
         <ArrowLeft className="size-4" />
-        {isEditing ? 'Back to reservation' : 'Back to reservations'}
+        {publicFlow ? 'Change organization type' : isEditing ? 'Back to reservation' : 'Back to reservations'}
       </Link>
 
       <div className="mt-4">
@@ -972,7 +1001,7 @@ export function ReservationWizardPage() {
               ? isStaff
                 ? 'Rebook reservation'
                 : 'Request new schedule'
-              : 'New reservation'}
+              : publicFlow ? 'Create a reservation' : 'New reservation'}
         </h1>
         <p className="mt-1.5 text-[15px] text-body">
           {isEditing
@@ -1043,7 +1072,18 @@ export function ReservationWizardPage() {
       </div>
 
       <div className="mt-8">
-        {stepKey === 'requester' && (
+        {stepKey === 'requester' && publicFlow && (
+          <PublicOrganizationStep
+            requesterType={requesterType}
+            organization={external.organization}
+            organizationType={external.organization_type}
+            email={external.contact_email}
+            onChange={(key, value) => setExternal((current) => ({ ...current, [key]: value }))}
+            showErrors={stepError != null}
+          />
+        )}
+
+        {stepKey === 'requester' && isAdmin && (
           <StepRequester
             requesterType={requesterType}
             onRequesterType={(type) => {
@@ -1293,6 +1333,72 @@ function validationMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+function PublicOrganizationStep({
+  requesterType,
+  organization,
+  organizationType,
+  email,
+  onChange,
+  showErrors,
+}: {
+  requesterType: 'CAMPUS' | 'EXTERNAL'
+  organization: string
+  organizationType: string
+  email: string
+  onChange: (key: 'organization' | 'organization_type' | 'contact_email', value: string) => void
+  showErrors: boolean
+}) {
+  return (
+    <section aria-label="Organization information" className="mx-auto max-w-3xl">
+      <h2 className="text-lg font-semibold text-ink">
+        {requesterType === 'EXTERNAL' ? 'External organization details' : 'Internal organization details'}
+      </h2>
+      <p className="mt-1 text-sm text-body">
+        Add the organization and contact email for this reservation request.
+      </p>
+      <Card className="mt-5 grid gap-4 p-5 sm:grid-cols-2">
+        <Field label={requesterType === 'EXTERNAL' ? 'Organization name' : 'College, office, or unit'} htmlFor="public-organization">
+          <Input
+            id="public-organization"
+            value={organization}
+            onChange={(event) => onChange('organization', event.target.value)}
+            maxLength={120}
+            autoComplete="organization"
+            required
+            aria-invalid={showErrors && !organization.trim()}
+          />
+        </Field>
+        {requesterType === 'EXTERNAL' && (
+          <Field label="Organization type" htmlFor="public-organization-type">
+            <Select
+              id="public-organization-type"
+              value={organizationType}
+              onChange={(event) => onChange('organization_type', event.target.value)}
+              required
+            >
+              {ORGANIZATION_TYPE_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        <Field label="Contact email" htmlFor="public-contact-email" hint="We’ll use this to send reservation updates." className="sm:col-span-2">
+          <Input
+            id="public-contact-email"
+            type="email"
+            value={email}
+            onChange={(event) => onChange('contact_email', event.target.value)}
+            maxLength={254}
+            autoComplete="email"
+            required
+            aria-invalid={showErrors && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())}
+          />
+        </Field>
+      </Card>
+    </section>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Requester step (administrators only)
 // ---------------------------------------------------------------------------
@@ -1302,6 +1408,7 @@ const ORGANIZATION_TYPE_OPTIONS: [string, string][] = [
   ['GOVERNMENT', 'Government Organization'],
   ['PRIVATE', 'Private Organization'],
   ['COMMUNITY', 'Community Organization'],
+  ['NGO', 'Non-Governmental Organization'],
   ['SPORTS', 'Sports Organization'],
   ['COMPANY', 'Company'],
   ['INDIVIDUAL', 'Individual'],

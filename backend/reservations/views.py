@@ -3,9 +3,9 @@ import datetime
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, authentication_classes, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.permissions import (
@@ -14,6 +14,7 @@ from accounts.permissions import (
     IsSasStaff,
 )
 from facilities.models import Facility
+from equipment.services import unassigned_equipment_for_facility
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
 from .models import Reservation, ReservationEvent
@@ -22,10 +23,12 @@ from .serializers import (
     ReservationDetailSerializer,
     ReservationListSerializer,
     ReservationResubmitSerializer,
+    PublicTrackSerializer,
 )
 from .services import confirmations, expiration, workflow
 from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
+from .services.public_tracking import reservation_for_tracking_token
 from .services.recommendations import recommend_resources_with_pricing
 
 
@@ -80,6 +83,207 @@ def _trusted_requester_type(request, requested) -> str:
     if user.trusted_requester_type == Reservation.RequesterType.EXTERNAL:
         return Reservation.RequesterType.EXTERNAL
     return Reservation.RequesterType.CAMPUS
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def public_reservation_track(request):
+    """Return a minimal status view for the holder of a private tracking link."""
+    token = request.data.get("token") if isinstance(request.data, dict) else None
+    reservation = reservation_for_tracking_token(token)
+    if reservation is None:
+        return Response(
+            {"detail": "This tracking link is invalid. Check the link in your email."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return Response(PublicTrackSerializer(reservation).data)
+
+
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_reservation_catalog(request):
+    """Minimal facility data needed to start a public reservation."""
+    from facilities.serializers import FacilitySerializer
+
+    facilities = Facility.objects.filter(is_active=True).prefetch_related(
+        "operating_hours", "images"
+    )
+    rows = FacilitySerializer(facilities, many=True, context={"request": request}).data
+    allowed = (
+        "id", "name", "facility_type", "facility_type_label", "description",
+        "capacity", "location", "image", "images", "rules", "seating_type",
+        "seating_type_label", "built_in_seats", "built_ins", "built_in_amenities",
+        "status", "status_label", "operating_hours", "availability", "is_active",
+    )
+    return Response([{key: row.get(key) for key in allowed} for row in rows])
+
+
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_facility_resources(request, facility_id):
+    """Only reservation-selectable resources for one active facility."""
+    from equipment.models import FacilityResource
+    from equipment.serializers import FacilityResourceSerializer
+
+    facility = Facility.objects.filter(pk=facility_id, is_active=True).first()
+    if facility is None:
+        return Response({"detail": "Facility not found."}, status=status.HTTP_404_NOT_FOUND)
+    rows = FacilityResource.objects.filter(
+        facility=facility, is_active=True, equipment__is_active=True
+    ).select_related("equipment__category").prefetch_related("equipment__equipment_images")
+    serialized = FacilityResourceSerializer(
+        rows, many=True, context={"request": request}
+    ).data
+    allowed = (
+        "id", "facility", "equipment_id", "name", "equipment_description",
+        "category", "unit", "condition", "condition_label", "equipment_status",
+        "status", "status_label", "quantity", "total_quantity", "description",
+        "additional_fee", "operator_available", "operator_required", "operator_fee",
+        "display_order", "is_active", "availability", "image", "images",
+    )
+    return Response({"facility_id": facility.id, "resources": [
+        {key: row.get(key) for key in allowed} for row in serialized
+    ]})
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_availability_check(request):
+    """Public conflict/pricing check; private reservation exclusion is unavailable."""
+    data = request.data
+    if data.get("exclude_id"):
+        return Response({"detail": "Public availability checks cannot exclude reservations."}, status=400)
+    try:
+        requester_type = data.get("requester_type", Reservation.RequesterType.CAMPUS)
+        if requester_type not in Reservation.RequesterType.values:
+            raise ValueError("Invalid requester type.")
+        facility_id = int(data["facility_id"])
+        target_date = datetime.date.fromisoformat(data["date"])
+        start = datetime.time.fromisoformat(data["start_time"])
+        end = datetime.time.fromisoformat(data["end_time"])
+        facility = Facility.objects.filter(pk=facility_id, is_active=True).first()
+        if facility is None:
+            return Response({"detail": "Facility not found."}, status=404)
+        items = data.get("items", [])
+        if not isinstance(items, list):
+            raise ValueError("items must be a list.")
+        for item in items:
+            if not isinstance(item, dict) or int(item.get("quantity", 0)) < 1:
+                raise ValueError("Each resource quantity must be a positive integer.")
+            equipment_id = int(item.get("equipment_id", 0))
+            from equipment.models import Equipment
+            if not Equipment.objects.filter(pk=equipment_id, is_active=True).exists():
+                raise ValueError("One of the requested resources is not available.")
+        if unassigned_equipment_for_facility(facility_id, items):
+            return Response({"detail": "A requested resource is not assigned to this facility."}, status=400)
+        report = check_availability(facility_id, target_date, start, end, items)
+    except (KeyError, TypeError, ValueError) as exc:
+        return Response({"detail": f"Invalid request: {exc}"}, status=400)
+    # The shared internal report includes event names and requester identity in
+    # conflict rows. Public callers need only the availability result.
+    report["facility"]["conflicts"] = []
+    def quote(date_value, start_value, end_value):
+        return quote_to_dict(quote_fees(
+            requester_type, facility=facility, items=data.get("items", []),
+            start_time=start_value, end_time=end_value,
+        ))
+    report["pricing"] = quote(target_date, start, end)
+    report["alternatives"] = find_alternatives(
+        facility_id, target_date, start, end, data.get("items", [])
+    )
+    for slot in report["alternatives"]:
+        slot["pricing"] = quote(
+            datetime.date.fromisoformat(slot["date"]),
+            datetime.time.fromisoformat(slot["start_time"]),
+            datetime.time.fromisoformat(slot["end_time"]),
+        )
+    return Response(report)
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_resource_recommendation(request):
+    """Public recommendation endpoint without requester/private context."""
+    data = request.data
+    requester_type = data.get("requester_type", Reservation.RequesterType.CAMPUS)
+    if requester_type not in Reservation.RequesterType.values:
+        return Response({"detail": "Invalid requester type."}, status=400)
+    if data.get("facility_id") and not Facility.objects.filter(
+        pk=data["facility_id"], is_active=True
+    ).exists():
+        return Response({"detail": "Facility not found."}, status=404)
+    try:
+        result = recommend_resources_with_pricing(
+            data.get("event_type", Reservation.EventType.OTHER),
+            int(data.get("expected_participants", 0) or 0),
+            facility_id=data.get("facility_id"), purpose=data.get("purpose", ""),
+            special_requirements=data.get("special_requirements", ""),
+            target_date=datetime.date.fromisoformat(data["date"]) if data.get("date") else None,
+            start_time=datetime.time.fromisoformat(data["start_time"]) if data.get("start_time") else None,
+            end_time=datetime.time.fromisoformat(data["end_time"]) if data.get("end_time") else None,
+            requester_type=requester_type,
+        )
+    except (TypeError, ValueError) as exc:
+        return Response({"detail": f"Invalid request: {exc}"}, status=400)
+    return Response(result)
+
+
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_pricing_rates(request):
+    return Response({"currency": "PHP", "rates": rates_payload()})
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_reservation_submit(request):
+    """Create a guest reservation through the existing validation/workflow."""
+    serializer = ReservationCreateSerializer(
+        data=request.data,
+        context={"request": request, "public_submission": True},
+    )
+    try:
+        serializer.is_valid(raise_exception=True)
+    except ValidationError as exc:
+        if exc.get_codes().get("availability"):
+            report = getattr(serializer, "_availability_report", {})
+            if report.get("facility"):
+                report["facility"]["conflicts"] = []
+            return Response({
+                "detail": "Resource conflict detected",
+                "availability": report,
+            }, status=status.HTTP_409_CONFLICT)
+        raise
+    reservation = serializer.save()
+    workflow.record_event(
+        reservation, ReservationEvent.EventType.CREATED, actor=None,
+        message="Public reservation submitted for approval.",
+    )
+    notify_staff(
+        Notification.Type.RESERVATION, "New reservation request",
+        f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
+        f"/reservations/{reservation.id}",
+        event_key=f"reservation:{reservation.pk}:submitted",
+    )
+    confirmations.schedule_booking_confirmation(reservation)
+    return Response({
+        "id": reservation.id,
+        "reservation_id": reservation.reservation_id,
+        "status": reservation.status,
+        "event_name": reservation.event_name,
+        "organization": reservation.organization,
+        "facility": reservation.facility.name,
+        "date": reservation.date,
+        "start_time": reservation.start_time,
+        "end_time": reservation.end_time,
+        "requester": reservation.organization or reservation.contact_person,
+    }, status=status.HTTP_201_CREATED)
 
 
 class ReservationViewSet(viewsets.ModelViewSet):

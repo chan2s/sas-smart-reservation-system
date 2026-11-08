@@ -84,11 +84,18 @@ def build_frontend_url(path: str) -> str:
 
 
 def build_reservation_url(reservation) -> str:
-    """Link to the SPA's reservation detail route for ``reservation``.
+    """Link to the appropriate SPA reservation view for ``reservation``.
 
-    The route is ``/reservations/:id`` and the frontend resolves ``:id`` as
-    the reservation's numeric primary key, which is the identifier used here.
+    Account holders use the authenticated ``/reservations/:id`` route. Guest
+    external requesters receive a signed public tracking link instead.
     """
+    if (
+        reservation.requester_type == reservation.RequesterType.EXTERNAL
+        and reservation.requester_id is None
+    ):
+        from reservations.services.public_tracking import tracking_path_for
+
+        return build_frontend_url(tracking_path_for(reservation))
     return build_frontend_url(f"reservations/{reservation.pk}")
 
 

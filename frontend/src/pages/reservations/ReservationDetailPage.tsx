@@ -535,10 +535,19 @@ export function ReservationDetailPage() {
             </div>
             {/* External contact details — shown to staff viewers. */}
             {reservation.requester_type === 'EXTERNAL' &&
-              (reservation.contact_person || reservation.contact_email) && (
+              (reservation.contact_person ||
+                reservation.representative_position ||
+                reservation.contact_email ||
+                reservation.organization_address) && (
                 <dl className="mt-4 space-y-2.5 text-sm">
+                  {reservation.organization_address && (
+                    <DetailItem label="Organization address" value={reservation.organization_address} />
+                  )}
                   {reservation.contact_person && (
-                    <DetailItem label="Contact person" value={reservation.contact_person} />
+                    <DetailItem label="Representative" value={reservation.contact_person} />
+                  )}
+                  {reservation.representative_position && (
+                    <DetailItem label="Representative position" value={reservation.representative_position} />
                   )}
                   {reservation.contact_email && (
                     <DetailItem label="Email" value={reservation.contact_email} />

@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
+from config.frontend import request_origin
 
 from . import no_show_alerts as alerts_service
 from .models import Notification, PossibleNoShowAlert, PushSubscription
@@ -18,8 +19,22 @@ from .serializers import (
     PossibleNoShowAlertSerializer,
     PushSubscriptionSerializer,
 )
+from .services import normalize_app_origin
 
 logger = logging.getLogger(__name__)
+
+
+def _subscription_origin(request) -> str:
+    """The app origin that registered a device, or ``""`` when unknown.
+
+    Only ``Origin``/``Referer`` describe the application the browser is
+    running: the host Django sees is the backend (the Vite dev proxy rewrites
+    it), never the page the user is on. The value is validated and normalized
+    by the shared origin helpers, so it is always a bare ``scheme://host``.
+    """
+    if not (request.headers.get("Origin") or request.headers.get("Referer")):
+        return ""
+    return normalize_app_origin(request_origin(request))
 
 
 class VapidPublicKeyView(APIView):
@@ -43,6 +58,7 @@ class PushSubscriptionListView(APIView):
         serializer = PushSubscriptionSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         endpoint = serializer.validated_data["endpoint"]
+        app_origin = _subscription_origin(request)
         subscription = PushSubscription.objects.filter(endpoint=endpoint).first()
         if subscription and subscription.user_id != request.user.pk:
             return Response({"detail": "This device is already registered to another account."}, status=http_status.HTTP_409_CONFLICT)
@@ -50,10 +66,13 @@ class PushSubscriptionListView(APIView):
             for key, value in serializer.validated_data.items():
                 setattr(subscription, key, value)
             subscription.user = request.user
+            # Keep the origin current on re-registration; never erase a known
+            # origin because a later request omitted the header.
+            subscription.app_origin = app_origin or subscription.app_origin
             subscription.active = True
             subscription.save()
         else:
-            subscription = serializer.save(user=request.user)
+            subscription = serializer.save(user=request.user, app_origin=app_origin)
         return Response(PushSubscriptionSerializer(subscription).data, status=http_status.HTTP_201_CREATED)
 
 

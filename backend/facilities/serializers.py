@@ -208,6 +208,7 @@ class FacilitySerializer(serializers.ModelSerializer):
             }
         ]
 
+
     def validate_image(self, value):
         """Validate the legacy single-image field.
 

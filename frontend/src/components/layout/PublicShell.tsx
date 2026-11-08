@@ -12,9 +12,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       <Backdrop />
       <header className="relative z-10 border-b border-line bg-surface/95 backdrop-blur">
         <div className="mx-auto flex h-[72px] w-full max-w-5xl items-center justify-between px-4 sm:px-6">
-          <Link to="/reserve">
-            <Brand />
-          </Link>
+          <Brand />
           <nav className="flex items-center gap-5">
             <Link
               to="/reserve"

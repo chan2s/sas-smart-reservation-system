@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Eye, EyeOff, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { api, ApiError, isDeactivatedAccountError } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
@@ -12,7 +12,6 @@ import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import {
   GOOGLE_ERROR_MESSAGES,
   GOOGLE_LOGIN_REDIRECT_CODES,
-  GOOGLE_REGISTER_REDIRECT_CODES,
 } from '@/lib/googleAuth'
 
 export function LoginPage() {
@@ -20,26 +19,11 @@ export function LoginPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
-  // Set after a sign-up redirects here instead of auto-authenticating the
-  // new account. 'external' keeps the pending-organization copy; every other
-  // registration shows the standard "please log in" success message.
-  const registeredParam = searchParams.get('registered')
-  const registeredExternal = registeredParam === 'external'
-  const registeredSuccess = registeredParam === 'success'
-  // A Google sign-up on /register created the account (same approval policy as
-  // the form) and returned here; the identity is already linked, so the user
-  // signs in with Google.
-  const registeredGoogle = registeredParam === 'google'
-
   // "Continue with Google" that found an existing account redirects here with
   // ?google_error=account_exists (or email_registered). These get a dedicated
   // notice with a direct link to the login form instead of an inline error.
   const googleErrorCode = searchParams.get('google_error') ?? ''
   const accountNoticeCode = GOOGLE_LOGIN_REDIRECT_CODES.has(googleErrorCode)
-  // "No account found" gets the same dedicated-notice treatment, but with an
-  // easy path to the registration page instead of the login form.
-  const registerNoticeCode = GOOGLE_REGISTER_REDIRECT_CODES.has(googleErrorCode)
-
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -135,73 +119,23 @@ export function LoginPage() {
               Welcome back
             </h1>
             <p className="mt-2.5 text-[15px] leading-relaxed text-body">
-              Sign in to manage your reservations, facilities, and resources.
+              Administrators, SAS staff, and Assistant Campus Directors sign in here to manage reservations and facilities.
             </p>
 
             <div className="mt-9">
-              {registeredSuccess && (
-                <div
-                  role="status"
-                  className="mb-6 flex items-start gap-2.5 rounded-xl border border-status-available/30 bg-status-available-bg px-3.5 py-3 text-[13px] text-status-available"
-                >
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  <p>
-                    Registration successful! Please log in with your registered
-                    account.
-                  </p>
-                </div>
-              )}
-
-              {registeredExternal && (
-                <div
-                  role="status"
-                  className="mb-6 flex items-start gap-2.5 rounded-xl border border-status-available/30 bg-status-available-bg px-3.5 py-3 text-[13px] text-status-available"
-                >
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  <p>
-                    Registration successful. Your organization registration is pending
-                    administrator approval. Please wait for the administrator to approve
-                    your organization before making a reservation. You can log in after
-                    registration.
-                  </p>
-                </div>
-              )}
-
-              {registeredGoogle && (
-                <div
-                  role="status"
-                  className="mb-6 flex items-start gap-2.5 rounded-xl border border-status-available/30 bg-status-available-bg px-3.5 py-3 text-[13px] text-status-available"
-                >
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  <p>
-                    Registration successful. Please sign in with Google to continue — your
-                    account is pending administrator approval.
-                  </p>
-                </div>
-              )}
-
-              {accountNoticeCode || registerNoticeCode ? (
+              {accountNoticeCode ? (
                 <div
                   role="alert"
                   className="rounded-xl border border-status-pending/25 bg-status-pending-bg px-4 py-4"
                 >
                   <p className="text-sm leading-relaxed text-status-pending">{error}</p>
-                  {accountNoticeCode ? (
-                    <button
-                      type="button"
-                      onClick={() => navigate('/login')}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-brand-dark"
-                    >
-                      Go to Login
-                    </button>
-                  ) : (
-                    <Link
-                      to="/register"
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-brand-dark"
-                    >
-                      Go to Registration
-                    </Link>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/login')}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-brand-dark"
+                  >
+                    Go to Login
+                  </button>
                 </div>
               ) : (
                 <>

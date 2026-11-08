@@ -106,13 +106,14 @@ describe('LoginPage — deactivated account modal', () => {
     expect(screen.getByText(DEACTIVATED_MESSAGE)).toBeTruthy()
   })
 
-  it('a Google sign-up returns here with a success notice and Google sign-in', () => {
+  it('does not expose public registration from the staff login screen', () => {
     renderLogin(['/login?registered=google'])
 
-    expect(screen.getByText(/Registration successful/i)).toBeTruthy()
     expect(
       screen.getByRole('button', { name: /Continue with Google/i }),
     ).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /register|create account/i })).toBeNull()
+    expect(screen.queryByText(/Registration successful/i)).toBeNull()
   })
 
   it('the login Google button starts the login flow, not registration', async () => {

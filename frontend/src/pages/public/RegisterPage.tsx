@@ -29,9 +29,19 @@ const ORGANIZATION_TYPE_OPTIONS: { value: ExternalOrganizationType; label: strin
   { value: 'OTHER', label: 'Other' },
 ]
 
-const EMPTY_EXTERNAL = {
+interface ExternalOrganizationForm {
+  organization_name: string
+  organization_type: ExternalOrganizationType | ''
+  contact_person: string
+  contact_email: string
+  contact_number: string
+  address: string
+  purpose: string
+}
+
+const EMPTY_EXTERNAL: ExternalOrganizationForm = {
   organization_name: '',
-  organization_type: 'NGO' as ExternalOrganizationType,
+  organization_type: '',
   contact_person: '',
   contact_email: '',
   contact_number: '',
@@ -109,6 +119,7 @@ function passwordRequirements(password: string) {
 
 export function RegisterPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [formData, setFormData] = useState({
     username: '',
@@ -123,7 +134,6 @@ export function RegisterPage() {
   // One toggle per password input so the two fields reveal independently.
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  // Blank affiliation keeps the legacy behavior (a plain campus account).
   const [affiliation, setAffiliation] = useState<SelectableAffiliation | ''>('')
   // Managed campus organization id, chosen from the seeded list. The backend
   // re-reads its type and active state — the client never sends a type.
@@ -135,7 +145,6 @@ export function RegisterPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const [searchParams] = useSearchParams()
 
   const { data: internalOrganizations } = useInternalOrganizations()
 
@@ -236,6 +245,9 @@ export function RegisterPage() {
       nextErrors.organization_id = 'Please select your organization'
     }
     if (isExternal) {
+      if (!external.organization_type) {
+        nextErrors.organization_type = 'Please select an organization type'
+      }
       if (!external.organization_name.trim()) {
         nextErrors.organization_name = 'Organization name is required'
       }
@@ -456,7 +468,7 @@ export function RegisterPage() {
                       clearFieldError('affiliation')
                     }}
                   >
-                    <option value="">Campus user / not sure yet</option>
+                    <option value="">Select your affiliation…</option>
                     {AFFILIATION_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
@@ -549,7 +561,9 @@ export function RegisterPage() {
                         name="organization_type"
                         value={external.organization_type}
                         onChange={handleExternalChange}
+                        required
                       >
+                        <option value="">Select organization type…</option>
                         {ORGANIZATION_TYPE_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}

@@ -1,8 +1,11 @@
+import re
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from equipment.models import Equipment
 from equipment.services import unassigned_equipment_for_facility
+from facilities.models import Facility
 
 from .models import (
     InspectionReport,
@@ -371,6 +374,8 @@ class ReservationDetailSerializer(ReservationListSerializer):
         fields = ReservationListSerializer.Meta.fields + (
             "description",
             "purpose",
+            "organization_address",
+            "representative_position",
             "notes",
             "rejection_reason",
             "checkin_code",
@@ -441,7 +446,7 @@ class ReservationDetailSerializer(ReservationListSerializer):
 
 
 class _ReservationCreateMixin:
-    """Shared validation for authenticated and guest reservation creation.
+    """Shared validation for reservation creation and revision.
 
     Event details drive the resource recommendation step, so they are required
     before a reservation can be created. Availability is checked against the
@@ -456,6 +461,18 @@ class _ReservationCreateMixin:
         target_date = attrs["date"]
         start = attrs["start_time"]
         end = attrs["end_time"]
+
+        if self.context.get("public_submission"):
+            facility = Facility.objects.filter(pk=facility_id, is_active=True).first()
+            if facility is None:
+                raise serializers.ValidationError(
+                    {"facility_id": "This facility is not available for reservations."}
+                )
+            participants = attrs.get("expected_participants") or 0
+            if facility.capacity and participants > facility.capacity:
+                raise serializers.ValidationError(
+                    {"expected_participants": f"Participant count exceeds this facility's capacity ({facility.capacity})."}
+                )
 
         if end <= start:
             raise serializers.ValidationError({"end_time": "End time must be after start time."})
@@ -592,7 +609,7 @@ def account_organization_ref(user):
 
 
 class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSerializer):
-    """Authenticated creation.
+    """Authenticated creation, with a narrow context for public submissions.
 
     The requester defaults to the signed-in user. Administrators may create on
     behalf of someone else (``requester_id``) or an external organization
@@ -668,11 +685,42 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         )
 
     def validate(self, attrs):
+        if self.context.get("public_submission"):
+            supplied = self.initial_data
+            if "requester_id" in supplied or "rebooked_from_id" in supplied:
+                raise serializers.ValidationError(
+                    {"detail": "Public reservations cannot name an account or existing reservation."}
+                )
         attrs = super().validate(attrs)
 
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         is_staff = bool(user and user.is_authenticated and user.is_sas_staff)
+
+        # Public reservation intake is a deliberately narrower path than the
+        # authenticated create endpoint. It accepts only a requester type and
+        # contact snapshot, never account ids, rebook lineage, or status.
+        if self.context.get("public_submission"):
+            requester_type = attrs.get("requester_type", Reservation.RequesterType.CAMPUS)
+            attrs["requester_type"] = requester_type
+            if not (attrs.get("organization") or "").strip():
+                raise serializers.ValidationError({"organization": "Organization name is required."})
+            if not (attrs.get("contact_person") or "").strip():
+                raise serializers.ValidationError({"contact_person": "Contact person is required."})
+            if not (attrs.get("contact_email") or "").strip():
+                raise serializers.ValidationError({"contact_email": "Contact email is required."})
+            phone = re.sub(r"[\s\-()]", "", str(attrs.get("contact_phone") or ""))
+            if re.fullmatch(r"639\d{9}", phone):
+                phone = f"+{phone}"
+            if not (re.fullmatch(r"09\d{9}", phone) or re.fullmatch(r"\+639\d{9}", phone)):
+                raise serializers.ValidationError({"contact_phone": "Enter a valid Philippine mobile number."})
+            attrs["contact_phone"] = phone
+            if requester_type == Reservation.RequesterType.EXTERNAL:
+                if not attrs.get("organization_type"):
+                    raise serializers.ValidationError({"organization_type": "Organization type is required."})
+            else:
+                attrs["organization_type"] = ""
+            return attrs
 
         # Rebook lineage: resolve and authorise the referenced expired
         # reservation. This runs BEFORE the requester is resolved so a staff
@@ -766,6 +814,11 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 organization = user.organization_ref
                 attrs["_organization_ref"] = organization
                 attrs["organization"] = organization.organization_name
+                # Snapshot the verified profile address (never a client value)
+                # so the shared reservation detail keeps the same information
+                # the retired guest form used to collect.
+                if not (attrs.get("organization_address") or "").strip():
+                    attrs["organization_address"] = organization.address
                 attrs["organization_type"] = (
                     Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
                         organization.organization_type,
@@ -780,8 +833,10 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 raise serializers.ValidationError(
                     {
                         "requester_type": (
-                            "Only SAS staff can create external reservations here. "
-                            "External requesters should use the public reservation page."
+                            "Only SAS staff can create an external reservation on "
+                            "another organization's behalf through the authenticated "
+                            "endpoint. External requesters should use the public "
+                            "reservation form."
                         )
                     }
                 )
@@ -858,7 +913,11 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
 
         # Who the reservation is FOR: someone on whose behalf staff booked,
         # the external-organization member themselves, or the signed-in user.
-        if on_behalf_of is not None:
+        if self.context.get("public_submission"):
+            # Public requests always stay guest-owned, even if someone happens
+            # to have an authenticated staff/requester cookie in this browser.
+            requester = None
+        elif on_behalf_of is not None:
             requester = on_behalf_of
         elif organization_ref is not None and authenticated:
             requester = user
@@ -874,7 +933,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             requester_type=requester_type,
             organization_ref=organization_ref,
             rebooked_from=rebooked_from,
-            created_by=user if authenticated else None,
+            created_by=(user if authenticated and not self.context.get("public_submission") else None),
         )
         for item in items:
             ReservationItem.objects.create(
@@ -972,82 +1031,6 @@ class ReservationResubmitSerializer(
         return instance
 
 
-class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSerializer):
-    """Public reservation submission for external requesters (no account).
-
-    Always creates an EXTERNAL reservation with the requester's contact
-    details; the reservation enters the normal pending review queue.
-    """
-
-    items = serializers.ListField(
-        child=serializers.DictField(), write_only=True, required=False
-    )
-    facility_id = serializers.IntegerField(write_only=True)
-    # Optional free-text detail — see ReservationCreateSerializer above.
-    special_requirements = serializers.CharField(
-        required=False, allow_blank=True, default=""
-    )
-
-    class Meta:
-        model = Reservation
-        fields = (
-            "facility_id",
-            "date",
-            "start_time",
-            "end_time",
-            "event_name",
-            "event_type",
-            "organization",
-            "organization_type",
-            "purpose",
-            "description",
-            "expected_participants",
-            "contact_person",
-            "contact_email",
-            "special_requirements",
-            "items",
-        )
-
-    def validate(self, attrs):
-        attrs = super().validate(attrs)
-        # External reservations are always requester_type EXTERNAL and require
-        # full contact details for tracking + coordination.
-        attrs["requester_type"] = Reservation.RequesterType.EXTERNAL
-        for field, label in (
-            ("organization", "Organization / school name"),
-            ("contact_person", "Contact person"),
-            ("contact_email", "Email address"),
-        ):
-            if not (attrs.get(field) or "").strip():
-                raise serializers.ValidationError({field: f"{label} is required."})
-        if not attrs.get("organization_type"):
-            # Optional but recommended; default sensibly instead of failing.
-            attrs["organization_type"] = Reservation.OrganizationType.OTHER
-        return attrs
-
-    def create(self, validated_data):
-        items = validated_data.pop("items", [])
-        facility_id = validated_data.pop("facility_id")
-        validated_data.pop("_availability_report", None)
-        validated_data.pop("requester_type", None)
-        reservation = Reservation.objects.create(
-            **validated_data,
-            facility_id=facility_id,
-            requester=None,  # external requesters have no account
-            requester_type=Reservation.RequesterType.EXTERNAL,
-        )
-        for item in items:
-            ReservationItem.objects.create(
-                reservation=reservation,
-                equipment_id=item["equipment_id"],
-                quantity=item.get("quantity", 1),
-                operator_requested=item.get("operator"),
-            )
-        # The backend computes and snapshots the amount from the reservation's
-        # own fields. Any client-supplied total is ignored by construction.
-        snapshot_reservation_fees(reservation)
-        return reservation
-
 
 # ---------------------------------------------------------------------------
 # Public (unauthenticated) payloads — deliberately minimal, never leaking
@@ -1058,33 +1041,17 @@ class GuestReservationCreateSerializer(_ReservationCreateMixin, serializers.Mode
 class PublicTrackSerializer(serializers.Serializer):
     """Limited reservation view returned by the public tracking endpoint.
 
-    Contains only what the requester already knows (their own contact details,
-    event, schedule, resources, status) — never other reservations' data,
-    internal notes, approval history, or check-in codes.
+    Contains only public tracking information. Contact details, administrative
+    notes, approval history, fee records, and check-in codes are never exposed.
     """
 
     reservation_id = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)
-    status_label = serializers.CharField(read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
     event_name = serializers.CharField(read_only=True)
-    event_type_label = serializers.CharField(read_only=True)
     organization = serializers.CharField(read_only=True)
-    organization_type_label = serializers.CharField(read_only=True, default="")
-    contact_person = serializers.CharField(read_only=True)
-    contact_email = serializers.EmailField(read_only=True)
-    facility = serializers.CharField(read_only=True)
-    facility_id = serializers.IntegerField(read_only=True)
+    facility = serializers.CharField(source="facility.name", read_only=True)
     date = serializers.DateField(read_only=True)
     start_time = serializers.TimeField(read_only=True)
     end_time = serializers.TimeField(read_only=True)
-    expected_participants = serializers.IntegerField(read_only=True)
-    purpose = serializers.CharField(read_only=True)
-    resources = serializers.SerializerMethodField()
-    estimated_total = serializers.DecimalField(
-        max_digits=12, decimal_places=2, read_only=True
-    )
-    fees = ReservationFeeSerializer(many=True, read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
-
-    def get_resources(self, obj):
-        return [f"{item.quantity}× {item.equipment.name}" for item in obj.items.all()]
