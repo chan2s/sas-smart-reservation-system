@@ -961,8 +961,7 @@ export function ReservationWizardPage() {
                 className="font-semibold underline underline-offset-2"
               >
                 reservation tracking page
-              </Link>{' '}
-              using the representative email from your request.
+              </Link>.
             </p>
           )}
 

@@ -79,12 +79,12 @@ class PublicApprovalDocumentTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         return Reservation.objects.get(pk=response.json()["id"])
 
-    def test_tracking_requires_matching_email_and_returns_only_public_fields(self):
+    def test_tracking_by_reference_returns_only_public_fields(self):
         reservation = self.submit_public()
 
         response = self.client.post(
             TRACK_URL,
-            {"reservation_id": reservation.reservation_id, "contact_email": "alex@example.org"},
+            {"reservation_id": reservation.reservation_id},
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.content)
@@ -93,15 +93,8 @@ class PublicApprovalDocumentTests(TestCase):
         for private in ("contact_email", "contact_person", "contact_phone", "notes", "approval_letter_image"):
             self.assertNotIn(private, response.json())
 
-        for email in ("wrong@example.org", ""):
-            denied = self.client.post(
-                TRACK_URL,
-                {"reservation_id": reservation.reservation_id, "contact_email": email},
-                format="json",
-            )
-            self.assertEqual(denied.status_code, 404)
-        for payload in ({"reservation_id": "SAS-2099-99999", "contact_email": "alex@example.org"},
-                        {"reservation_id": reservation.reservation_id}):
+        for payload in ({}, {"reservation_id": ""},
+                        {"reservation_id": "SAS-2099-99999"}):
             denied = self.client.post(TRACK_URL, payload, format="json")
             self.assertEqual(denied.status_code, 404)
 
@@ -125,7 +118,7 @@ class PublicApprovalDocumentTests(TestCase):
         )
         response = self.client.post(
             TRACK_URL,
-            {"reservation_id": reservation.reservation_id, "contact_email": requester.email},
+            {"reservation_id": reservation.reservation_id},
             format="json",
         )
         self.assertEqual(response.status_code, 404)
@@ -146,7 +139,6 @@ class PublicApprovalDocumentTests(TestCase):
             UPLOAD_URL,
             {
                 "reservation_id": reservation.reservation_id,
-                "contact_email": "alex@example.org",
                 "approval_letter_image": SimpleUploadedFile(
                     "authorization.png", png_bytes(), content_type="image/png"
                 ),

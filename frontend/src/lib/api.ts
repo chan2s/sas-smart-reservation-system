@@ -660,15 +660,13 @@ export const endpoints = {
   },
   trackPublicReservation: (token: string) =>
     api.post<PublicReservationTracking>('/api/public/reservations/track/', { token }),
-  trackReservationById: (reservation_id: string, contact_email: string) =>
+  trackReservationById: (reservation_id: string) =>
     api.post<PublicReservationTracking>('/api/public/reservations/track/', {
       reservation_id,
-      contact_email,
     }),
-  uploadPublicApprovalLetter: (reservation_id: string, contact_email: string, file: File) => {
+  uploadPublicApprovalLetter: (reservation_id: string, file: File) => {
     const form = new FormData()
     form.append('reservation_id', reservation_id)
-    form.append('contact_email', contact_email)
     form.append('approval_letter_image', file)
     return api.postForm<PublicReservationTracking>(
       '/api/public/reservations/approval-letter/',

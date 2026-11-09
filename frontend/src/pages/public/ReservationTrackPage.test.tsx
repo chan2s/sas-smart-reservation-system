@@ -57,32 +57,27 @@ afterEach(() => {
 })
 
 describe('ReservationTrackPage', () => {
-  it('tracks a direct reservation ID URL after representative email verification', async () => {
+  it('tracks a direct reservation ID without asking for representative email', async () => {
     apiState.track.mockResolvedValue(result)
     renderPage()
 
     expect(screen.getByText('Enter your reservation ID to check the current status of your reservation request.')).toBeTruthy()
-    fireEvent.change(screen.getByLabelText('Representative email'), {
-      target: { value: 'alex@example.org' },
-    })
+    expect(screen.queryByLabelText(/representative email/i)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
 
     await waitFor(() => {
-      expect(apiState.track).toHaveBeenCalledWith('SAS-2026-00024', 'alex@example.org')
+      expect(apiState.track).toHaveBeenCalledWith('SAS-2026-00024')
     })
     expect(await screen.findByText('Community Assembly')).toBeTruthy()
   })
 
-  it('shows a friendly message for an invalid reservation ID/email pair', async () => {
+  it('shows a friendly message for an invalid reservation ID', async () => {
     apiState.track.mockRejectedValue(new Error('Not found'))
     renderPage()
-    fireEvent.change(screen.getByLabelText('Representative email'), {
-      target: { value: 'wrong@example.org' },
-    })
     fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      "We couldn't find a reservation matching that ID and representative email.",
+      "We couldn't find a reservation with that ID.",
     )
   })
 })

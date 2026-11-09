@@ -1,7 +1,7 @@
 """Public reservation tracking and compatibility for old signed links.
 
-The current public path uses a reservation reference plus representative email.
-Previously emailed signed links remain valid and expose the same minimal view.
+The current public path uses the reservation reference alone. Previously
+emailed signed links remain valid and expose the same minimal view.
 """
 
 from datetime import date, time

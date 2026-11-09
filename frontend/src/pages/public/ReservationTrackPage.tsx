@@ -15,19 +15,18 @@ import { BrandMark } from '@/components/auth/AuthPanel'
 /**
  * Public status view for a guest reservation request.
  *
- * Public guest reservation status is available with a reservation ID and email;
+ * Public guest reservation status is available with a reservation ID.
  * Legacy signed links are still supported.
  * The page deliberately reuses the application's own design tokens and
  * components — it is not a second portal. It exposes only the minimal status
- * payload returned by the representative-email-verified endpoint.
+ * payload returned by the public tracking endpoint.
  */
 export function ReservationTrackPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const urlToken = searchParams.get('token') ?? ''
   const urlReference = searchParams.get('reservation_id') ?? ''
   const [reservationInput, setReservationInput] = useState(urlReference)
-  const [emailInput, setEmailInput] = useState('')
-  const [trackingArgs, setTrackingArgs] = useState<{ token?: string; id?: string; email?: string } | null>(null)
+  const [trackingArgs, setTrackingArgs] = useState<{ token?: string; id?: string } | null>(null)
   const [approvalFile, setApprovalFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
@@ -48,8 +47,8 @@ export function ReservationTrackPage() {
     queryKey,
     queryFn: () => trackingArgs?.token
       ? endpoints.trackPublicReservation(trackingArgs.token)
-      : endpoints.trackReservationById(trackingArgs?.id ?? '', trackingArgs?.email ?? ''),
-    enabled: Boolean(trackingArgs?.token || (trackingArgs?.id && trackingArgs?.email)),
+      : endpoints.trackReservationById(trackingArgs?.id ?? ''),
+    enabled: Boolean(trackingArgs?.token || trackingArgs?.id),
     retry: false,
     staleTime: 0,
   })
@@ -57,24 +56,18 @@ export function ReservationTrackPage() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const id = reservationInput.trim().toUpperCase()
-    const email = emailInput.trim()
-    if (!id || !email) return
+    if (!id) return
     setSearchParams({ reservation_id: id }, { replace: true })
-    setTrackingArgs({ id, email })
+    setTrackingArgs({ id })
   }
 
   async function uploadApprovalLetter() {
     const id = trackingArgs?.id ?? trackQuery.data?.reservation_id
-    const email = trackingArgs?.email ?? emailInput.trim()
-    if (!approvalFile || !id || !email) return
+    if (!approvalFile || !id) return
     setUploading(true)
     setUploadError('')
     try {
-      const result = await endpoints.uploadPublicApprovalLetter(
-        id,
-        email,
-        approvalFile,
-      )
+      const result = await endpoints.uploadPublicApprovalLetter(id, approvalFile)
       queryClient.setQueryData(queryKey, result)
       setApprovalFile(null)
     } catch (error) {
@@ -140,27 +133,11 @@ export function ReservationTrackPage() {
                   className="font-mono text-sm"
                 />
               </Field>
-              <Field
-                className="mt-4"
-                label="Representative email"
-                htmlFor="tracking-email"
-                hint="Enter the contact email used for the reservation."
-              >
-                <Input
-                  id="tracking-email"
-                  type="email"
-                  autoComplete="email"
-                  value={emailInput}
-                  onChange={(event) => setEmailInput(event.target.value)}
-                  required
-                  placeholder="name@example.com"
-                />
-              </Field>
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   type="submit"
                   loading={trackQuery.isFetching}
-                  disabled={!reservationInput.trim() || !emailInput.trim()}
+                  disabled={!reservationInput.trim()}
                   icon={<Search className="size-4" aria-hidden />}
                 >
                   Track Reservation
@@ -175,7 +152,7 @@ export function ReservationTrackPage() {
               {trackQuery.isError && (
                 <p role="alert" className="mt-4 flex items-start gap-2 text-sm text-status-rejected">
                   <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  We couldn&apos;t find a reservation matching that ID and representative email. Check both values and try again.
+                  We couldn&apos;t find a reservation with that ID. Check the reservation ID and try again.
                 </p>
               )}
             </form>
@@ -200,18 +177,6 @@ export function ReservationTrackPage() {
               <p className="mt-1 text-sm leading-6 text-body">
                 Upload an image of your official event approval letter or authorization document. This document is required before your reservation can be approved.
               </p>
-              {!trackingArgs?.email && (
-                <Field className="mt-4" label="Representative email" htmlFor="upload-contact-email">
-                  <Input
-                    id="upload-contact-email"
-                    type="email"
-                    autoComplete="email"
-                    value={emailInput}
-                    onChange={(event) => setEmailInput(event.target.value)}
-                    required
-                  />
-                </Field>
-              )}
               <Field className="mt-4" label="Choose an image" htmlFor="later-approval-letter" hint="JPG, JPEG, PNG, or WEBP; maximum 5 MB.">
                 <Input
                   id="later-approval-letter"
@@ -236,7 +201,7 @@ export function ReservationTrackPage() {
               {uploadError && <p role="alert" className="mt-3 text-sm text-status-rejected">{uploadError}</p>}
               <Button
                 className="mt-4"
-                disabled={!approvalFile || !(trackingArgs?.email || emailInput.trim())}
+                disabled={!approvalFile}
                 loading={uploading}
                 icon={<Upload className="size-4" aria-hidden />}
                 onClick={() => void uploadApprovalLetter()}
@@ -249,7 +214,7 @@ export function ReservationTrackPage() {
         <div className="mt-6 flex gap-3 rounded-xl border border-line bg-surface p-4">
           <ShieldCheck className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden />
           <p className="text-xs leading-5 text-body">
-            Reservation ID and representative email are checked before status is shown. This view omits contact details, internal notes, and documents.
+            A matching reservation ID is required before status is shown. This view omits contact details, internal notes, and documents.
           </p>
         </div>
       </main>
@@ -367,7 +332,7 @@ function TrackingResult({ reservation }: { reservation: PublicReservationTrackin
 
       <div className="flex flex-col gap-3 border-t border-line p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <p className="text-xs text-muted">
-          Share your Reservation ID and representative email only with the reservation contact.
+          Share your Reservation ID only with the reservation contact.
         </p>
         <Link
           to="/login"

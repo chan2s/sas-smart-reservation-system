@@ -907,7 +907,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
         context["next_action"] = (
             "Your reservation is awaiting the required event approval letter. "
             "Approval cannot proceed until you upload it. Open the reservation "
-            "status link and enter the representative email used on the request."
+            "status link in this email to upload it."
         )
 
     try:

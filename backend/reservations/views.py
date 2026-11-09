@@ -96,11 +96,12 @@ def _trusted_requester_type(request, requested) -> str:
 @permission_classes([AllowAny])
 @throttle_classes([PublicReservationThrottle])
 def public_reservation_track(request):
-    """Resolve a guest reservation using its reference and contact email.
+    """Resolve a guest reservation from its public reference.
 
-    Old signed links remain valid for compatibility; new links use the public
-    reference plus the representative's email. Both paths return the same
-    minimal, non-sensitive response.
+    Signed links remain valid for compatibility. Reference lookups are still
+    restricted to guest reservations (never account-owned ones) and return the
+    same minimal, non-sensitive response; the strict public throttle remains
+    in force.
     """
     data = request.data if hasattr(request.data, "get") else {}
     token = data.get("token")
@@ -108,18 +109,16 @@ def public_reservation_track(request):
         reservation = reservation_for_tracking_token(token)
     else:
         reference = str(data.get("reservation_id", "")).strip().upper()
-        email = str(data.get("contact_email", "")).strip()
         reservation = None
-        if reference and email:
+        if reference:
             reservation = Reservation.objects.select_related("facility").filter(
                 reservation_id__iexact=reference,
-                contact_email__iexact=email,
                 requester__isnull=True,
                 created_by__isnull=True,
             ).first()
     if reservation is None:
         return Response(
-            {"detail": "We could not verify that reservation. Check the reservation ID and representative email."},
+            {"detail": "We could not find a reservation with that ID."},
             status=status.HTTP_404_NOT_FOUND,
         )
     return Response(PublicTrackSerializer(reservation).data)
@@ -130,21 +129,23 @@ def public_reservation_track(request):
 @permission_classes([AllowAny])
 @throttle_classes([PublicReservationThrottle])
 def public_reservation_upload_approval_letter(request):
-    """Allow the verified reservation contact to provide a missing image."""
+    """Allow the contact for a guest reservation to provide a missing image.
+
+    The lookup stays limited to guest reservations, so account-owned
+    reservations can never be modified through this public endpoint.
+    """
     data = request.data if hasattr(request.data, "get") else {}
     reference = str(data.get("reservation_id", "")).strip().upper()
-    email = str(data.get("contact_email", "")).strip()
     reservation = None
-    if reference and email:
+    if reference:
         reservation = Reservation.objects.filter(
             reservation_id__iexact=reference,
-            contact_email__iexact=email,
             requester__isnull=True,
             created_by__isnull=True,
         ).first()
     if reservation is None:
         return Response(
-            {"detail": "We could not verify that reservation. Check the reservation ID and representative email."},
+            {"detail": "We could not find a reservation with that ID."},
             status=status.HTTP_404_NOT_FOUND,
         )
     if reservation.status != Reservation.Status.PENDING:

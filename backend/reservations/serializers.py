@@ -1123,7 +1123,6 @@ class PublicTrackSerializer(serializers.Serializer):
 
 class PublicApprovalLetterUploadSerializer(serializers.Serializer):
     reservation_id = serializers.CharField(max_length=20, required=False)
-    contact_email = serializers.EmailField(required=False)
     approval_letter_image = serializers.ImageField()
 
     def validate_approval_letter_image(self, upload):
