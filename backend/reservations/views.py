@@ -732,18 +732,67 @@ class ReservationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def request_changes(self, request, pk=None):
+        """Record a revision request and email it to the requester.
+
+        The status is left to the existing workflow (never approved/rejected
+        here). The response carries the updated reservation plus the email
+        delivery result so the administrator gets immediate feedback; the
+        request itself is recorded even when delivery fails.
+        """
         reservation = self.get_object()
+        message = (request.data.get("message") or "").strip()
+        subject = (request.data.get("subject") or "").strip()
+        if not message:
+            return Response(
+                {"detail": "A revision request message is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(message) > 5000:
+            return Response(
+                {"detail": "The revision request message is too long (5000 characters maximum)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(subject) > 200:
+            return Response(
+                {"detail": "The email subject is too long (200 characters maximum)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if "\n" in subject or "\r" in subject:
+            return Response(
+                {"detail": "The email subject cannot contain line breaks."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
-            workflow.request_changes(
-                reservation, request.user, request.data.get("message", "")
+            email_sent, email_error = workflow.request_changes(
+                reservation, request.user, message, subject=subject
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(
-            ReservationDetailSerializer(
-                reservation, context={"request": request}
-            ).data
-        )
+
+        data = ReservationDetailSerializer(
+            reservation, context={"request": request}
+        ).data
+        recipient = data.get("requester_email", "")
+        if email_sent:
+            detail = f"Revision request email sent to {recipient}."
+        elif email_error == "no_email":
+            detail = (
+                "Revision request recorded, but this reservation has no "
+                "email address on file."
+            )
+        elif email_error == "configuration":
+            detail = (
+                "Revision request recorded, but email is not configured on the "
+                "server. Please contact the SAS Office."
+            )
+        else:
+            detail = (
+                "Revision request recorded, but the email could not be sent. "
+                "Please try again."
+            )
+        data["revision_email_sent"] = email_sent
+        data["revision_email_detail"] = detail
+        return Response(data)
 
     @action(detail=True, methods=["post"])
     def resubmit(self, request, pk=None):

@@ -8,8 +8,8 @@ import {
   Clock3,
   Download,
   FileSignature,
+  Mail,
   MailWarning,
-  MessageSquareWarning,
   QrCode,
   Upload,
   UserX,
@@ -52,6 +52,8 @@ export function ReservationDetailPage() {
     null | 'reject' | 'changes' | 'cancel' | 'checkin-override' | 'no-show'
   >(null)
   const [reason, setReason] = useState('')
+  const [revisionSubject, setRevisionSubject] = useState('')
+  const [revisionMessage, setRevisionMessage] = useState('')
   const [approvalImageFile, setApprovalImageFile] = useState<File | null>(null)
 
   if (isLoading || !reservation) {
@@ -111,6 +113,61 @@ export function ReservationDetailPage() {
         error instanceof ApiError && error.message
           ? error.message
           : 'Action failed — please try again.',
+        'error',
+      )
+    }
+  }
+
+  function defaultRevisionSubject() {
+    return `Action Required: Reservation Revision – ${reservation?.reservation_id ?? ''}`
+  }
+
+  function openRevisionModal() {
+    setRevisionSubject(defaultRevisionSubject())
+    setModal('changes')
+  }
+
+  /**
+   * Send an administrator's revision request by email.
+   *
+   * The request is recorded by the backend even if delivery fails; in that
+   * case the modal stays open (with the message intact) so the administrator
+   * can retry or coordinate another way. The button is disabled while the
+   * mutation is pending, which prevents duplicate submissions.
+   */
+  async function sendRevisionRequest() {
+    const current = reservation
+    if (
+      !current ||
+      action.isPending ||
+      !revisionMessage.trim() ||
+      !revisionSubject.trim()
+    ) return
+    try {
+      const result = await action.mutateAsync({
+        action: 'request_changes',
+        body: { message: revisionMessage.trim(), subject: revisionSubject.trim() },
+      })
+      if (result.revision_email_sent === false) {
+        toast(
+          result.revision_email_detail ||
+            'Revision request recorded, but the email could not be sent.',
+          'error',
+        )
+        return
+      }
+      toast(
+        result.revision_email_detail ||
+          `Revision request email sent to ${current.requester_email}.`,
+      )
+      setModal(null)
+      setRevisionMessage('')
+      setRevisionSubject('')
+    } catch (error) {
+      toast(
+        error instanceof ApiError && error.message
+          ? error.message
+          : 'Could not send the revision request — please try again.',
         'error',
       )
     }
@@ -298,10 +355,10 @@ export function ReservationDetailPage() {
           {canRequestChanges && (
             <Button
               variant="outline"
-              icon={<MessageSquareWarning className="size-4" />}
-              onClick={() => setModal('changes')}
+              icon={<Mail className="size-4" />}
+              onClick={openRevisionModal}
             >
-              Request Changes
+              Send Revision Request
             </Button>
           )}
           {canMarkNoShow && (
@@ -780,32 +837,60 @@ export function ReservationDetailPage() {
       <Modal
         open={modal === 'changes'}
         onClose={() => setModal(null)}
-        title="Request changes"
-        description="Send this reservation back to the requester with instructions."
+        title="Send Revision Request"
+        description="Email the requester the modifications needed before this reservation can proceed."
         footer={
           <>
             <Button variant="ghost" onClick={() => setModal(null)}>
               Cancel
             </Button>
             <Button
-              disabled={!reason.trim()}
-              onClick={() => runAction('request_changes', reason)}
+              icon={<Mail className="size-4" />}
+              disabled={!revisionMessage.trim() || !revisionSubject.trim()}
+              onClick={sendRevisionRequest}
               loading={action.isPending}
             >
-              Send request
+              Send Email
             </Button>
           </>
         }
       >
-        <Field label="What should change?" htmlFor="changes-message">
-          <Textarea
-            id="changes-message"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="e.g. Please adjust the end time to 5:00 PM — the AV room is reserved after that."
-            autoFocus
-          />
-        </Field>
+        <div className="space-y-4">
+          <Field label="Requester's email address" htmlFor="revision-email">
+            <Input
+              id="revision-email"
+              value={reservation.requester_email || reservation.contact_email}
+              readOnly
+              aria-readonly="true"
+              className="cursor-default bg-soft text-body focus:border-line focus:ring-0"
+            />
+          </Field>
+          <Field label="Email subject" htmlFor="revision-subject" required>
+            <Input
+              id="revision-subject"
+              value={revisionSubject}
+              onChange={(event) => setRevisionSubject(event.target.value)}
+              maxLength={200}
+              required
+            />
+          </Field>
+          <Field
+            label="Message to the requester"
+            htmlFor="revision-message"
+            hint="Explain the modifications or additional requirements."
+            required
+          >
+            <Textarea
+              id="revision-message"
+              value={revisionMessage}
+              onChange={(event) => setRevisionMessage(event.target.value)}
+              placeholder="e.g. Please adjust the end time to 5:00 PM — the AV room is reserved after that."
+              maxLength={5000}
+              autoFocus
+              required
+            />
+          </Field>
+        </div>
       </Modal>
 
       <Modal
@@ -1189,6 +1274,7 @@ function Timeline({ events }: { events: ReservationEvent[] }) {
             <p className="mt-1 text-xs text-muted">
               {event.actor_name ? `${event.actor_name} · ` : ''}
               {formatDateTime(event.created_at)}
+              {event.recipient_email ? ` · To: ${event.recipient_email}` : ''}
             </p>
           </div>
         </li>

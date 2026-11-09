@@ -10,6 +10,7 @@ from rest_framework import serializers
 from equipment.models import Equipment
 from equipment.services import unassigned_equipment_for_facility
 from facilities.models import Facility
+from notifications.email_service import resolve_requester_email
 
 from .models import (
     InspectionReport,
@@ -115,6 +116,7 @@ class ReservationEventSerializer(serializers.ModelSerializer):
             "from_status",
             "to_status",
             "message",
+            "recipient_email",
             "created_at",
         )
 
@@ -188,6 +190,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     organization_type_label = serializers.CharField(read_only=True)
     organization_code = serializers.CharField(read_only=True)
     contact_email = serializers.CharField(read_only=True)
+    # The address every notification for this reservation actually goes to
+    # (account email for campus requesters, contact email for external ones).
+    # Shown read-only in the admin revision-request dialog.
+    requester_email = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     # Human explanation of the current status — used for the expired notice.
@@ -250,6 +256,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "organization_type_label",
             "contact_person",
             "contact_email",
+            "requester_email",
             "contact_phone",
             "created_by_name",
             "expected_participants",
@@ -291,6 +298,11 @@ class ReservationListSerializer(serializers.ModelSerializer):
 
     def get_rebooked_from_reference(self, obj):
         return obj.rebooked_from.reservation_id if obj.rebooked_from_id else ""
+
+    def get_requester_email(self, obj):
+        request = self.context.get("request")
+        actor = request.user if request and request.user.is_authenticated else None
+        return resolve_requester_email(obj, actor)
 
     def get_created_by_name(self, obj):
         # "Who entered this?" is distinct from "who is it for?".

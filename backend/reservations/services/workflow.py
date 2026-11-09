@@ -19,6 +19,7 @@ from notifications.email_service import (
     send_reservation_notification,
     send_reservation_rejected,
     send_reservation_reminder,
+    send_reservation_revision_request,
     send_reservation_submitted,
     resolve_requester_email,
 )
@@ -50,7 +51,15 @@ class CancellationWindowError(Exception):
     HTTP 403."""
 
 
-def record_event(reservation, event_type, actor=None, message="", from_status="", to_status=""):
+def record_event(
+    reservation,
+    event_type,
+    actor=None,
+    message="",
+    from_status="",
+    to_status="",
+    recipient_email="",
+):
     return ReservationEvent.objects.create(
         reservation=reservation,
         actor=actor,
@@ -58,6 +67,7 @@ def record_event(reservation, event_type, actor=None, message="", from_status=""
         from_status=from_status or "",
         to_status=to_status or "",
         message=message,
+        recipient_email=recipient_email or "",
     )
 
 
@@ -514,7 +524,14 @@ def resubmit_reservation(reservation, actor, message=""):
     return reservation
 
 
-def request_changes(reservation, actor, message):
+def request_changes(reservation, actor, message, subject=""):
+    """Record an administrator's revision request and email the requester.
+
+    The status transition is the existing workflow's decision (a reviewed
+    reservation stays in / returns to PENDING); this action never approves or
+    rejects. The delivery result is returned as ``(sent, error_category)`` so
+    the API can report success/failure without undoing the recorded request.
+    """
     # Requesting changes puts a reservation back to PENDING; doing that to an
     # expired reservation would silently reopen it. Those must be rebooked.
     if reservation.status == Reservation.Status.EXPIRED:
@@ -525,6 +542,9 @@ def request_changes(reservation, actor, message):
     from_status = reservation.status
     if not message:
         raise ValueError("A change request message is required.")
+    # Resolve the recipient before recording the event so the timeline shows
+    # exactly who the revision request was sent to.
+    recipient_email = resolve_requester_email(reservation, actor)
     reservation.status = Reservation.Status.PENDING
     reservation.save(update_fields=["status", "updated_at"])
     changes_event = record_event(
@@ -534,6 +554,7 @@ def request_changes(reservation, actor, message):
         from_status=from_status,
         to_status=reservation.status,
         message=message,
+        recipient_email=recipient_email,
     )
     notify(
         reservation.requester,
@@ -551,7 +572,12 @@ def request_changes(reservation, actor, message):
         exclude_user=actor,
         event_key=_event_notification_key(changes_event, "changes-requested-staff"),
     )
-    return reservation
+    # Email the requester through the existing notification infrastructure.
+    # A failed send never rolls back the recorded request: the administrator
+    # sees the failure and can send another revision request.
+    return send_reservation_revision_request(
+        reservation, actor, message, subject=subject
+    )
 
 
 def cancellation_eligibility(reservation, user):

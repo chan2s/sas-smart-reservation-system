@@ -116,6 +116,15 @@ BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
 #: Subject of the signed approval-letter delivery email.
 APPROVAL_LETTER_SUBJECT = "Approved Reservation Letter - {letter_id}"
 
+#: Default subject of an administrator's revision request. The claim reference
+#: makes the email easy to find in a requester's inbox.
+REVISION_REQUEST_SUBJECT = "Action Required: Reservation Revision – {reservation_id}"
+
+#: Closing instruction shown in a revision-request email.
+REVISION_REQUEST_NEXT_ACTION = (
+    "Please coordinate with the SAS Office regarding the requested modifications."
+)
+
 
 def send_approval_letter_signed(letter, recipient_email: str) -> tuple[bool, Optional[str]]:
     """Email the SIGNED approval letter (PDF attached) to the requester.
@@ -503,6 +512,117 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
         reason = _classify_email_error(exc)
         logger.error(
             "Approval email FAILED for reservation %s (recipient present, "
+            "domain: %s; %s): %s",
+            reservation.reservation_id,
+            email.split("@")[1] if "@" in email else "unknown",
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        return False, reason
+
+
+def send_reservation_revision_request(
+    reservation,
+    actor,
+    message: str,
+    subject: str = "",
+) -> tuple[bool, Optional[str]]:
+    """Email the requester an administrator's revision request.
+
+    Reuses the same branded template context and ``_deliver`` SMTP path as the
+    approval email. The reservation's status is NOT changed here — the workflow
+    records the request and this function only delivers it.
+
+    Returns ``(success, error_category)`` with the same categories as
+    :func:`send_reservation_approved` (``no_email`` when the reservation has no
+    usable recipient address).
+    """
+    email = resolve_requester_email(reservation, actor)
+    if not email:
+        return False, "no_email"
+
+    # The subject is user-editable in the admin modal. Collapse line breaks so
+    # a crafted value can never inject additional email headers.
+    safe_subject = " ".join((subject or "").split())
+    if not safe_subject:
+        safe_subject = REVISION_REQUEST_SUBJECT.format(
+            reservation_id=reservation.reservation_id
+        )
+
+    try:
+        context = build_reservation_context(
+            reservation,
+            status=reservation.status,
+            status_label=reservation.get_status_display(),
+            message=message,
+            next_action=REVISION_REQUEST_NEXT_ACTION,
+        )
+    except ImproperlyConfigured:
+        return False, "configuration"
+
+    context.update(
+        {
+            "subject": safe_subject,
+            "administrator_message": message,
+            "requested_by": (
+                actor.display_name
+                if actor and getattr(actor, "display_name", "")
+                else "SAS Office"
+            ),
+        }
+    )
+
+    try:
+        html_message = render_to_string(
+            "emails/reservation_revision_request.html", context
+        )
+        plain_message = render_to_string(
+            "emails/reservation_revision_request.txt", context
+        )
+    except Exception as exc:
+        logger.error(
+            "Revision-request email template render failed for %s: %s",
+            reservation.reservation_id,
+            str(exc)[:200],
+        )
+        return False, _classify_email_error(exc)
+
+    try:
+        mail = EmailMultiAlternatives(
+            subject=safe_subject,
+            body=plain_message,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+            ),
+            to=[email],
+        )
+        mail.attach_alternative(html_message, "text/html")
+        sent, send_exc = _deliver(mail)
+        if sent:
+            logger.info(
+                "Revision-request email accepted (%d message) for reservation %s "
+                "(recipient present, domain: %s).",
+                sent,
+                reservation.reservation_id,
+                email.split("@")[1] if "@" in email else "unknown",
+            )
+            return True, None
+        if send_exc is not None:
+            reason = _classify_email_error(send_exc)
+            logger.error(
+                "Revision-request email FAILED for reservation %s (recipient "
+                "present, domain: %s; %s: %s).",
+                reservation.reservation_id,
+                email.split("@")[1] if "@" in email else "unknown",
+                type(send_exc).__name__,
+                str(send_exc)[:200],
+            )
+            return False, reason
+        return False, "smtp"
+    except Exception as exc:  # noqa: BLE001 — delivery must not undo the request
+        reason = _classify_email_error(exc)
+        logger.error(
+            "Revision-request email FAILED for reservation %s (recipient present, "
             "domain: %s; %s): %s",
             reservation.reservation_id,
             email.split("@")[1] if "@" in email else "unknown",

@@ -698,6 +698,8 @@ export interface ReservationEvent {
   event_type_label: string
   actor: number | null
   actor_name: string
+  /** Recipient of an email recorded by this event (e.g. a revision request). */
+  recipient_email?: string
   from_status: string
   to_status: string
   message: string
@@ -733,6 +735,8 @@ export interface ReservationSummary {
   expected_participants: number
   contact_person: string
   contact_email: string
+  /** Address notifications for this reservation are actually sent to. */
+  requester_email: string
   /** Contact mobile number, or null for reservations created before the field existed. */
   contact_phone: string | null
   created_by_name: string

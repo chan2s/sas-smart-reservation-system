@@ -816,7 +816,13 @@ export const endpoints = {
   resubmitReservation: (id: number, payload: ResubmitReservationPayload) =>
     api.post<ReservationDetail>(`/api/reservations/${id}/resubmit/`, payload),
   reservationAction: (id: number, action: string, body: Record<string, unknown> = {}) =>
-    api.post<ReservationDetail>(`/api/reservations/${id}/${action}/`, body),
+    api.post<
+      ReservationDetail & {
+        /** Present on the request_changes action only. */
+        revision_email_sent?: boolean
+        revision_email_detail?: string
+      }
+    >(`/api/reservations/${id}/${action}/`, body),
   /** Staff-only: resend the approval email for an approved reservation. */
   retryApprovalEmail: (id: number) =>
     api.post<{

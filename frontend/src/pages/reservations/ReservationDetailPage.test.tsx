@@ -92,6 +92,7 @@ function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDet
     expected_participants: 50,
     contact_person: '',
     contact_email: 'maria@school.edu',
+    requester_email: 'maria@school.edu',
     contact_phone: null,
     created_by_name: '',
     special_requirements: '',
@@ -215,6 +216,131 @@ describe('ReservationDetailPage approval email status', () => {
     renderPage()
 
     expect(screen.queryByRole('button', { name: /resend email/i })).toBeNull()
+  })
+})
+
+describe('ReservationDetailPage revision request', () => {
+  function revisionButton() {
+    return screen.queryByRole('button', { name: /send revision request/i })
+  }
+
+  beforeEach(() => {
+    state.reservation = reservation({ status: 'PENDING', status_label: 'Pending' })
+  })
+
+  it('renames the action and opens the revision dialog', () => {
+    renderPage()
+
+    expect(revisionButton()).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /request changes/i })).toBeNull()
+
+    fireEvent.click(revisionButton() as HTMLElement)
+    const dialog = screen.getByRole('dialog', { name: 'Send Revision Request' })
+    expect(dialog).toBeTruthy()
+
+    const email = within(dialog).getByLabelText(
+      "Requester's email address",
+    ) as HTMLInputElement
+    expect(email.value).toBe('maria@school.edu')
+    expect(email.readOnly).toBe(true)
+
+    const subject = within(dialog).getByLabelText('Email subject') as HTMLInputElement
+    expect(subject.value).toBe('Action Required: Reservation Revision – SAS-2026-00007')
+    expect(within(dialog).getByLabelText('Message to the requester')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(
+      (within(dialog).getByRole('button', { name: 'Send Email' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+  })
+
+  it('sends the editable subject and message and reports success', async () => {
+    state.mutateAsync.mockResolvedValue({
+      revision_email_sent: true,
+      revision_email_detail: 'Revision request email sent to maria@school.edu.',
+    })
+    renderPage()
+
+    fireEvent.click(revisionButton() as HTMLElement)
+    const dialog = screen.getByRole('dialog', { name: 'Send Revision Request' })
+
+    fireEvent.change(within(dialog).getByLabelText('Email subject'), {
+      target: { value: 'Room layout revision' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Message to the requester'), {
+      target: { value: 'Please adjust the end time to 5:00 PM.' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send Email' }))
+
+    await waitFor(() =>
+      expect(state.mutateAsync).toHaveBeenCalledWith({
+        action: 'request_changes',
+        body: {
+          subject: 'Room layout revision',
+          message: 'Please adjust the end time to 5:00 PM.',
+        },
+      }),
+    )
+    await waitFor(() =>
+      expect(state.toast).toHaveBeenCalledWith(
+        'Revision request email sent to maria@school.edu.',
+      ),
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Send Revision Request' }),
+      ).toBeNull(),
+    )
+  })
+
+  it('keeps the dialog open and reports a delivery failure', async () => {
+    state.mutateAsync.mockResolvedValue({
+      revision_email_sent: false,
+      revision_email_detail:
+        'Revision request recorded, but the email could not be sent. Please try again.',
+    })
+    renderPage()
+
+    fireEvent.click(revisionButton() as HTMLElement)
+    const dialog = screen.getByRole('dialog', { name: 'Send Revision Request' })
+    fireEvent.change(within(dialog).getByLabelText('Message to the requester'), {
+      target: { value: 'Please add two more tables.' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send Email' }))
+
+    await waitFor(() =>
+      expect(state.toast).toHaveBeenCalledWith(
+        'Revision request recorded, but the email could not be sent. Please try again.',
+        'error',
+      ),
+    )
+    expect(
+      screen.getByRole('dialog', { name: 'Send Revision Request' }),
+    ).toBeTruthy()
+  })
+
+  it('shows the backend error and keeps the dialog open when sending fails', async () => {
+    state.mutateAsync.mockRejectedValue(
+      new ApiError(400, 'A revision request message is required.'),
+    )
+    renderPage()
+
+    fireEvent.click(revisionButton() as HTMLElement)
+    const dialog = screen.getByRole('dialog', { name: 'Send Revision Request' })
+    fireEvent.change(within(dialog).getByLabelText('Message to the requester'), {
+      target: { value: 'Please revise.' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send Email' }))
+
+    await waitFor(() =>
+      expect(state.toast).toHaveBeenCalledWith(
+        'A revision request message is required.',
+        'error',
+      ),
+    )
+    expect(
+      screen.getByRole('dialog', { name: 'Send Revision Request' }),
+    ).toBeTruthy()
   })
 })
 

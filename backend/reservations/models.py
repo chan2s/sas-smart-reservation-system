@@ -869,6 +869,12 @@ class ReservationEvent(models.Model):
     )
     to_status = models.CharField(max_length=16, blank=True, choices=Reservation.Status.choices)
     message = models.TextField(blank=True)
+    # Recipient of an email sent as part of this event (e.g. an administrator's
+    # revision request). Blank for timeline events that send no email.
+    recipient_email = models.EmailField(
+        blank=True,
+        help_text="Email recipient for communications recorded by this event.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

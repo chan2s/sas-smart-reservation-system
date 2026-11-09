@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import {
   Bell,
-  CalendarDays,
   ChevronDown,
   LogOut,
   Menu,
@@ -13,6 +12,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useUnreadCount } from '@/hooks/queries'
 import { NotificationCenter } from '@/components/notifications/NoShowAlerts'
 import { Avatar } from '@/components/ui/Misc'
+import { BrandMark } from '@/components/auth/AuthPanel'
 import { Dropdown, MenuItem } from '@/components/ui/Dropdown'
 import { cn } from '@/lib/utils'
 import {
@@ -28,18 +28,8 @@ import {
 
 export function Brand() {
   return (
-    <Link to="/" className="flex min-w-0 items-center gap-2.5 rounded-lg focus-ring">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm sm:size-10">
-        <CalendarDays className="size-5" aria-hidden />
-      </div>
-      <div className="min-w-0 leading-tight">
-        <p className="truncate text-sm font-bold tracking-tight text-ink sm:text-base">
-          SAS RESERVE
-        </p>
-        <p className="hidden truncate text-[11px] font-medium uppercase tracking-[0.12em] text-muted sm:block">
-          Facility &amp; Resources
-        </p>
-      </div>
+    <Link to="/" className="min-w-0 rounded-lg focus-ring" aria-label="SAS Reserve home">
+      <BrandMark onDark />
     </Link>
   )
 }
@@ -53,7 +43,7 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav
       aria-label="Primary"
-      className="hidden min-w-0 items-center gap-0.5 rounded-full border border-line bg-soft p-1 xl:inline-flex"
+      className="hidden min-w-0 items-center gap-5 xl:inline-flex 2xl:gap-7"
     >
       {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
         <NavLink
@@ -63,15 +53,19 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors duration-150',
+              'relative flex flex-col items-center gap-1 whitespace-nowrap text-[13px] font-medium transition-colors duration-150 2xl:text-sm',
               isActive
-                ? 'bg-brand text-white shadow-sm'
-                : 'text-body hover:bg-softer hover:text-ink',
+                ? 'text-white'
+                : 'text-white/70 hover:text-white',
             )
           }
         >
-          <item.icon className="size-4" aria-hidden />
-          {item.label}
+          {({ isActive }) => (
+            <>
+              {item.label}
+              <span aria-hidden className={cn('h-0.5 rounded-full bg-[var(--nav-accent)] transition-all duration-300', isActive ? 'w-5 opacity-100' : 'w-0 opacity-0')} />
+            </>
+          )}
         </NavLink>
       ))}
     </nav>
@@ -94,13 +88,13 @@ function HeaderActions() {
       {!isApprovalLettersOnly && (
         <div className="relative hidden 2xl:block">
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/50"
             aria-hidden
           />
           <input
             type="search"
             placeholder="Search…"
-            className="h-9 w-44 rounded-full border border-line bg-soft pl-9 pr-4 text-sm text-ink placeholder:text-muted transition-colors duration-150 hover:border-line-strong focus:w-56 focus:border-brand focus:bg-surface focus:outline-none focus:ring-4 focus:ring-brand/10"
+            className="h-9 w-44 rounded-xl border border-white/15 bg-white/5 pl-9 pr-4 text-sm text-white placeholder:text-white/50 transition-colors duration-150 hover:border-white/30 focus:w-56 focus:border-brand focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-brand/20"
           />
         </div>
       )}
@@ -108,7 +102,7 @@ function HeaderActions() {
         <button
           type="button"
           onClick={() => navigate('/reservations')}
-          className="flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink 2xl:hidden"
+          className="flex size-9 items-center justify-center rounded-xl text-white/75 transition-colors duration-150 hover:bg-white/10 hover:text-white 2xl:hidden"
           aria-label="Search reservations, facilities, equipment"
         >
           <Search className="size-5" aria-hidden />
@@ -125,9 +119,9 @@ function HeaderActions() {
            * bottom navigation (max height reserves header + nav + safe area).
            * From `sm` up it falls back to the original right-aligned panel.
            */
-          panelClassName="fixed left-3 right-3 top-[4.25rem] flex max-h-[calc(100dvh_-_8.5rem_-_env(safe-area-inset-bottom))] w-auto max-w-[min(27rem,calc(100vw_-_24px))] flex-col overflow-hidden rounded-xl border border-line bg-surface p-1.5 shadow-pop animate-fade-up sm:absolute sm:top-full sm:left-auto sm:right-0 sm:mt-2 sm:max-h-[70vh] sm:w-[27rem]"
+            panelClassName="fixed left-3 right-3 top-[5.5rem] flex max-h-[calc(100dvh_-_9.75rem_-_env(safe-area-inset-bottom))] w-auto max-w-[min(27rem,calc(100vw_-_24px))] flex-col overflow-hidden rounded-xl border border-line bg-surface p-1.5 shadow-pop animate-fade-up sm:absolute sm:top-full sm:left-auto sm:right-0 sm:mt-2 sm:max-h-[70vh] sm:w-[27rem]"
           trigger={
-            <span className="relative flex size-9 items-center justify-center rounded-full text-body transition-colors duration-150 hover:bg-soft hover:text-ink">
+            <span className="relative flex size-9 items-center justify-center rounded-xl text-white/75 transition-colors duration-150 hover:bg-white/10 hover:text-white">
               <Bell className="size-5" aria-label="Notifications" />
               {(unread?.count ?? 0) > 0 && (
                 <span className="absolute right-1 top-1 flex min-w-[17px] items-center justify-center rounded-full bg-brand px-1 py-px text-[10px] font-bold text-white ring-2 ring-surface">
@@ -145,15 +139,15 @@ function HeaderActions() {
       <Dropdown
         align="right"
         trigger={
-          <span className="flex items-center gap-2 rounded-full p-1 pr-2 transition-colors duration-150 hover:bg-soft">
+            <span className="flex items-center gap-2 rounded-xl p-1 pr-2 transition-colors duration-150 hover:bg-white/10">
             <Avatar name={user?.display_name ?? '?'} size="sm" />
             {/* The name block only appears once the pill nav and the actions
                 both fit comfortably — below 2xl it collapses to the avatar. */}
             <span className="hidden text-left leading-tight 2xl:block">
-              <span className="block text-[13px] font-semibold text-ink">
+              <span className="block text-[13px] font-semibold text-white">
                 {user?.display_name ?? 'Administrator'}
               </span>
-              <span className="block text-[11px] text-muted">
+              <span className="block text-[11px] text-white/60">
                 {isApprovalLettersOnly
                   ? 'Assistant Campus Director for Administration and Finance'
                   : user?.role === 'ADMIN'
@@ -167,7 +161,7 @@ function HeaderActions() {
                           'Requester'}
               </span>
             </span>
-            <ChevronDown className="hidden size-3.5 text-muted 2xl:block" aria-hidden />
+            <ChevronDown className="hidden size-3.5 text-white/60 2xl:block" aria-hidden />
           </span>
         }
       >
@@ -273,18 +267,18 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
         onClick={onClose}
         aria-hidden
       />
-      <div className="absolute inset-x-3 top-3 max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-2xl border border-line bg-surface p-3 shadow-float animate-fade-up">
+      <div className="absolute inset-x-3 top-3 max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-2xl border border-white/10 bg-[var(--nav-background)] p-4 shadow-float animate-fade-up">
         <div className="flex items-center justify-between px-1 pb-2">
           <Brand />
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-muted transition-colors hover:bg-soft hover:text-ink"
+            className="rounded-xl p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
             aria-label="Close navigation"
           >
             <X className="size-5" />
           </button>
         </div>
-        <nav aria-label="Mobile" className="space-y-1 border-t border-line pt-3">
+        <nav aria-label="Mobile" className="space-y-1 border-t border-white/10 pt-3">
           {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
             <NavLink
               key={item.to}
@@ -295,8 +289,8 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
                 cn(
                   'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors duration-150',
                   isActive
-                    ? 'bg-brand text-white'
-                    : 'text-body hover:bg-soft hover:text-ink',
+                    ? 'bg-white/10 text-white'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white',
                 )
               }
             >
@@ -304,7 +298,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
               {item.label}
             </NavLink>
           ))}
-          <div className="my-2 h-px bg-line" aria-hidden />
+          <div className="my-2 h-px bg-white/10" aria-hidden />
           {!isApprovalLettersOnly && secondaryNavigation.map((item) => (
             <NavLink
               key={item.to}
@@ -314,8 +308,8 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
                 cn(
                   'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors duration-150',
                   isActive
-                    ? 'bg-brand-soft text-brand'
-                    : 'text-body hover:bg-soft hover:text-ink',
+                    ? 'bg-white/10 text-white'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white',
                 )
               }
             >
@@ -330,7 +324,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
                   key={item.to}
                   to={item.to}
                   onClick={onClose}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-body transition-colors duration-150 hover:bg-soft hover:text-ink"
+                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/70 transition-colors duration-150 hover:bg-white/10 hover:text-white"
                 >
                   <item.icon className="size-[18px]" aria-hidden />
                   {item.label}
@@ -345,7 +339,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
                   key={item.to}
                   to={item.to}
                   onClick={onClose}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-body transition-colors duration-150 hover:bg-soft hover:text-ink"
+                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/70 transition-colors duration-150 hover:bg-white/10 hover:text-white"
                 >
                   <item.icon className="size-[18px]" aria-hidden />
                   {item.label}
@@ -391,13 +385,14 @@ export function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 border-b border-line bg-surface/95 backdrop-blur">
-        <div className="mx-auto grid h-16 w-full max-w-[1600px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:h-[72px] lg:px-8">
+      <header className="sticky top-0 z-30">
+        <div className="mx-auto max-w-[1400px] px-3 pt-3 sm:px-6 sm:pt-4">
+        <div className="grid h-[64px] w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-2xl border border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] px-3 shadow-float backdrop-blur-lg sm:h-[72px] sm:gap-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-1">
             <button
               type="button"
               onClick={() => setMobileNavOpen(true)}
-              className="-ml-1.5 shrink-0 rounded-lg p-2 text-body transition-colors hover:bg-soft hover:text-ink xl:hidden"
+              className="-ml-1.5 shrink-0 rounded-xl p-2 text-white/75 transition-colors hover:bg-white/10 hover:text-white xl:hidden"
               aria-label="Open navigation"
               aria-expanded={mobileNavOpen}
               aria-controls="app-mobile-navigation"
@@ -413,6 +408,7 @@ export function Header() {
 
           <HeaderActions />
         </div>
+      </div>
       </header>
 
       <MobileMenu open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
@@ -429,7 +425,7 @@ export function MobileBottomNav() {
   return (
     <nav
       aria-label="Mobile"
-      className="fixed inset-x-0 bottom-0 z-30 flex border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 flex border-t border-white/10 bg-[var(--nav-background)]/95 pb-[env(safe-area-inset-bottom)] shadow-float backdrop-blur lg:hidden"
     >
       {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).slice(0, 5).map((item) => (
         <NavLink
@@ -439,7 +435,7 @@ export function MobileBottomNav() {
           className={({ isActive }) =>
             cn(
               'flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2.5 text-[10px] font-medium transition-colors',
-              isActive ? 'text-brand' : 'text-muted',
+              isActive ? 'text-[var(--nav-accent)]' : 'text-white/60',
             )
           }
         >

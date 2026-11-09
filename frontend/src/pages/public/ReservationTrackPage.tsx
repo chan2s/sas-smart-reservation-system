@@ -86,26 +86,28 @@ export function ReservationTrackPage() {
 
   return (
     <div className="min-h-dvh bg-soft">
-      <header className="border-b border-line bg-surface">
-        <div className="mx-auto flex min-h-[72px] w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Link to="/" aria-label="SAS Reserve home">
-            <BrandMark />
+      <header className="sticky top-0 z-30">
+        <div className="mx-auto max-w-[1400px] px-3 pt-3 sm:px-6 sm:pt-4">
+        <div className="flex min-h-[64px] w-full items-center justify-between gap-3 rounded-2xl border border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] px-4 shadow-float backdrop-blur-lg sm:min-h-[72px] sm:px-6">
+          <Link to="/" aria-label="SAS Reserve home" className="rounded-lg focus-ring">
+            <BrandMark onDark />
           </Link>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 sm:gap-2">
             <Link
               to="/login"
-              className="text-sm font-medium text-body transition-colors hover:text-ink"
+              className="hidden rounded-xl px-3.5 py-2 text-sm font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white sm:inline-flex"
             >
               Staff/Admin Login
             </Link>
             <Link
               to="/reserve"
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark"
+              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--nav-button-background)] px-3 text-xs font-semibold text-[var(--nav-button-foreground)] shadow-sm transition-colors hover:bg-brand-dark sm:h-10 sm:px-4 sm:text-sm"
             >
               Create Reservation
               <ArrowRight className="size-3.5" aria-hidden />
             </Link>
           </div>
+        </div>
         </div>
       </header>
 
