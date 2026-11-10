@@ -61,15 +61,15 @@ export function LandingNav({
         <nav
           aria-label="Primary"
           className={cn(
-            'flex items-center justify-between gap-3 rounded-2xl border px-4 backdrop-blur-md transition-all duration-300 ease-out sm:px-6',
+            'relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 rounded-2xl border px-3 py-3 backdrop-blur-md transition-all duration-300 ease-out sm:flex sm:justify-between sm:gap-3 sm:px-6 sm:py-0',
             scrolled
-              ? 'h-16 border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] shadow-float backdrop-blur-lg'
-              : 'h-[72px] bg-[var(--nav-background-applied)]',
+              ? 'min-h-16 border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] shadow-float backdrop-blur-lg sm:h-16'
+              : 'min-h-[72px] bg-[var(--nav-background-applied)] sm:h-[72px]',
           )}
         >
           <Link
             to="/"
-            className="rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-faint"
+            className="min-w-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-faint"
             aria-label="SAS Reserve — back to top"
           >
             <BrandMark onDark />
@@ -122,18 +122,16 @@ export function LandingNav({
             })}
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="col-span-2 row-start-2 flex w-full flex-wrap items-center justify-between gap-1 sm:ml-auto sm:w-auto sm:flex-nowrap sm:gap-2">
             <Link
               to="/login"
-              className="hidden rounded-xl px-3.5 py-2 text-sm font-medium text-[var(--nav-foreground-muted)] transition-colors hover:bg-white/10 hover:text-[var(--nav-foreground)] sm:inline-flex"
+              className="inline-flex whitespace-nowrap rounded-xl px-2 py-2 text-[11px] font-medium text-[var(--nav-foreground-muted)] transition-colors hover:bg-white/10 hover:text-[var(--nav-foreground)] sm:px-3.5 sm:text-sm"
             >
               Staff/Admin Login
             </Link>
-            {/* Hidden on small phones — the mobile menu carries the same link,
-                and the pill would force the brand mark to wrap at 320px. */}
             <Link
               to="/reserve"
-              className="hidden h-10 items-center gap-1.5 rounded-full bg-[var(--nav-button-background)] px-4 text-sm font-semibold text-[var(--nav-button-foreground)] shadow-sm transition-colors hover:bg-brand-dark sm:inline-flex"
+              className="inline-flex h-10 items-center gap-1 rounded-full bg-[var(--nav-button-background)] px-2 text-[11px] font-semibold text-[var(--nav-button-foreground)] shadow-sm transition-colors hover:bg-brand-dark sm:gap-1.5 sm:px-4 sm:text-sm"
             >
               Create Reservation
               <ArrowRight className="size-3.5" aria-hidden />
@@ -143,7 +141,7 @@ export function LandingNav({
               onClick={onOpenMenu}
               aria-label="Open menu"
               aria-expanded="false"
-              className="ml-1 inline-flex size-9 items-center justify-center rounded-xl text-[var(--nav-foreground)] transition-colors hover:bg-white/10 lg:hidden"
+              className="absolute right-3 top-3 inline-flex size-9 items-center justify-center rounded-xl text-[var(--nav-foreground)] transition-colors hover:bg-white/10 sm:static sm:ml-1 lg:hidden"
             >
               <Menu className="size-5" aria-hidden />
             </button>
