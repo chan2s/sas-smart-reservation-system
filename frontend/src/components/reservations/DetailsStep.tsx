@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { OtherEquipmentPicker, type OperatorConfig } from '@/components/reservations/OtherEquipmentPicker'
 import { QuantityStepper } from '@/components/reservations/QuantityStepper'
+import { ApprovalLetterCapture } from '@/components/reservations/ApprovalLetterCapture'
 import { EVENT_TYPE_OPTIONS } from '@/components/reservations/wizard-steps'
 import {
   EVENT_NAME_MAX,
@@ -403,36 +404,12 @@ export function DetailsStep({
               hint="Upload an image of your official event approval letter or authorization document. This document is required before your reservation can be approved. Optional during submission; you can provide it later. JPG, JPEG, PNG, or WEBP, up to 5 MB."
               error={approvalLetterError || undefined}
             >
-              <Input
-                id="event-approval-letter"
-                type="file"
-                accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null
-                  if (!file) {
-                    onApprovalLetterFile(null)
-                    setApprovalLetterError('')
-                    return
-                  }
-                  const extension = file.name.split('.').pop()?.toLowerCase()
-                  if (!['jpg', 'jpeg', 'png', 'webp'].includes(extension ?? '')) {
-                    onApprovalLetterFile(null)
-                    setApprovalLetterError('Choose a JPG, JPEG, PNG, or WEBP image.')
-                    event.target.value = ''
-                  } else if (file.size > 5 * 1024 * 1024) {
-                    onApprovalLetterFile(null)
-                    setApprovalLetterError('The image must be 5 MB or smaller.')
-                    event.target.value = ''
-                  } else {
-                    onApprovalLetterFile(file)
-                    setApprovalLetterError('')
-                  }
-                }}
-                aria-invalid={Boolean(approvalLetterError)}
+              <ApprovalLetterCapture
+                inputId="event-approval-letter"
+                file={approvalLetterFile}
+                onFileChange={onApprovalLetterFile}
+                onError={setApprovalLetterError}
               />
-              {approvalLetterFile && (
-                <p className="mt-1 text-xs text-muted">Selected: {approvalLetterFile.name}</p>
-              )}
             </Field>
           )}
         </div>

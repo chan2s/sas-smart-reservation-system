@@ -890,25 +890,27 @@ export function ReservationWizardPage() {
     }
 
     const isExternalRequester = (isAdmin || publicFlow) && requesterType === 'EXTERNAL'
-    const payload = toCreateReservationPayload(draft, {
-      items: itemsList,
-      // The backend resolves the same value from the authenticated user;
-      // sending it only keeps the payload self-describing.
-      organization: isExternalRequester ? external.organization : reservingAs,
-      ...(publicFlow && requesterType === 'CAMPUS'
-        ? {
-            contactEmail: external.contact_email,
-            organizationId: Number(internalOrganizationId) || undefined,
-          }
-        : {}),
-      ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
-        ? { requesterId: selectedUser.id }
-        : {}),
-      ...(isExternalRequester
-        ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
-        : {}),
+    const payload = {
+      ...toCreateReservationPayload(draft, {
+        items: itemsList,
+        // The backend resolves the same value from the authenticated user;
+        // sending it only keeps the payload self-describing.
+        organization: isExternalRequester ? external.organization : reservingAs,
+        ...(publicFlow && requesterType === 'CAMPUS'
+          ? {
+              contactEmail: external.contact_email,
+              organizationId: Number(internalOrganizationId) || undefined,
+            }
+          : {}),
+        ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
+          ? { requesterId: selectedUser.id }
+          : {}),
+        ...(isExternalRequester
+          ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
+          : {}),
+      }),
       ...(approvalLetterFile ? { approval_letter_image: approvalLetterFile } : {}),
-    })
+    }
 
     createReservation.mutate(payload, {
       onSuccess: (reservation) => {
