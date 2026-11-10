@@ -81,14 +81,14 @@ export function ReservationTrackPage() {
     <div className="min-h-dvh bg-soft">
       <header className="sticky top-0 z-30">
         <div className="mx-auto max-w-[1400px] px-3 pt-3 sm:px-6 sm:pt-4">
-        <div className="flex min-h-[64px] w-full items-center justify-between gap-3 rounded-2xl border border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] px-4 shadow-float backdrop-blur-lg sm:min-h-[72px] sm:px-6">
+        <div className="flex min-h-[64px] w-full flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-2xl border border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] px-4 py-2 shadow-float backdrop-blur-lg sm:min-h-[72px] sm:flex-nowrap sm:px-6 sm:py-0">
           <Link to="/" aria-label="SAS Reserve home" className="rounded-lg focus-ring">
             <BrandMark onDark />
           </Link>
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:flex-nowrap sm:gap-2">
             <Link
               to="/login"
-              className="hidden rounded-xl px-3.5 py-2 text-sm font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white sm:inline-flex"
+              className="inline-flex whitespace-nowrap rounded-xl px-2.5 py-2 text-xs font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white sm:px-3.5 sm:text-sm"
             >
               Staff/Admin Login
             </Link>
