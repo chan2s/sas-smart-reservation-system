@@ -147,6 +147,21 @@ class InspectionReportSerializer(serializers.ModelSerializer):
 
 def _requester_fields(obj):
     """Requester identity resolved for campus and external reservations alike."""
+    if (
+        obj.organization_ref_id
+        and obj.organization_ref.organization_type == Organization.OrganizationType.INTERNAL
+        and not obj.requester_id
+    ):
+        return {
+            "requester": obj.organization_ref.organization_name,
+            "requester_type": obj.requester_type,
+            "requester_type_label": "Internal Organization",
+            "organization": obj.organization_ref.organization_name,
+            "organization_type": Organization.OrganizationType.INTERNAL,
+            "organization_type_label": obj.organization_ref.get_organization_type_display(),
+            "contact_person": obj.contact_person,
+            "contact_email": obj.contact_email,
+        }
     if obj.requester_type == Reservation.RequesterType.EXTERNAL:
         return {
             "requester": obj.organization or obj.contact_person or "External Requester",
@@ -650,9 +665,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
     """Authenticated creation, with a narrow context for public submissions.
 
     The requester defaults to the signed-in user. Administrators may create on
-    behalf of someone else (``requester_id``) or an external organization
-    (``requester_type: EXTERNAL`` + contact fields). A client-supplied status
-    is never accepted — the view/workflow decides approval.
+    behalf of a legacy campus account or select a registered internal/external
+    organization. A client-supplied status is never accepted — the
+    view/workflow decides approval.
     """
 
     items = serializers.ListField(
@@ -674,9 +689,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         required=False,
     )
     contact_email = serializers.EmailField(required=False, allow_blank=True)
-    # Public internal requests select a registered, active campus organization.
-    # Resolved server-side so the reservation links the real record instead of
-    # trusting a client-supplied name.
+    # Public internal and staff organization requests select a registered
+    # record. The server resolves its name and type rather than trusting client
+    # snapshots.
     organization_id = serializers.IntegerField(
         write_only=True, required=False, allow_null=True
     )
@@ -796,9 +811,51 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 attrs["organization_type"] = ""
             return attrs
 
-        # Only the public campus intake accepts a selected organization id;
-        # authenticated creation resolves it from the account instead.
-        attrs.pop("organization_id", None)
+        # Admins may create directly for a registered organization. Resolve
+        # its trusted name and type here; public requests have their own
+        # narrower validation branch above.
+        selected_organization_id = attrs.pop("organization_id", None)
+        if selected_organization_id is not None:
+            if not is_staff:
+                raise serializers.ValidationError(
+                    {"organization_id": "Only SAS staff can select an organization for a reservation."}
+                )
+            requester_type = attrs.get(
+                "requester_type", Reservation.RequesterType.CAMPUS
+            )
+            organizations = Organization.objects.filter(
+                pk=selected_organization_id,
+                is_active=True,
+            )
+            if requester_type == Reservation.RequesterType.EXTERNAL:
+                organizations = organizations.exclude(
+                    organization_type=Organization.OrganizationType.INTERNAL
+                ).filter(
+                    verification_status=Organization.VerificationStatus.APPROVED
+                )
+            else:
+                organizations = organizations.filter(
+                    organization_type=Organization.OrganizationType.INTERNAL
+                )
+            organization = organizations.first()
+            if organization is None:
+                raise serializers.ValidationError(
+                    {"organization_id": "Select an active organization of the chosen type."}
+                )
+            attrs["_organization_ref"] = organization
+            attrs["organization"] = organization.organization_name
+            if organization.organization_type == Organization.OrganizationType.INTERNAL:
+                attrs["organization_type"] = ""
+            else:
+                attrs["organization_type"] = (
+                    Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
+                        organization.organization_type,
+                        Reservation.OrganizationType.OTHER,
+                    )
+                )
+                attrs["organization_address"] = organization.address
+                attrs["contact_person"] = organization.contact_person
+                attrs["contact_email"] = organization.contact_email
 
         # Rebook lineage: resolve and authorise the referenced expired
         # reservation. This runs BEFORE the requester is resolved so a staff
@@ -846,7 +903,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                     attrs.setdefault(
                         "requester_type", Reservation.RequesterType.EXTERNAL
                     )
-                elif original.requester_id:
+                elif original.requester_id and not attrs.get("_organization_ref"):
                     attrs["requester_id"] = original.requester_id
 
         # An external-organization member ALWAYS creates an external
@@ -922,7 +979,16 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             # Campus requester: defaults to the current user; staff may pick
             # another campus user to reserve on their behalf.
             requester_id = attrs.pop("requester_id", None)
-            if requester_id:
+            organization_ref = attrs.get("_organization_ref")
+            if requester_id and organization_ref:
+                raise serializers.ValidationError(
+                    {"requester_id": "Choose an organization or an individual requester, not both."}
+                )
+            if organization_ref and is_staff:
+                # The selected organization is the requester; the admin is
+                # recorded only as the creator.
+                attrs.pop("requester_id", None)
+            elif requester_id:
                 if not (user and user.is_sas_staff):
                     raise serializers.ValidationError(
                         {"requester_id": "Only SAS staff can create reservations for other users."}
@@ -997,8 +1063,11 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             requester = None
         elif on_behalf_of is not None:
             requester = on_behalf_of
-        elif organization_ref is not None and authenticated:
+        elif organization_ref is not None and authenticated and not user.is_sas_staff:
             requester = user
+        elif organization_ref is not None:
+            # Admin-selected organizations have no individual account owner.
+            requester = None
         elif authenticated and requester_type == Reservation.RequesterType.CAMPUS:
             requester = user
         else:

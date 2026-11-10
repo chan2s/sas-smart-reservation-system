@@ -280,7 +280,11 @@ export function ReservationDetailPage() {
             {reservation.requester_type === 'EXTERNAL' ? (
               <Badge tone="orange">External</Badge>
             ) : (
-              <Badge tone="brand">Campus User</Badge>
+              <Badge tone="brand">
+                {reservation.organization_type === 'INTERNAL' && !reservation.requester_id
+                  ? 'Internal Organization'
+                  : 'Campus User'}
+              </Badge>
             )}
           </div>
           <h1 className="mt-1.5 text-3xl font-semibold tracking-tight text-ink sm:text-[32px]">
@@ -678,7 +682,9 @@ export function ReservationDetailPage() {
                       ? ` · ${reservation.organization_type_label}`
                       : ''
                     }`
-                    : 'Campus User'}
+                    : reservation.organization_type === 'INTERNAL' && !reservation.requester_id
+                      ? 'Internal Organization'
+                      : 'Campus User'}
                 </p>
               </div>
             </div>

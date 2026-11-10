@@ -7,18 +7,16 @@ import {
   CheckCircle2,
   MessageSquareWarning,
   Search,
-  Users,
   WifiOff,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import {
   useAvailabilityCheck,
-  useCampusUser,
-  useCampusUsers,
   useCreateReservation,
   useFacilities,
   useFacilityResources,
   useInternalOrganizations,
+  useOrganizations,
   useReservations,
   useResubmitReservation,
 } from '@/hooks/queries'
@@ -65,9 +63,10 @@ import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
-  CampusUserOption,
   ReservationDetail,
   ReservableResource,
+  InternalOrganization,
+  Organization,
 } from '@/lib/types'
 import type { PublicReservationSubmission } from '@/lib/api'
 
@@ -272,34 +271,21 @@ export function ReservationWizardPage() {
       restored?.rebooker?.type ??
       (restored?.editRequesterType === 'EXTERNAL' ? 'EXTERNAL' : 'CAMPUS'),
   )
-  const [selectedUser, setSelectedUser] = useState<CampusUserOption | null>(null)
-  const [userSearch, setUserSearch] = useState('')
+  const [adminOrganization, setAdminOrganization] = useState<Organization | InternalOrganization | null>(null)
+  const [adminOrganizationId, setAdminOrganizationId] = useState('')
+  const [organizationSearch, setOrganizationSearch] = useState('')
   const [external, setExternal] = useState(
     () => restored?.rebooker?.external ?? EMPTY_EXTERNAL,
   )
   // Internal (account-free) requests pick from the registered, active campus
   // organizations; the id is submitted so the reservation links the real record.
   const [internalOrganizationId, setInternalOrganizationId] = useState('')
-  // Rebook: resolve the original requester account so the "who is it for" step
-  // is already satisfied for staff.
-  const seedRequester =
-    restored?.rebooker?.type === 'CAMPUS' ? restored?.rebooker?.user : undefined
-  const seedRequesterId = seedRequester?.id ?? null
-  const seededRequester = useCampusUser(seedRequesterId)
-  useEffect(() => {
-    if (!selectedUser && seededRequester.data) setSelectedUser(seededRequester.data)
-  }, [selectedUser, seededRequester.data])
-
   // In edit mode the requester step never renders, so the step list is the
   // campus one for everyone.
   const steps = publicFlow ? PUBLIC_STEPS : isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
   const stepKey: StepKey = steps[Math.min(step, steps.length - 1)].key
 
   const { data: facilities } = useFacilities(undefined, publicFlow)
-  const campusUsers = useCampusUsers(
-    userSearch,
-    Boolean(isAdmin && requesterType === 'CAMPUS' && stepKey === 'requester'),
-  )
   const dateISO = date ? format(date, 'yyyy-MM-dd') : ''
   const participantsRaw = Number(details.expectedParticipants)
   const participants = Number.isFinite(participantsRaw) && participantsRaw > 0 ? participantsRaw : 0
@@ -395,9 +381,7 @@ export function ReservationWizardPage() {
     : publicFlow
       ? external.organization.trim()
       : isAdmin
-      ? requesterType === 'CAMPUS'
-        ? selectedUser?.organization?.trim() || ''
-        : external.organization.trim()
+      ? adminOrganization?.organization_name.trim() || ''
       : accountOrganization
 
   // The requester's own most recent reservation carries the last phone number
@@ -749,9 +733,7 @@ export function ReservationWizardPage() {
           (requesterType !== 'EXTERNAL' || external.organization_type),
         )
       : true
-    : requesterType === 'CAMPUS'
-      ? selectedUser != null
-      : Boolean(external.organization.trim() && external.contact_person.trim())
+    : Boolean(adminOrganizationId)
   const stepFieldsValid =
     stepKey === 'requester'
       ? requesterStepValid
@@ -798,18 +780,9 @@ export function ReservationWizardPage() {
       )
       return
     }
-    if (stepKey === 'requester' && isAdmin && requesterType === 'CAMPUS' && !selectedUser) {
-      setStepError('Search for and select the campus user this reservation is for.')
+    if (stepKey === 'requester' && isAdmin && !adminOrganizationId) {
+      setStepError('Search for and select the organization requesting this reservation.')
       return
-    }
-    if (stepKey === 'requester' && isAdmin && requesterType === 'EXTERNAL') {
-      const missing: string[] = []
-      if (!external.organization.trim()) missing.push('Organization / school name')
-      if (!external.contact_person.trim()) missing.push('Contact person')
-      if (missing.length > 0) {
-        setStepError(`Complete the requester information: ${missing.join(', ')}.`)
-        return
-      }
     }
     if (stepKey === 'requester' && publicFlow && !requesterStepValid) {
       setStepError(
@@ -929,14 +902,13 @@ export function ReservationWizardPage() {
         // The backend resolves the same value from the authenticated user;
         // sending it only keeps the payload self-describing.
         organization: isExternalRequester ? external.organization : reservingAs,
-        ...(publicFlow && requesterType === 'CAMPUS'
+        ...(isAdmin
+          ? { organizationId: Number(adminOrganizationId) }
+          : publicFlow && requesterType === 'CAMPUS'
           ? {
               contactEmail: external.contact_email,
               organizationId: Number(internalOrganizationId) || undefined,
             }
-          : {}),
-        ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
-          ? { requesterId: selectedUser.id }
           : {}),
         ...(isExternalRequester
           ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
@@ -1148,20 +1120,33 @@ export function ReservationWizardPage() {
         )}
 
         {stepKey === 'requester' && isAdmin && (
-          <StepRequester
+          <AdminOrganizationRequesterStep
             requesterType={requesterType}
             onRequesterType={(type) => {
               setRequesterType(type)
+              setAdminOrganization(null)
+              setAdminOrganizationId('')
+              setOrganizationSearch('')
+              setExternal(EMPTY_EXTERNAL)
               setStepError(null)
             }}
-            selectedUser={selectedUser}
-            onSelectUser={setSelectedUser}
-            search={userSearch}
-            onSearch={setUserSearch}
-            searchResults={campusUsers.data?.results ?? []}
-            searching={campusUsers.isFetching}
-            external={external}
-            onExternalChange={setExternal}
+            selectedOrganizationId={adminOrganizationId}
+            onSelectOrganization={(organization) => {
+              setAdminOrganization(organization)
+              setAdminOrganizationId(String(organization.id))
+              if (organization.organization_type !== 'INTERNAL') {
+                setExternal({
+                  organization: organization.organization_name,
+                  organization_type: reservationOrganizationType(organization.organization_type),
+                  contact_person: organization.contact_person ?? '',
+                  contact_email: organization.contact_email ?? '',
+                })
+              } else {
+                setExternal(EMPTY_EXTERNAL)
+              }
+            }}
+            search={organizationSearch}
+            onSearch={setOrganizationSearch}
             showErrors={stepError != null}
           />
         )}
@@ -1251,25 +1236,18 @@ export function ReservationWizardPage() {
                   />
                   <div className="mt-4 flex items-center gap-3">
                     <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-soft text-sm font-semibold text-brand">
-                      {requesterType === 'EXTERNAL'
-                        ? (external.organization || 'E').slice(0, 2).toUpperCase()
-                        : (selectedUser?.display_name || '?')
-                            .split(' ')
-                            .map((part) => part[0])
-                            .slice(0, 2)
-                            .join('')
-                            .toUpperCase()}
+                      {(adminOrganization?.acronym || adminOrganization?.organization_name || '?')
+                        .slice(0, 2)
+                        .toUpperCase()}
                     </span>
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-ink">
-                        {requesterType === 'EXTERNAL'
-                          ? external.organization
-                          : selectedUser?.display_name}
+                        {adminOrganization?.organization_name}
                       </p>
                       <p className="text-xs text-muted">
-                        {requesterType === 'EXTERNAL'
-                          ? `External Organization · ${external.contact_person}`
-                          : `Campus User · ${selectedUser?.organization || selectedUser?.email || ''}`}
+                        {adminOrganization?.organization_type === 'INTERNAL'
+                          ? 'Internal Organization'
+                          : `External Organization · ${adminOrganization?.organization_type_label || ''}`}
                       </p>
                     </div>
                   </div>
@@ -1570,53 +1548,56 @@ const ORGANIZATION_TYPE_OPTIONS: [string, string][] = [
   ['OTHER', 'Other'],
 ]
 
-function StepRequester({
+type AdminOrganization = Organization | InternalOrganization
+
+function reservationOrganizationType(type: string): string {
+  switch (type) {
+    case 'GOVERNMENT_AGENCY': return 'GOVERNMENT'
+    case 'NGO': return 'NGO'
+    case 'PRIVATE_ORGANIZATION': return 'PRIVATE'
+    case 'COMMUNITY_ORGANIZATION': return 'COMMUNITY'
+    case 'SCHOOL_UNIVERSITY': return 'SCHOOL'
+    default: return 'OTHER'
+  }
+}
+
+export function AdminOrganizationRequesterStep({
   requesterType,
   onRequesterType,
-  selectedUser,
-  onSelectUser,
+  selectedOrganizationId,
+  onSelectOrganization,
   search,
   onSearch,
-  searchResults,
-  searching,
-  external,
-  onExternalChange,
   showErrors,
 }: {
   requesterType: 'CAMPUS' | 'EXTERNAL'
   onRequesterType: (type: 'CAMPUS' | 'EXTERNAL') => void
-  selectedUser: CampusUserOption | null
-  onSelectUser: (user: CampusUserOption | null) => void
+  selectedOrganizationId: string
+  onSelectOrganization: (organization: AdminOrganization) => void
   search: string
   onSearch: (value: string) => void
-  searchResults: CampusUserOption[]
-  searching: boolean
-  external: {
-    organization: string
-    organization_type: string
-    contact_person: string
-    contact_email: string
-  }
-  onExternalChange: (next: {
-    organization: string
-    organization_type: string
-    contact_person: string
-    contact_email: string
-  }) => void
   showErrors: boolean
 }) {
-  const setExternal = (key: keyof typeof external, value: string) =>
-    onExternalChange({ ...external, [key]: value })
-
-  const externalFieldError = (label: string, empty: boolean) =>
-    showErrors && empty ? `${label} is required.` : undefined
+  const internalQuery = useInternalOrganizations()
+  const externalQuery = useOrganizations(
+    { status: 'APPROVED', search: search.trim() || undefined },
+    requesterType === 'EXTERNAL',
+  )
+  const externalRows = Array.isArray(externalQuery.data)
+    ? externalQuery.data
+    : externalQuery.data?.results ?? []
+  const choices: AdminOrganization[] = requesterType === 'CAMPUS'
+    ? (internalQuery.data ?? []).filter((organization) => {
+        const needle = search.trim().toLowerCase()
+        return !needle || `${organization.organization_name} ${organization.acronym}`.toLowerCase().includes(needle)
+      })
+    : externalRows.filter((organization) => organization.is_active && !organization.is_internal)
 
   return (
     <section aria-label="Who is this reservation for?">
       <h2 className="text-lg font-semibold text-ink">Who is this reservation for?</h2>
       <p className="mt-1 text-sm text-body">
-        Choose the requester. This is separate from your administrator account —
-        the reservation is recorded on their behalf.
+        Select the organization requesting this reservation. You can create reservations on behalf of internal or external organizations.
       </p>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -1631,12 +1612,12 @@ function StepRequester({
         >
           <div className="flex items-start gap-3 p-4">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
-              <Users className="size-4.5" aria-hidden />
+              <Building2 className="size-4.5" aria-hidden />
             </span>
             <div>
-              <p className="text-sm font-semibold text-ink">Campus User</p>
+              <p className="text-sm font-semibold text-ink">Internal Organization</p>
               <p className="mt-0.5 text-[13px] text-body">
-                Reserve on behalf of a student, faculty, or staff account.
+                NORSU-BSC colleges, departments, offices, and recognized campus organizations.
               </p>
             </div>
           </div>
@@ -1657,129 +1638,84 @@ function StepRequester({
             <div>
               <p className="text-sm font-semibold text-ink">External Organization</p>
               <p className="mt-0.5 text-[13px] text-body">
-                Another school, government, company, or community group.
+                Outside schools, government agencies, companies, and community organizations.
               </p>
             </div>
           </div>
         </button>
       </div>
 
-      {requesterType === 'CAMPUS' ? (
-        <Card className="mt-5">
-          <CardHeader
-            title="Search campus user"
-            description="Find the account this reservation is for"
+      <Card className="mt-5">
+        <CardHeader
+          title={requesterType === 'CAMPUS' ? 'Search internal organizations' : 'Search external organizations'}
+          description={requesterType === 'CAMPUS'
+            ? 'Select a registered NORSU-BSC organization.'
+            : 'Select an active, approved external organization.'}
+        />
+        <div className="relative mt-4">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden />
+          <Input
+            type="search"
+            value={search}
+            onChange={(event) => onSearch(event.target.value)}
+            placeholder="Search organization name or acronym…"
+            className="pl-9"
+            aria-label={requesterType === 'CAMPUS' ? 'Search internal organizations' : 'Search external organizations'}
           />
-          <div className="relative mt-4">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-              aria-hidden
-            />
-            <Input
-              type="search"
-              value={search}
-              onChange={(event) => onSearch(event.target.value)}
-              placeholder="Search name, username, or email…"
-              className="pl-9"
-              aria-label="Search campus users"
-            />
-          </div>
-          {showErrors && !selectedUser && (
-            <p className="mt-2 text-xs text-status-rejected">
-              Select a campus user to continue.
-            </p>
-          )}
-          <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto">
-            {searching && searchResults.length === 0 && (
-              <p className="px-1 py-3 text-sm text-muted">Searching…</p>
-            )}
-            {!searching && searchResults.length === 0 && search.trim() && (
-              <p className="px-1 py-3 text-sm text-muted">No campus users match your search.</p>
-            )}
-            {searchResults.map((option) => {
-              const isSelected = selectedUser?.id === option.id
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => onSelectUser(option)}
-                  aria-pressed={isSelected}
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors',
-                    isSelected
-                      ? 'border-brand bg-brand-soft/40'
-                      : 'border-line hover:border-line-strong hover:bg-soft',
-                  )}
-                >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand">
-                    {option.display_name
-                      .split(' ')
-                      .map((part) => part[0])
-                      .slice(0, 2)
-                      .join('')
-                      .toUpperCase()}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-ink">{option.display_name}</p>
-                    <p className="truncate text-xs text-muted">
-                      {option.username}
-                      {option.organization ? ` · ${option.organization}` : ''}
-                    </p>
-                  </div>
-                  {isSelected && <Badge tone="brand">Selected</Badge>}
-                </button>
-              )
-            })}
-          </div>
-        </Card>
-      ) : (
-        <Card className="mt-5">
-          <CardHeader
-            title="Requester information"
-            description="Contact details for the external organization"
-          />
-          <div className="mt-4 grid gap-5 sm:grid-cols-2">
-            <Field
-              label="Organization / school name"
-              htmlFor="ext-org"
-              className="sm:col-span-2"
-              error={externalFieldError('Organization / school name', !external.organization.trim())}
-            >
-              <Input
-                id="ext-org"
-                value={external.organization}
-                onChange={(event) => setExternal('organization', event.target.value)}
-                placeholder="e.g. ABC National High School"
-              />
-            </Field>
-            <Field label="Organization type" htmlFor="ext-org-type">
-              <Select
-                id="ext-org-type"
-                value={external.organization_type}
-                onChange={(event) => setExternal('organization_type', event.target.value)}
+        </div>
+        {((requesterType === 'CAMPUS' && internalQuery.isLoading) ||
+          (requesterType === 'EXTERNAL' && externalQuery.isFetching)) && choices.length === 0 && (
+          <p className="mt-3 px-1 py-2 text-sm text-muted" role="status">Loading organizations…</p>
+        )}
+        {((requesterType === 'CAMPUS' && internalQuery.isError) ||
+          (requesterType === 'EXTERNAL' && externalQuery.isError)) && (
+          <p role="alert" className="mt-3 text-sm text-status-rejected">We couldn&apos;t load organizations. Try again.</p>
+        )}
+        {!((requesterType === 'CAMPUS' && internalQuery.isLoading) ||
+          (requesterType === 'EXTERNAL' && externalQuery.isFetching)) && choices.length === 0 && (
+          <p className="mt-3 px-1 py-2 text-sm text-muted">No organizations match your search.</p>
+        )}
+        <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+          {choices.map((organization) => {
+            const selected = String(organization.id) === selectedOrganizationId
+            const internal = organization.organization_type === 'INTERNAL'
+            return (
+              <button
+                key={organization.id}
+                type="button"
+                onClick={() => onSelectOrganization(organization)}
+                aria-pressed={selected}
+                className={cn(
+                  'flex min-h-14 w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors',
+                  selected ? 'border-brand bg-brand-soft/40' : 'border-line hover:border-line-strong hover:bg-soft',
+                )}
               >
-                {ORGANIZATION_TYPE_OPTIONS.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field
-              label="Contact person"
-              htmlFor="ext-contact"
-              error={externalFieldError('Contact person', !external.contact_person.trim())}
-            >
-              <Input
-                id="ext-contact"
-                value={external.contact_person}
-                onChange={(event) => setExternal('contact_person', event.target.value)}
-                placeholder="e.g. Juan Dela Cruz"
-              />
-            </Field>
-          </div>
-        </Card>
-      )}
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
+                  <Building2 className="size-4" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-ink">
+                    {internal && organization.acronym ? `${organization.acronym} · ` : ''}{organization.organization_name}
+                  </span>
+                  <span className="block truncate text-xs text-muted">
+                    {internal ? 'Internal Organization' : `${organization.organization_type_label} · ${organization.organization_code}`}
+                  </span>
+                </span>
+                {selected && <Badge tone="brand">Selected</Badge>}
+              </button>
+            )
+          })}
+        </div>
+        {showErrors && !selectedOrganizationId && (
+          <p className="mt-3 text-xs text-status-rejected">Select an organization to continue.</p>
+        )}
+        {requesterType === 'EXTERNAL' && (
+          <p className="mt-4 text-xs leading-5 text-muted">
+            New organizations must be registered and approved before they can be selected.{' '}
+            <Link to="/organizations" className="font-medium text-brand underline underline-offset-2">Manage organizations</Link>
+          </p>
+        )}
+      </Card>
     </section>
   )
 }

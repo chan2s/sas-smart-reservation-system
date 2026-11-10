@@ -527,7 +527,7 @@ export interface CreateReservationPayload {
   event_name: string
   event_type: EventType
   organization: string
-  /** Public internal requests: the selected registered organization's id. */
+  /** Selected registered organization for public internal or staff reservations. */
   organization_id?: number
   organization_type?: string
   purpose: string
@@ -540,9 +540,9 @@ export interface CreateReservationPayload {
   special_requirements: string
   notes: string
   items: { equipment_id: number; quantity: number; operator?: boolean }[]
-  /** Staff only: create on behalf of another campus user. */
+  /** Legacy staff-only account requester, retained for compatibility. */
   requester_id?: number
-  /** Staff only: CAMPUS (default) or EXTERNAL. */
+  /** CAMPUS represents an internal organization; EXTERNAL an external organization. */
   requester_type?: RequesterType
   /** Rebook / "request new schedule": the expired reservation this one is from. */
   rebooked_from_id?: number

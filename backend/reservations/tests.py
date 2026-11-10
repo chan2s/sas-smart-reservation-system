@@ -17,6 +17,7 @@ from equipment.models import (
     FacilityResource,
     MaintenanceRecord,
 )
+from accounts.models import Organization
 from facilities.models import Facility, OperatingHour
 from .models import (
     PricingRule,
@@ -1811,6 +1812,78 @@ class RequesterTypeApiTests(TestCase):
         reservation = Reservation.objects.get(pk=body["id"])
         self.assertIsNone(reservation.requester)
         self.assertEqual(reservation.created_by, self.admin)
+
+    def test_admin_creates_for_selected_internal_organization(self):
+        organization = Organization.objects.get(acronym="CAS")
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/reservations/",
+            self._external_payload(
+                requester_type="CAMPUS",
+                organization_id=organization.id,
+                organization="Forged organization name",
+                organization_type="OTHER",
+                contact_person="CAS Event Contact",
+            ),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        reservation = Reservation.objects.get(pk=body["id"])
+        self.assertEqual(reservation.organization_ref, organization)
+        self.assertEqual(reservation.organization, organization.organization_name)
+        self.assertEqual(reservation.organization_ref.organization_type, "INTERNAL")
+        self.assertIsNone(reservation.requester)
+        self.assertEqual(reservation.created_by, self.admin)
+        self.assertEqual(body["requester"], organization.organization_name)
+        self.assertEqual(body["requester_type_label"], "Internal Organization")
+        self.assertEqual(body["organization_type"], "INTERNAL")
+
+    def test_admin_creates_for_selected_external_organization(self):
+        organization = Organization.objects.create(
+            organization_name="ABC National High School",
+            organization_type=Organization.OrganizationType.SCHOOL_UNIVERSITY,
+            contact_person="A. Principal",
+            contact_email="principal@example.com",
+            verification_status=Organization.VerificationStatus.APPROVED,
+            created_by=self.admin,
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/reservations/",
+            self._external_payload(
+                organization_id=organization.id,
+                organization="Forged organization name",
+                contact_person="A. Principal",
+            ),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        reservation = Reservation.objects.get(pk=response.json()["id"])
+        self.assertEqual(reservation.organization_ref, organization)
+        self.assertEqual(reservation.organization, organization.organization_name)
+        self.assertEqual(reservation.organization_type, Reservation.OrganizationType.SCHOOL)
+        self.assertEqual(reservation.contact_email, organization.contact_email)
+        self.assertIsNone(reservation.requester)
+        self.assertEqual(reservation.created_by, self.admin)
+
+    def test_admin_cannot_select_missing_or_wrong_type_organization(self):
+        internal = Organization.objects.get(acronym="CAS")
+        self.client.force_authenticate(self.admin)
+        for organization_id, requester_type in (
+            (999999, "CAMPUS"),
+            (internal.id, "EXTERNAL"),
+        ):
+            response = self.client.post(
+                "/api/reservations/",
+                self._external_payload(
+                    organization_id=organization_id,
+                    requester_type=requester_type,
+                ),
+                format="json",
+            )
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertIn("organization_id", response.json())
 
     def test_campus_user_cannot_submit_external_type(self):
         """Authenticated non-staff callers cannot create EXTERNAL entries

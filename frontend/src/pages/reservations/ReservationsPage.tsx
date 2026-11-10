@@ -299,7 +299,11 @@ export function ReservationsPage() {
   )
 }
 
-function RequesterTypeBadge({ type }: { type: ReservationSummary['requester_type'] }) {
+function RequesterTypeBadge({ reservation }: { reservation: ReservationSummary }) {
+  if (reservation.requester_type === 'CAMPUS' && reservation.organization_type === 'INTERNAL' && !reservation.requester_id) {
+    return <Badge tone="brand">Internal Organization</Badge>
+  }
+  const type = reservation.requester_type
   return type === 'EXTERNAL' ? (
     <Badge tone="orange">External</Badge>
   ) : (
@@ -313,7 +317,7 @@ function ReservationTableRow({ reservation }: { reservation: ReservationSummary 
       <td className="px-5 py-3.5">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-ink">{reservation.requester}</p>
-          <RequesterTypeBadge type={reservation.requester_type} />
+          <RequesterTypeBadge reservation={reservation} />
         </div>
         <p className="text-xs text-muted">{reservation.organization || '—'}</p>
       </td>
@@ -370,7 +374,7 @@ function ReservationMobileRow({ reservation }: { reservation: ReservationSummary
           </p>
           <div className="mt-2 flex items-center gap-1.5">
             <StatusBadge status={reservation.status} />
-            <RequesterTypeBadge type={reservation.requester_type} />
+            <RequesterTypeBadge reservation={reservation} />
           </div>
         </div>
         <ArrowRight className="mt-3 size-4 shrink-0 text-muted" aria-hidden />

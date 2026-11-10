@@ -390,8 +390,8 @@ class Reservation(models.Model):
         null=True,
         blank=True,
         help_text=(
-            "Account of the requester. Null for external requesters who do "
-            "not have accounts."
+            "Account of an individual requester. Null when the reservation "
+            "is placed directly for an organization or guest requester."
         ),
     )
     requester_type = models.CharField(
@@ -408,18 +408,18 @@ class Reservation(models.Model):
         blank=True,
         help_text="For external requesters: what kind of organization they are.",
     )
-    # Structured link to the verified organization entity. Deliberately a NEW
+    # Structured link to the existing organization entity. Deliberately a NEW
     # nullable field: the free-text ``organization``/``organization_type``
     # fields above stay as the human-readable snapshot, so existing rows and
-    # API consumers keep working untouched. Never set from a client-supplied
-    # id — always derived from the authenticated requester's own profile.
+    # API consumers keep working untouched. Submitted ids are resolved and
+    # validated against active organization records on the server.
     organization_ref = models.ForeignKey(
         "accounts.Organization",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="organization_reservations",
-        help_text="Verified external organization this reservation belongs to.",
+        help_text="Existing organization this reservation belongs to.",
     )
     contact_email = models.EmailField(
         blank=True,
@@ -682,12 +682,21 @@ class Reservation(models.Model):
         """
         if self.requester_id and self.requester:
             return self.requester.display_name
+        if self.organization_ref_id:
+            return self.organization_ref.organization_name
         if self.requester_type == self.RequesterType.EXTERNAL:
             return self.organization or self.contact_person or "External Requester"
         return "—"
 
     @property
     def requester_type_label(self) -> str:
+        if (
+            self.organization_ref_id
+            and self.organization_ref.organization_type
+            == "INTERNAL"
+            and not self.requester_id
+        ):
+            return "Internal Organization"
         return self.get_requester_type_display()
 
     @property
@@ -725,8 +734,8 @@ class Reservation(models.Model):
         """Type of the organization this reservation belongs to.
 
         The structured ``organization_ref`` is authoritative: it is resolved
-        server-side from the requester's own profile and can never be supplied
-        by a client, so its type always reflects the live organization record.
+        server-side from an authenticated profile or a validated staff/public
+        selection, so its type reflects the linked organization record.
         The ``organization_type`` column is only a free-text snapshot used by
         external reservations (campus reservations leave it blank), so it is
         consulted only when there is no linked organization. Empty when neither

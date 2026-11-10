@@ -925,10 +925,11 @@ export function useSetAffiliation() {
 }
 
 /** Staff verification queue. */
-export function useOrganizations(params: OrganizationFilters = {}) {
+export function useOrganizations(params: OrganizationFilters = {}, enabled = true) {
   return useQuery({
     queryKey: ['organizations', params],
     queryFn: () => api.organizations(params),
+    enabled,
     placeholderData: keepPreviousData,
   })
 }

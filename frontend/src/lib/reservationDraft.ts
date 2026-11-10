@@ -492,6 +492,7 @@ export function toCreateReservationPayload(
       contact_email: external.contact_email,
       contact_phone: normalizePhone(draft.contact.phone) || null,
       requester_type: 'EXTERNAL',
+      ...(organizationId ? { organization_id: organizationId } : {}),
       ...rebook,
     }
   }
