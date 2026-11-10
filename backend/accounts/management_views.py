@@ -85,8 +85,6 @@ def deletion_block_reason(target, caller) -> str:
         if _active_superuser_count() <= 1:
             return "The last active superuser account cannot be deleted."
         return "Protected system accounts cannot be deleted."
-    if target.role == User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
-        return "The designated approval-letter account cannot be deleted here."
     if (
         target.role == User.Role.ADMIN
         and target.is_active
@@ -244,9 +242,8 @@ class AdminUserDetailView(_AdminOnlyMixin, generics.GenericAPIView):
     """GET / PATCH / DELETE /api/auth/users/<pk>/ — one account.
 
     PATCH edits the permitted profile fields and the application role. Every
-    privilege-bearing flag (``is_staff``, ``is_superuser``, the approval-letter
-    designation, activation) is absent from the serializer, so a manipulated
-    body cannot grant it.
+    privilege-bearing flag (``is_staff``, ``is_superuser``, activation) is
+    absent from the serializer, so a manipulated body cannot grant it.
 
     DELETE removes an eligible account inside a transaction that first
     *anonymizes* historical reservations (their ``requester`` FK is set to

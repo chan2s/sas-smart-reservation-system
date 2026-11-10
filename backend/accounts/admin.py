@@ -175,9 +175,8 @@ class CustomUserAdmin(UserAdmin):
         "organization",
         "organization_ref",
         "is_active",
-        "is_approval_signatory",
     )
-    list_filter = ("role", "affiliation", "is_active", "is_approval_signatory")
+    list_filter = ("role", "affiliation", "is_active")
     search_fields = UserAdmin.search_fields + ("organization", "organization_ref__organization_name")
     fieldsets = UserAdmin.fieldsets + (
         (

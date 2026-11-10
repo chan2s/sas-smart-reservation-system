@@ -589,7 +589,6 @@ class AdminUserCreationTests(APITestCase):
         self.assertEqual(
             holder.role, User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
         )
-        self.assertTrue(holder.is_authorized_letter_approver)
         self.assertFalse(holder.is_admin)
         self.assertFalse(holder.is_sas_staff)
 
@@ -818,7 +817,6 @@ class AdminUserUpdateTests(APITestCase):
             self.target.role,
             User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE,
         )
-        self.assertTrue(self.target.is_authorized_letter_approver)
         self.assertFalse(self.target.is_staff)
         self.assertEqual(
             response.data["role_label"],
@@ -844,8 +842,10 @@ class AdminUserUpdateTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.target.refresh_from_db()
         successor.refresh_from_db()
-        self.assertFalse(self.target.is_authorized_letter_approver)
-        self.assertTrue(successor.is_authorized_letter_approver)
+        self.assertEqual(self.target.role, User.Role.REQUESTER)
+        self.assertEqual(
+            successor.role, User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
+        )
 
     def test_non_admin_cannot_assign_position_role(self):
         response = _client_as(self.target).patch(
@@ -864,7 +864,6 @@ class AdminUserUpdateTests(APITestCase):
                 "is_staff": True,
                 "is_superuser": True,
                 "is_active": False,
-                "is_approval_signatory": True,
             },
             format="json",
         )
@@ -873,7 +872,6 @@ class AdminUserUpdateTests(APITestCase):
         self.assertFalse(self.target.is_staff)
         self.assertFalse(self.target.is_superuser)
         self.assertTrue(self.target.is_active)
-        self.assertFalse(self.target.is_approval_signatory)
 
     def test_admin_cannot_change_own_role(self):
         response = self.client.patch(

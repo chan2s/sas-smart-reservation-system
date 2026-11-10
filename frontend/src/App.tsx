@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { PublicShell } from '@/components/layout/PublicShell'
+import { RouteMetadataManager } from '@/components/seo/RouteMetadata'
 import { OfflineBanner } from '@/components/offline/OfflineBanner'
 import { PwaNotices } from '@/components/pwa/PwaNotices'
 import { ViewOnlyAccessDenied } from '@/components/auth/ViewOnlyNotice'
@@ -102,11 +103,6 @@ const FacilityResourcesPage = lazy(() =>
     default: module.FacilityResourcesPage,
   })),
 )
-const ApprovalLettersPage = lazy(() =>
-  import('@/pages/approval/ApprovalLettersPage').then((module) => ({
-    default: module.ApprovalLettersPage,
-  })),
-)
 const AffiliationPage = lazy(() =>
   import('@/pages/onboarding/AffiliationPage').then((module) => ({
     default: module.AffiliationPage,
@@ -139,8 +135,7 @@ function PageLoader() {
 }
 
 function Protected() {
-  const { user, loading, isApprovalLettersOnly } = useAuth()
-  const location = useLocation()
+  const { user, loading } = useAuth()
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-soft">
@@ -149,12 +144,6 @@ function Protected() {
     )
   }
   if (!user) return <Navigate to="/login" replace />
-  // The designated signatory's account is scoped to the Approval Letters
-  // module. The backend refuses every other API; this guard keeps the SPA
-  // from ever rendering those pages when one is reached by direct URL.
-  if (isApprovalLettersOnly && location.pathname !== '/approval-letters') {
-    return <Navigate to="/approval-letters" replace />
-  }
   return <AppShell />
 }
 
@@ -199,26 +188,6 @@ function RequireStaff({ children }: { children: ReactNode }) {
 }
 
 /**
- * Guard for the Approval Letters workspace. Mirrors the backend's
- * ``IsApprovalSignatory`` permission: the explicit designation is required,
- * not merely a staff role, so an unauthorized account is redirected rather
- * than shown a page whose API would refuse it.
- */
-function RequireApprovalSignatory({ children }: { children: ReactNode }) {
-  const { user, loading, isApprovalSignatory } = useAuth()
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-soft">
-        <Spinner />
-      </div>
-    )
-  }
-  if (!user) return <Navigate to="/login" replace />
-  if (!isApprovalSignatory) return <Navigate to="/dashboard" replace />
-  return children
-}
-
-/**
  * Administrator-only guard for user management and login activity. Mirrors the
  * backend's ``IsAdmin`` permission — SAS staff are redirected just like any
  * other non-administrator, so hiding the nav is never the only protection.
@@ -240,6 +209,7 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <Suspense fallback={<PageLoader />}>
+      <RouteMetadataManager />
       {/*
        * Connectivity banner and the install/update notices are rendered ONCE
        * here, for every route — including the public landing/login pages, which
@@ -337,17 +307,6 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
-          {/* Approval-letter signatory workspace. Only the explicitly
-              designated account may open it; the backend verifies the
-              designation on every list/approval request regardless. */}
-          <Route
-            path="/approval-letters"
-            element={
-              <RequireApprovalSignatory>
-                <ApprovalLettersPage />
-              </RequireApprovalSignatory>
-            }
-          />
           <Route
             path="/organizations"
             element={

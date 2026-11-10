@@ -14,7 +14,6 @@ from rest_framework.response import Response
 
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
-    IsApprovalModuleScopeAllowed,
     IsSasStaff,
 )
 from accounts.throttling import PublicReservationThrottle
@@ -1005,7 +1004,7 @@ def reservation_by_checkin_code(request, code):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated, IsApprovalModuleScopeAllowed])
+@permission_classes([IsAuthenticated])
 def availability_check(request):
     """Conflict analysis + alternative schedules for a proposed window."""
     data = request.data
@@ -1101,7 +1100,7 @@ def availability_check(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated, IsApprovalModuleScopeAllowed])
+@permission_classes([IsAuthenticated])
 def resources_recommendation(request):
     """Smart resource recommendations for an event profile.
 
@@ -1146,7 +1145,7 @@ def resources_recommendation(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated, IsApprovalModuleScopeAllowed])
+@permission_classes([IsAuthenticated])
 def pricing_rates(request):
     """Active external-organization rates.
 
@@ -1158,7 +1157,7 @@ def pricing_rates(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated, IsApprovalModuleScopeAllowed])
+@permission_classes([IsAuthenticated])
 def calendar_events(request):
     """Reservation events for calendar views within [start, end]."""
     expiration.expire_overdue_reservations()

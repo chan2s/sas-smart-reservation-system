@@ -211,9 +211,6 @@ class Command(BaseCommand):
                 organization="Student Affairs",
             )
             self.stdout.write("  + requester (Requester)")
-        # The authorized approval-letter signer must be linked to a real,
-        # existing staff account by an administrator. Never seed a synthetic
-        # account with signing permission; profile names do not grant access.
 
     def seed_facilities(self):
         for index, data in enumerate(FACILITIES):

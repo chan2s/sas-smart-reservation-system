@@ -330,17 +330,6 @@ class User(AbstractUser):
     role = models.CharField(
         max_length=48, choices=Role.choices, default=Role.REQUESTER
     )
-    # Legacy designation field retained for existing data and API clients.
-    # Authorization is derived exclusively from the position role below.
-    is_approval_signatory = models.BooleanField(
-        default=False,
-        db_index=True,
-        help_text=(
-            "May approve reservation approval letters as the designated campus "
-            "signatory. A non-administrator holding this designation can only "
-            "access the Approval Letters module."
-        ),
-    )
     # Free-text NORSU unit / department (legacy field, still used by the
     # profile form and shown in the UI). For external requesters the resolved
     # organization name comes from ``organization_ref`` instead.
@@ -383,37 +372,13 @@ class User(AbstractUser):
         if self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE:
             if self.is_superuser:
                 raise ValidationError({
-                    "role": "A Django superuser account cannot hold the approval-only role.",
+                    "role": "A Django superuser account cannot hold this role.",
                 })
             self.is_staff = False
-            self.is_approval_signatory = False
         # Administrators get Django admin access automatically.
         if self.role == self.Role.ADMIN:
             self.is_staff = True
         super().save(*args, **kwargs)
-
-    def clean(self):
-        super().clean()
-        if not self.is_approval_signatory:
-            return
-        if (
-            self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
-            and self.is_authorized_letter_approver
-        ):
-            return
-        # This legacy field is retained for old records and never grants role
-        # permissions. Keep its historical validation for compatibility.
-        if self.role not in (self.Role.ADMIN, self.Role.STAFF):
-            raise ValidationError({
-                "is_approval_signatory": "Only an administrator or SAS staff account can be designated.",
-            })
-        other_designated = type(self).objects.filter(
-            is_approval_signatory=True
-        ).exclude(pk=self.pk)
-        if other_designated.exists():
-            raise ValidationError({
-                "is_approval_signatory": "Only one active account may hold the approval-letter signatory designation.",
-            })
 
     @property
     def display_name(self) -> str:
@@ -450,38 +415,9 @@ class User(AbstractUser):
         return not self.is_approved
 
     @property
-    def is_approval_letters_only(self) -> bool:
-        """True when this account is scoped to the Approval Letters module.
-
-        The position holder's only function is to review and approve reservation
-        approval letters. It does not inherit general staff capabilities.
-
-        General administrator access does not substitute for the position role.
-        """
-        return self.is_authorized_letter_approver
-
-    @property
-    def is_authorized_letter_approver(self) -> bool:
-        """Whether this active account currently holds the approval position."""
-        return bool(
-            self.role == self.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
-            and self.is_active
-            and not self.is_superuser
-        )
-
-    @property
     def is_sas_staff(self) -> bool:
-        """Administrator or SAS staff, excluding the active position holder.
-
-        The position role is deliberately excluded from staff access. The
-        Approval Letters API authorizes its holder through that role and the
-        account-approval permission.
-        """
-        if self.role == self.Role.ADMIN:
-            return True
-        if self.is_authorized_letter_approver:
-            return False
-        return self.role == self.Role.STAFF
+        """Administrator or SAS staff."""
+        return self.role in (self.Role.ADMIN, self.Role.STAFF)
 
     # -- Affiliation helpers -------------------------------------------
 

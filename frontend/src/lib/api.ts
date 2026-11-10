@@ -6,8 +6,6 @@ import type {
   AdminUserStatusResult,
   AdminUserUpdatePayload,
   Affiliation,
-  ApprovalLetter,
-  ApprovalLetterPreview,
   AvailabilityCheck,
   BookedDateEvent,
   CalendarEvent,
@@ -254,7 +252,7 @@ export const api = {
     request<T>(path, { method: 'PATCH', body: form }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 
-  // Binary downloads (approval letters, and any future Content-Disposition
+  // Binary downloads (uploaded documents, and any future Content-Disposition
   // endpoint that must carry the Authorization header — <embed>/<iframe> and
   // plain anchors cannot).
   /** Fetch a document as a Blob and return an object URL for embed/new-tab use. */
@@ -967,27 +965,6 @@ export const endpoints = {
   chatbot: (message: string) =>
     api.post<ChatbotResponse>('/api/chatbot/', { message }),
 
-  // Approval letters (Reservation Approval Letter & Digital Signature workflow)
-  /** Signatory dashboard lists — filter by letter status, search, page. */
-  approvalLetters: (
-    params: { status?: string; search?: string; page?: number } = {},
-  ) => {
-    const qs = new URLSearchParams()
-    if (params.status) qs.set('status', params.status)
-    if (params.search) qs.set('search', params.search)
-    if (params.page) qs.set('page', String(params.page))
-    const suffix = qs.toString() ? `?${qs.toString()}` : ''
-    return api.get<Paginated<ApprovalLetter>>(`/api/approval-letters/${suffix}`)
-  },
-  approvalLetter: (id: number) =>
-    api.get<ApprovalLetter>(`/api/approval-letters/${id}/`),
-  approvalLetterPreview: (id: number) =>
-    api.get<ApprovalLetterPreview>(`/api/approval-letters/${id}/preview/`),
-  /** Records the position holder's explicit approval of a pending letter. */
-  signApprovalLetter: (id: number) =>
-    api.post<ApprovalLetter>(`/api/approval-letters/${id}/approve/`, {}),
-  retryLetterEmail: (id: number) =>
-    api.post<ApprovalLetter>(`/api/approval-letters/${id}/retry-email/`, {}),
 }
 
 /**

@@ -270,13 +270,6 @@ class UserSerializer(serializers.ModelSerializer):
     # can never set its own approval state.
     is_approved = serializers.BooleanField(read_only=True)
     is_view_only = serializers.BooleanField(read_only=True)
-    # Approval-letter signing designation. Read-only: an administrator grants
-    # it server-side (Django admin / seed command); a client can never set it.
-    is_approval_signatory = serializers.SerializerMethodField()
-    # True for a non-administrator designated signatory, whose access is
-    # limited to the Approval Letters module. Drives the SPA's module-only
-    # navigation; the backend enforces the same scope on every request.
-    is_approval_letters_only = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -298,18 +291,12 @@ class UserSerializer(serializers.ModelSerializer):
             "reservation_block_reason",
             "is_approved",
             "is_view_only",
-            "is_approval_signatory",
-            "is_approval_letters_only",
         )
         read_only_fields = (
             "role",
             "affiliation",
             "organization_ref",
         )
-
-    def get_is_approval_signatory(self, obj):
-        return bool(getattr(obj, "is_authorized_letter_approver", False))
-
 
 class RegisterSerializer(serializers.ModelSerializer):
     """Self-service account creation, optionally with an affiliation.
@@ -530,10 +517,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         caller = getattr(request, "user", None)
         if caller is not None and caller.pk == obj.pk:
             return True
-        return bool(
-            obj.is_superuser
-            or obj.role == User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
-        )
+        return bool(obj.is_superuser)
 
 
 #: Alphabet for generated temporary passwords. Mixed case + digits + symbols
@@ -652,9 +636,9 @@ class AdminUserCreateSerializer(_AdminIdentityValidationMixin, serializers.Model
 class AdminUserUpdateSerializer(_AdminIdentityValidationMixin, serializers.ModelSerializer):
     """Editable profile fields and application role for an existing account.
 
-    ``is_staff`` is kept in sync with the role. ``is_superuser`` and the
-    approval-letter designation are deliberately absent: a request body can
-    never grant either through this endpoint.
+    ``is_staff`` is kept in sync with the role. ``is_superuser`` is
+    deliberately absent: a request body can never grant it through this
+    endpoint.
     """
 
     role = serializers.ChoiceField(choices=User.Role.choices, required=False)

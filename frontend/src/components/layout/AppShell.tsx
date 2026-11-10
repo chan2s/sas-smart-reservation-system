@@ -25,7 +25,7 @@ import { useAuth } from '@/hooks/useAuth'
  * mobile (which also clears the fixed bottom nav).
  */
 export function AppShell() {
-  const { isViewOnly, isApprovalLettersOnly } = useAuth()
+  const { isViewOnly } = useAuth()
   return (
     <div className="flex min-h-dvh flex-col bg-soft">
       <PushSubscriptionInitializer />
@@ -36,18 +36,16 @@ export function AppShell() {
         <div className="mx-auto w-full max-w-[1440px] px-4 pb-24 pt-8 sm:px-6 lg:px-10 lg:pb-14 lg:pt-10">
           {/* Pending-approval notice for a not-approved account (view-only). */}
           {isViewOnly && <ViewOnlyBanner className="mb-6" />}
-          {/* Non-blocking nudge — never gates access for existing users. The
-              module-scoped signatory is exempt: it has no other module to use. */}
-          {!isApprovalLettersOnly && <AffiliationPrompt />}
+          {/* Non-blocking nudge — never gates access for existing users. */}
+          <AffiliationPrompt />
           <Outlet />
         </div>
       </main>
 
       <MobileBottomNav />
 
-      {/* Floating rule-based assistant (backend-grounded, no AI client-side).
-          Hidden for the module-scoped signatory to keep that workspace focused. */}
-      {!isApprovalLettersOnly && <ChatWidget />}
+      {/* Floating rule-based assistant (backend-grounded, no AI client-side). */}
+      <ChatWidget />
     </div>
   )
 }

@@ -166,120 +166,6 @@ export interface User {
    */
   is_approved: boolean
   is_view_only: boolean
-  /**
-   * Designated approval-letter signatory (Assistant Campus Director for
-   * Administration and Finance). Granted server-side by an administrator;
-   * read-only — it only controls who may sign approval letters.
-   */
-  is_approval_signatory?: boolean
-  /**
-   * True for a non-administrator signatory whose access is limited to the
-   * Approval Letters module. Backend-enforced; the SPA uses it for navigation
-   * and route guards only.
-   */
-  is_approval_letters_only?: boolean
-}
-
-/** Approval-letter status (independent of the reservation status). */
-export type ApprovalLetterStatus =
-  | 'PENDING_SIGNATURE'
-  | 'APPROVED'
-  | 'SIGNED'
-  | 'SENT'
-  | 'EMAIL_FAILED'
-
-/** Embedded in the reservation detail payload (requester-facing summary). */
-export interface ApprovalLetterSummary {
-  id: number
-  letter_id: string
-  status: ApprovalLetterStatus
-  status_label: string
-  signatory_name: string
-  signatory_position: string
-  signed_at: string | null
-  has_signed_pdf: boolean
-  has_signed_docx: boolean
-  can_retry_email: boolean
-  pdf_url: string
-  docx_url: string
-  /** Staff diagnostic: delivery state of the requester email. */
-  email_status: string
-  email_status_label: string
-  email_attempted_at: string | null
-  emailed_at: string | null
-  email_error: string
-}
-
-/** Full letter payload for the signatory's Approval Letters dashboard. */
-export interface ApprovalLetter {
-  id: number
-  letter_id: string
-  status: ApprovalLetterStatus
-  status_label: string
-  // Reservation information.
-  reservation_pk: number
-  reservation_reference: string
-  event_name: string
-  facility_name: string
-  reservation_date: string
-  start_time: string
-  end_time: string
-  purpose: string
-  requester_name: string
-  requester_email: string
-  organization: string
-  approved_at: string | null
-  // Signatory information.
-  signatory_name: string
-  signatory_position: string
-  signatory: number | null
-  signed_at: string | null
-  // Documents.
-  has_signed_pdf: boolean
-  has_signed_docx: boolean
-  preview_url: string
-  pdf_url: string
-  docx_url: string
-  // Email delivery.
-  email_status: string
-  email_status_label: string
-  email_attempted_at: string | null
-  emailed_at: string | null
-  email_error: string
-  can_retry_email: boolean
-  /** Server-computed: may the current user sign this letter? */
-  can_sign: boolean
-  created_at: string
-  updated_at: string
-}
-
-/** Structured letter content for the readable in-app document preview. */
-export interface ApprovalLetterPreview {
-  letter_id: string
-  status: string
-  issued_date: string
-  requester_name: string
-  organization: string
-  reservation_reference: string
-  event_name: string
-  facility_name: string
-  reservation_date: string
-  reservation_start: string
-  reservation_end: string
-  purpose: string
-  expected_participants: number
-  resources: string[]
-  facility_rules: string[]
-  estimated_total: string
-  is_external: boolean
-  signatory_name: string
-  signatory_position: string
-  signed_at: string | null
-  is_signed: boolean
-  test_signature_disclaimer: string
-  institution: string
-  issuing_office: string
-  system_name: string
 }
 
 export type FacilityStatus = 'OPERATIONAL' | 'MAINTENANCE'
@@ -899,12 +785,6 @@ export interface ReservationDetail extends ReservationSummary {
     status: ReservationStatus
     status_label: string
   } | null
-  /**
-   * The approval letter issued for this reservation (null until approved).
-   * Download URLs resolve server-side only for the letter's own requester
-   * or SAS staff.
-   */
-  approval_letter?: ApprovalLetterSummary | null
   availability: {
     ok: boolean
     facility: AvailabilityCheck['facility']

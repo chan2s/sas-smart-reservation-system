@@ -39,13 +39,13 @@ export function Brand() {
 // ---------------------------------------------------------------------------
 
 export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
-  const { isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
+  const { isStaff } = useAuth()
   return (
     <nav
       aria-label="Primary"
       className="hidden min-w-0 items-center gap-5 xl:inline-flex 2xl:gap-7"
     >
-      {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
+      {primaryNavigationFor(isStaff).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -77,42 +77,37 @@ export function PillNavigation({ onNavigate }: { onNavigate?: () => void }) {
 // ---------------------------------------------------------------------------
 
 function HeaderActions() {
-  const { user, logout, isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
-  const { data: unread } = useUnreadCount(!isApprovalLettersOnly)
+  const { user, logout, isStaff } = useAuth()
+  const { data: unread } = useUnreadCount(true)
   const navigate = useNavigate()
   const isAdmin = user?.role === 'ADMIN'
 
   return (
     <div className="col-start-3 flex min-w-0 items-center justify-end gap-1 sm:gap-1.5">
       {/* Compact search field — never wide enough to push the pill off-center */}
-      {!isApprovalLettersOnly && (
-        <div className="relative hidden 2xl:block">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/50"
-            aria-hidden
-          />
-          <input
-            type="search"
-            placeholder="Search…"
-            className="h-9 w-44 rounded-xl border border-white/15 bg-white/5 pl-9 pr-4 text-sm text-white placeholder:text-white/50 transition-colors duration-150 hover:border-white/30 focus:w-56 focus:border-brand focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-brand/20"
-          />
-        </div>
-      )}
-      {!isApprovalLettersOnly && (
-        <button
-          type="button"
-          onClick={() => navigate('/reservations')}
-          className="flex size-9 items-center justify-center rounded-xl text-white/75 transition-colors duration-150 hover:bg-white/10 hover:text-white 2xl:hidden"
-          aria-label="Search reservations, facilities, equipment"
-        >
-          <Search className="size-5" aria-hidden />
-        </button>
-      )}
+      <div className="relative hidden 2xl:block">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/50"
+          aria-hidden
+        />
+        <input
+          type="search"
+          placeholder="Search…"
+          className="h-9 w-44 rounded-xl border border-white/15 bg-white/5 pl-9 pr-4 text-sm text-white placeholder:text-white/50 transition-colors duration-150 hover:border-white/30 focus:w-56 focus:border-brand focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-brand/20"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate('/reservations')}
+        className="flex size-9 items-center justify-center rounded-xl text-white/75 transition-colors duration-150 hover:bg-white/10 hover:text-white 2xl:hidden"
+        aria-label="Search reservations, facilities, equipment"
+      >
+        <Search className="size-5" aria-hidden />
+      </button>
 
       {/* Notifications */}
-      {!isApprovalLettersOnly && (
-        <Dropdown
-          align="right"
+      <Dropdown
+        align="right"
           /*
            * Mobile: viewport-anchored sheet with 12px gutters on both sides, so
            * it can never overflow the left edge and stays clear of the fixed
@@ -131,9 +126,8 @@ function HeaderActions() {
             </span>
           }
         >
-          {(close) => <NotificationCenter onNavigate={close} />}
-        </Dropdown>
-      )}
+        {(close) => <NotificationCenter onNavigate={close} />}
+      </Dropdown>
 
       {/* User menu */}
       <Dropdown
@@ -148,17 +142,15 @@ function HeaderActions() {
                 {user?.display_name ?? 'Administrator'}
               </span>
               <span className="block text-[11px] text-white/60">
-                {isApprovalLettersOnly
-                  ? 'Assistant Campus Director for Administration and Finance'
-                  : user?.role === 'ADMIN'
-                    ? 'SAS Administrator'
-                    : user?.role === 'STAFF'
-                      ? 'SAS Staff'
-                      : user?.organization_ref?.display_name ||
-                          user?.organization_ref?.organization_name ||
-                          user?.affiliation_label ||
-                          user?.organization ||
-                          'Requester'}
+                {user?.role === 'ADMIN'
+                  ? 'SAS Administrator'
+                  : user?.role === 'STAFF'
+                    ? 'SAS Staff'
+                    : user?.organization_ref?.display_name ||
+                        user?.organization_ref?.organization_name ||
+                        user?.affiliation_label ||
+                        user?.organization ||
+                        'Requester'}
               </span>
             </span>
             <ChevronDown className="hidden size-3.5 text-white/60 2xl:block" aria-hidden />
@@ -172,28 +164,26 @@ function HeaderActions() {
                 {user?.display_name ?? 'Administrator'}
               </p>
               <p className="text-xs text-muted">
-                {isApprovalLettersOnly
-                  ? 'Assistant Campus Director for Administration and Finance'
-                  : user?.role === 'ADMIN'
-                    ? 'SAS Administrator'
-                    : user?.role === 'STAFF'
-                      ? 'SAS Staff'
-                      : user?.organization_ref?.display_name ||
-                          user?.organization_ref?.organization_name ||
-                          user?.affiliation_label ||
-                          user?.organization ||
-                          'Requester'}
+                {user?.role === 'ADMIN'
+                  ? 'SAS Administrator'
+                  : user?.role === 'STAFF'
+                    ? 'SAS Staff'
+                    : user?.organization_ref?.display_name ||
+                        user?.organization_ref?.organization_name ||
+                        user?.affiliation_label ||
+                        user?.organization ||
+                        'Requester'}
               </p>
             </div>
             <div className="my-1 h-px bg-line md:hidden" aria-hidden />
-            {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
+            {primaryNavigationFor(isStaff).map((item) => (
               <MenuItem key={`m-${item.to}`} onClick={() => { close(); navigate(item.to) }}>
                 <item.icon className="size-4" />
                 {item.label}
               </MenuItem>
             ))}
             <div className="my-1 h-px bg-line" aria-hidden />
-            {!isApprovalLettersOnly && secondaryNavigation.map((item) => (
+            {secondaryNavigation.map((item) => (
               <MenuItem key={item.to} onClick={() => { close(); navigate(item.to) }}>
                 <item.icon className="size-4" />
                 {item.label}
@@ -247,7 +237,7 @@ function HeaderActions() {
 // ---------------------------------------------------------------------------
 
 function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
+  const { user, isStaff } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
   useEffect(() => {
     if (!open) return
@@ -279,7 +269,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav aria-label="Mobile" className="space-y-1 border-t border-white/10 pt-3">
-          {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).map((item) => (
+          {primaryNavigationFor(isStaff).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -299,7 +289,7 @@ function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
             </NavLink>
           ))}
           <div className="my-2 h-px bg-white/10" aria-hidden />
-          {!isApprovalLettersOnly && secondaryNavigation.map((item) => (
+          {secondaryNavigation.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -421,13 +411,13 @@ export function Header() {
 // ---------------------------------------------------------------------------
 
 export function MobileBottomNav() {
-  const { isStaff, isApprovalSignatory, isApprovalLettersOnly } = useAuth()
+  const { isStaff } = useAuth()
   return (
     <nav
       aria-label="Mobile"
       className="fixed inset-x-0 bottom-0 z-30 flex border-t border-white/10 bg-[var(--nav-background)]/95 pb-[env(safe-area-inset-bottom)] shadow-float backdrop-blur lg:hidden"
     >
-      {primaryNavigationFor(isStaff, isApprovalSignatory, isApprovalLettersOnly).slice(0, 5).map((item) => (
+      {primaryNavigationFor(isStaff).slice(0, 5).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}

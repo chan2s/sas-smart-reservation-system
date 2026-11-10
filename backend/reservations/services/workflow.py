@@ -162,27 +162,6 @@ def _schedule_approval_email(reservation, actor):
     )
 
 
-def _schedule_approval_letter(reservation):
-    """Queue the (idempotent) creation of the reservation's approval letter.
-
-    Imported lazily: the letters app reads ``reservations.models``, so a module
-    -level import here would be circular. The letters service is idempotent —
-    a re-approval after a change request reuses the existing letter instead of
-    creating a second one. Failures are contained inside the letters service
-    and can never undo the committed approval.
-    """
-    from approval_letters.services import create_letter_after_commit
-
-    logger.info(
-        "Approval letter scheduled after commit for reservation %s (status=%s).",
-        reservation.reservation_id,
-        reservation.status,
-    )
-    transaction.on_commit(
-        lambda reservation_id=reservation.pk: create_letter_after_commit(reservation_id)
-    )
-
-
 def resend_approval_email(reservation, actor, force=False) -> str:
     """Send an approval email once for an approved reservation, recording outcome.
 
@@ -348,7 +327,6 @@ def auto_approve(reservation, actor, message=""):
         )
         if from_status != Reservation.Status.APPROVED:
             _schedule_approval_email(locked, actor)
-        _schedule_approval_letter(locked)
     reservation.refresh_from_db()
     return reservation
 
@@ -413,7 +391,6 @@ def approve_reservation(reservation, actor, comment=""):
             event_key=_event_notification_key(approved_event, "approved-staff"),
         )
         _schedule_approval_email(locked, actor)
-        _schedule_approval_letter(locked)
     reservation.refresh_from_db()
     return reservation
 

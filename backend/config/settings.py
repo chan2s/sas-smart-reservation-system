@@ -152,7 +152,6 @@ INSTALLED_APPS = [
     "notifications",
     "analytics",
     "chatbot",
-    "approval_letters",
 ]
 
 

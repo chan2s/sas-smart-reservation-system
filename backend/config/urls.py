@@ -17,12 +17,11 @@ urlpatterns = [
     path("api/", include("notifications.urls")),
     path("api/", include("analytics.urls")),
     path("api/", include("chatbot.urls")),
-    path("api/", include("approval_letters.urls")),
 ]
 
 if settings.DEBUG:
-    # Approval-letter artifacts live on the same storage volume as ordinary
-    # uploads, but are served only through authenticated API download views.
+    # Requester-uploaded approval-letter images live on the same storage volume
+    # as ordinary uploads, but are served only through authenticated API views.
     # Keep Django's development MEDIA_URL helper from exposing the raw files.
     urlpatterns += [
         path(

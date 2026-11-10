@@ -59,7 +59,6 @@ class LoginWithoutSecondFactorTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.user.refresh_from_db()
         self.assertEqual(self.user.role, User.Role.REQUESTER)
-        self.assertFalse(self.user.is_authorized_letter_approver)
 
 
 class GoogleOAuthSecurityTests(APITestCase):
