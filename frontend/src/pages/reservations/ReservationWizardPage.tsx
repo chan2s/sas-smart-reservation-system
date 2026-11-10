@@ -102,11 +102,44 @@ export function ReservationWizardPage() {
   const { id: routeId } = useParams()
   const { organizationType } = useParams()
   const publicFlow = organizationType === 'internal' || organizationType === 'external'
+  const wizardActionBarRef = useRef<HTMLDivElement>(null)
   const publicRequesterType = organizationType === 'external' ? 'EXTERNAL' : 'CAMPUS'
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
   const { user, isStaff, loading: authLoading, updateUser } = useAuth()
   const isAdmin = !publicFlow && user?.role === 'ADMIN'
+
+  // Keep the mobile action bar above the on-screen keyboard on browsers where
+  // the layout viewport remains taller than the visible VisualViewport.
+  useEffect(() => {
+    const actionBar = wizardActionBarRef.current
+    const viewport = window.visualViewport
+    if (!actionBar || !viewport) return
+
+    const updateKeyboardInset = () => {
+      const activeElement = document.activeElement
+      const editingText =
+        activeElement instanceof HTMLElement &&
+        (activeElement.matches('input, textarea, select') || activeElement.isContentEditable)
+      const inset = editingText
+        ? Math.max(0, window.innerHeight - viewport.offsetTop - viewport.height)
+        : 0
+      actionBar.style.setProperty('--wizard-keyboard-inset', `${Math.round(inset)}px`)
+    }
+
+    viewport.addEventListener('resize', updateKeyboardInset)
+    viewport.addEventListener('scroll', updateKeyboardInset)
+    document.addEventListener('focusin', updateKeyboardInset)
+    document.addEventListener('focusout', updateKeyboardInset)
+    updateKeyboardInset()
+
+    return () => {
+      viewport.removeEventListener('resize', updateKeyboardInset)
+      viewport.removeEventListener('scroll', updateKeyboardInset)
+      document.removeEventListener('focusin', updateKeyboardInset)
+      document.removeEventListener('focusout', updateKeyboardInset)
+    }
+  }, [])
 
   // Organization approval can change while this SPA session remains open.
   // Refresh the server-authoritative profile on wizard entry so the banner and
@@ -1013,7 +1046,7 @@ export function ReservationWizardPage() {
   const otherEquipment = equipment.filter((item) => !suggestedIds.has(item.id))
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-5xl pb-[calc(5rem_+_env(safe-area-inset-bottom))] lg:pb-0">
       <Link
         to={isEditing && editingId != null ? `/reservations/${editingId}` : publicFlow ? '/reserve' : '/reservations'}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-body transition-colors hover:text-ink"
@@ -1257,14 +1290,17 @@ export function ReservationWizardPage() {
         </div>
       )}
 
-      {/*
-       * Sticky action footer. Pinned to the bottom of the scroll container
-       * (<main>), so Back / Continue stay visible and clickable no matter how
-       * far the user has scrolled through a long step. On mobile it clears
-       * the fixed bottom navigation. Solid background + top border + z-index
-       * keep it from overlapping content visually.
-       */}
-      <div className="sticky bottom-[calc(4rem_+_env(safe-area-inset-bottom))] z-10 -mx-4 mt-6 border-t border-line bg-soft px-4 py-4 sm:-mx-6 sm:px-6 lg:bottom-0 lg:-mx-10 lg:px-10">
+      {/* Fixed on mobile; the spacer on the wizard root keeps the final fields
+          scrollable above it. Desktop keeps the original sticky footer layout. */}
+      <div
+        ref={wizardActionBarRef}
+        className={cn(
+          'fixed inset-x-0 z-20 mt-0 border-t border-line bg-soft px-4 py-4 sm:px-6 lg:sticky lg:inset-x-auto lg:z-10 lg:mt-6 lg:bottom-0 lg:-mx-10 lg:px-10',
+          publicFlow
+            ? 'bottom-[calc(env(safe-area-inset-bottom)_+_var(--wizard-keyboard-inset,0px))]'
+            : 'bottom-[calc(4rem_+_env(safe-area-inset-bottom)_+_var(--wizard-keyboard-inset,0px))]',
+        )}
+      >
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
           {!online && (
             <p
