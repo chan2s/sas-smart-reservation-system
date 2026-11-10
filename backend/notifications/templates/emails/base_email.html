@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title>{% block email_title %}{{ site_name|default:"SAS RESERVE" }}{% endblock %}</title>
+    <style>
+        body, table, td, p, a { font-family: Arial, Helvetica, sans-serif; }
+        body { margin: 0; padding: 0; background-color: #f4f5f9; color: #273043; }
+        table { border-collapse: collapse; }
+        a { color: #4f46e5; }
+        @media screen and (max-width: 620px) {
+            .email-shell { width: 100% !important; }
+            .email-card { padding: 26px 20px !important; }
+        }
+        @media (prefers-color-scheme: dark) {
+            body, .email-bg { background-color: #171923 !important; }
+            .email-card { background-color: #222633 !important; }
+            .email-copy, .email-heading, .email-value { color: #f3f4f6 !important; }
+            .email-muted, .email-label { color: #c4c9d4 !important; }
+            .email-detail { border-color: #424858 !important; }
+        }
+    </style>
+</head>
+<body class="email-bg" style="margin:0;padding:0;background-color:#f4f5f9;color:#273043;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f9;">
+        <tr><td align="center" style="padding:32px 12px;">
+            <table role="presentation" class="email-shell" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
+                <tr><td style="padding:0 0 16px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                            <td width="48" valign="middle" style="width:48px;padding-right:12px;">
+                                <table role="presentation" width="42" height="42" cellpadding="0" cellspacing="0" border="0" style="width:42px;height:42px;background-color:#4f46e5;border-radius:10px;">
+                                    <tr><td align="center" valign="middle" style="color:#ffffff;font-size:22px;font-weight:bold;">S</td></tr>
+                                </table>
+                            </td>
+                            <td valign="middle" style="color:#25234a;">
+                                <div style="font-size:17px;font-weight:bold;letter-spacing:1px;line-height:22px;color:#25234a;">{{ site_name|default:"SAS RESERVE" }}</div>
+                                <div style="font-size:12px;line-height:18px;color:#626b7b;">Smart Facility &amp; Resource Reservation System</div>
+                            </td>
+                        </tr>
+                    </table>
+                </td></tr>
+                <tr><td class="email-card" style="padding:36px 40px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;">
+                    {% block email_content %}{% endblock %}
+                </td></tr>
+                <tr><td align="center" style="padding:22px 12px 0;color:#697386;font-size:12px;line-height:19px;">
+                    <p style="margin:0 0 5px;font-weight:bold;color:#4b5563;">Negros Oriental State University</p>
+                    <p style="margin:0 0 5px;">SAS Office · SAS RESERVE</p>
+                    <p style="margin:0 0 5px;">This is an automated email. Please do not reply to this message.</p>
+                    <p style="margin:0;">&copy; Negros Oriental State University</p>
+                </td></tr>
+            </table>
+        </td></tr>
+    </table>
+</body>
+</html>
