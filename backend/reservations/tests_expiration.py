@@ -261,7 +261,7 @@ class ExpirationTestCase(TestCase):
         self.assertTrue(report["overall"]["ok"])
         self.assertEqual(report["facility"]["conflicts"], [])
 
-    def test_pending_reservation_still_blocks_availability(self):
+    def test_pending_reservation_does_not_block_availability(self):
         target = timezone.localdate() + timedelta(days=2)
         Reservation.objects.create(
             requester=self.requester,
@@ -275,7 +275,8 @@ class ExpirationTestCase(TestCase):
         report = check_availability(
             self.facility.id, target, time(9, 0), time(11, 0)
         )
-        self.assertFalse(report["overall"]["ok"])
+        self.assertTrue(report["overall"]["ok"])
+        self.assertEqual(report["facility"]["conflicts"], [])
 
     # -- 6. admin rebook ----------------------------------------------------
 

@@ -10,10 +10,12 @@ services:
     environment:
 
       DB_HOST: ${DEV_DB_HOST:-host.docker.internal}
+      VAPID_PRIVATE_KEY: /run/secrets/vapid_private_key
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
+      - ./private_key.pem:/run/secrets/vapid_private_key:ro
     ports:
       - "8000:8000"
     healthcheck:

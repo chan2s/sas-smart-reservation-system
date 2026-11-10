@@ -625,6 +625,25 @@ export function useCalendarEvents(params: {
   })
 }
 
+export function useBookedDates(params: {
+  facilityId: number | null
+  start: string
+  end: string
+  excludeId?: number | null
+}) {
+  return useQuery({
+    queryKey: ['booked-dates', params.facilityId, params.start, params.end, params.excludeId],
+    queryFn: () => endpoints.bookedDates({
+      facility_id: params.facilityId!,
+      start: params.start,
+      end: params.end,
+      exclude_id: params.excludeId ?? undefined,
+    }),
+    enabled: params.facilityId != null,
+    staleTime: 60_000,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Analytics & reports
 // ---------------------------------------------------------------------------

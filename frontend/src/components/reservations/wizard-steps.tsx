@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AlertTriangle, CalendarDays, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react'
-import { format } from 'date-fns'
-import { Button } from '@/components/ui/Button'
+import { endOfMonth, format, startOfMonth } from 'date-fns'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Select } from '@/components/ui/Form'
 import { Badge } from '@/components/ui/Badge'
 import { AvailabilityCheck } from '@/components/reservations/AvailabilityCheck'
+import { ReservationEventsModal } from '@/components/reservations/ReservationEventsModal'
 import { PricingBreakdown } from '@/components/reservations/PricingBreakdown'
-import { MonthGrid } from '@/components/calendar/MonthGrid'
+import { CalendarHeader, MonthGrid } from '@/components/calendar/MonthGrid'
 import { FacilityImage } from '@/components/facilities/FacilityImage'
 import { EquipmentImage } from '@/components/equipment/EquipmentImage'
 import { cn, equipmentPrimaryImageUrl, facilityPrimaryImageUrl, formatTime } from '@/lib/utils'
+import { useBookedDates } from '@/hooks/queries'
 import type { ContactDraft, EventDetailsDraft } from '@/lib/reservationDraft'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
+  BookedDateEvent,
   EventType,
   PricingQuote,
   ReservableResource,
@@ -34,6 +36,26 @@ import type {
  */
 export const EARLIEST_START_TIME = '08:00'
 const EARLIEST_START_MINUTES = 8 * 60
+const DAY_AVAILABILITY = {
+  available: { label: 'Available', marker: 'bg-status-available' },
+  partial: { label: 'Partially booked', marker: 'bg-status-pending' },
+  full: { label: 'Fully booked', marker: 'bg-status-rejected' },
+  unavailable: { label: 'Unavailable', marker: 'bg-faint' },
+} as const
+const EMPTY_BOOKED_EVENTS: BookedDateEvent[] = []
+
+function minutesSinceMidnight(time: string): number {
+  const [hours, minutes] = time.split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+/** Use the backend's half-open interval rule: end-to-start adjacency is free. */
+function hasReservationConflict(events: BookedDateEvent[], requestedStart: number, requestedEnd: number): boolean {
+  return events.some((event) =>
+    minutesSinceMidnight(event.start_time) < requestedEnd &&
+    minutesSinceMidnight(event.end_time) > requestedStart,
+  )
+}
 
 export const EVENT_TYPE_OPTIONS: [EventType, string][] = [
   ['SEMINAR', 'Seminar'],
@@ -183,7 +205,8 @@ export function StepFacility({
 // ---------------------------------------------------------------------------
 
 export interface ScheduleProps {
-  facility?: { id: number; name: string; status: string; operating_hours?: { day_of_week: number; open_time: string | null; close_time: string | null; is_closed: boolean }[] }
+  facility?: { id: number; name: string; status: string; is_active?: boolean; operating_hours?: { day_of_week: number; open_time: string | null; close_time: string | null; is_closed: boolean }[] }
+  excludeReservationId?: number | null
   date: Date | null
   onDateChange: (date: Date) => void
   /** When true, the caller still considers this schedule slot valid for
@@ -238,6 +261,7 @@ function manilaNowMinutes(): number {
 
 export function StepSchedule({
   facility,
+  excludeReservationId,
   date,
   onDateChange,
   startTime,
@@ -251,8 +275,139 @@ export function StepSchedule({
   dateInvalid,
   isCancellationRestricted,
 }: ScheduleProps) {
-  const [month, setMonth] = useState(() => new Date())
+  const [month, setMonth] = useState(() => date ?? new Date())
+  // Two deliberately separate views: the calendar only picks a reservation
+  // date; the booked-dates view only inspects existing reservations.
+  const [view, setView] = useState<'calendar' | 'booked'>('calendar')
+  const [selectedBookedDate, setSelectedBookedDate] = useState<string | null>(null)
+  const [eventsModalOpen, setEventsModalOpen] = useState(false)
   const [nowMinutes, setNowMinutes] = useState(() => manilaNowMinutes())
+  const monthStart = format(startOfMonth(month), 'yyyy-MM-dd')
+  const monthEnd = format(endOfMonth(month), 'yyyy-MM-dd')
+  const selectedDateKey = date ? format(date, 'yyyy-MM-dd') : null
+  const bookedDatesQuery = useBookedDates({
+    facilityId: facility?.id ?? null,
+    start: monthStart,
+    end: monthEnd,
+  })
+  // Pull a fresh, date-scoped reservation set for slot filtering. The monthly
+  // query continues to power only the separate Booked Dates View.
+  const selectedDateReservationsQuery = useBookedDates({
+    facilityId: date ? facility?.id ?? null : null,
+    start: selectedDateKey ?? monthStart,
+    end: selectedDateKey ?? monthEnd,
+    excludeId: excludeReservationId,
+  })
+  const bookedDates = bookedDatesQuery.data ?? []
+  const eventsByDate = useMemo(() => {
+    const grouped = new Map<string, BookedDateEvent[]>()
+    for (const event of bookedDates) {
+      const events = grouped.get(event.date) ?? []
+      events.push(event)
+      grouped.set(event.date, events)
+    }
+    return grouped
+  }, [bookedDates])
+  const reservationsForSelectedDate = useMemo(() => {
+    if (!selectedDateKey) return EMPTY_BOOKED_EVENTS
+    const events = selectedDateReservationsQuery.data ?? (
+      bookedDatesQuery.isSuccess
+        ? eventsByDate.get(selectedDateKey) ?? EMPTY_BOOKED_EVENTS
+        : EMPTY_BOOKED_EVENTS
+    )
+    return events.filter((event) => event.status === 'APPROVED')
+  }, [selectedDateKey, selectedDateReservationsQuery.data, bookedDatesQuery.isSuccess, eventsByDate])
+  const selectedReservationsPending = Boolean(
+    date && facility && selectedDateReservationsQuery.isPending &&
+      (!bookedDatesQuery.isSuccess || excludeReservationId != null),
+  )
+  const selectedReservationsError = Boolean(
+    date && facility && selectedDateReservationsQuery.isError &&
+      (!bookedDatesQuery.isSuccess || excludeReservationId != null),
+  )
+
+  // Keep the existing Booked Dates View availability legend unchanged.
+  const bookedDateAvailability = (day: Date): 'available' | 'partial' | 'full' | 'unavailable' | null => {
+    if (!facility) return null
+    if (day.getFullYear() !== month.getFullYear() || day.getMonth() !== month.getMonth()) return null
+    const today = manilaCalendarDate()
+    if (day < today || facility.is_active === false || facility.status !== 'OPERATIONAL') return 'unavailable'
+    const dayIndex = day.getDay() === 0 ? 6 : day.getDay() - 1
+    const operatingHours = facility.operating_hours?.find((hours) => hours.day_of_week === dayIndex)
+    if (!operatingHours || operatingHours.is_closed || !operatingHours.open_time || !operatingHours.close_time) return 'unavailable'
+    const events = eventsByDate.get(format(day, 'yyyy-MM-dd')) ?? []
+    if (bookedDatesQuery.isPending || bookedDatesQuery.isError) return null
+    if (events.length === 0) return 'available'
+    const [openHour, openMinute] = operatingHours.open_time.split(':').map(Number)
+    const [closeHour, closeMinute] = operatingHours.close_time.split(':').map(Number)
+    const open = Math.max(openHour * 60 + openMinute, EARLIEST_START_MINUTES)
+    const close = closeHour * 60 + closeMinute
+    if (close - open < 30) return 'unavailable'
+    const isToday = day.toDateString() === today.toDateString()
+    const candidateStarts = Array.from({ length: Math.floor((close - open) / 30) }, (_, index) => open + index * 30)
+      .filter((slotStart) => !isToday || slotStart > nowMinutes)
+    if (candidateStarts.length === 0) return 'unavailable'
+    const hasFreeSlot = candidateStarts.some((slotStart) =>
+      !hasReservationConflict(events, slotStart, slotStart + 30),
+    )
+    return hasFreeSlot ? 'partial' : 'full'
+  }
+
+  // Calendar View's date state uses the same 30-minute intervals as its time
+  // selectors and excludes the reservation being edited when authorized.
+  const calendarDayAvailability = (day: Date): 'available' | 'partial' | 'full' | 'unavailable' | null => {
+    if (!facility) return null
+    if (day.getFullYear() !== month.getFullYear() || day.getMonth() !== month.getMonth()) return null
+    const today = manilaCalendarDate()
+    if (day < today || facility.is_active === false || facility.status !== 'OPERATIONAL') return 'unavailable'
+    const dayIndex = day.getDay() === 0 ? 6 : day.getDay() - 1
+    const operatingHours = facility.operating_hours?.find((hours) => hours.day_of_week === dayIndex)
+    if (!operatingHours || operatingHours.is_closed || !operatingHours.open_time || !operatingHours.close_time) return 'unavailable'
+    const dayKey = format(day, 'yyyy-MM-dd')
+    const editingCurrentDate = excludeReservationId != null && dayKey === selectedDateKey
+    if (editingCurrentDate && (selectedDateReservationsQuery.isPending || selectedDateReservationsQuery.isError)) return null
+    const events = editingCurrentDate && selectedDateReservationsQuery.data
+      ? selectedDateReservationsQuery.data
+      : eventsByDate.get(dayKey) ?? EMPTY_BOOKED_EVENTS
+    if (bookedDatesQuery.isPending || bookedDatesQuery.isError) return null
+    const approvedEvents = events.filter((event) => event.status === 'APPROVED')
+    const open = Math.max(minutesSinceMidnight(operatingHours.open_time), EARLIEST_START_MINUTES)
+    const close = minutesSinceMidnight(operatingHours.close_time)
+    if (close - open < 30) return 'unavailable'
+    const isToday = day.toDateString() === today.toDateString()
+    const candidateStarts = Array.from({ length: Math.floor((close - open) / 30) }, (_, index) => open + index * 30)
+      .filter((slotStart) => !isToday || slotStart > nowMinutes)
+    if (candidateStarts.length === 0) return 'unavailable'
+    if (approvedEvents.length === 0) return 'available'
+    const hasFreeSlot = candidateStarts.some((slotStart) =>
+      !hasReservationConflict(approvedEvents, slotStart, slotStart + 30),
+    )
+    return hasFreeSlot ? 'partial' : 'full'
+  }
+
+  const renderAvailability = (day: Date) => {
+    const availability = bookedDateAvailability(day)
+    if (!availability) return null
+    const details = DAY_AVAILABILITY[availability]
+    return (
+      <span className="mt-1 flex items-center justify-center gap-1" aria-label={details.label} title={details.label}>
+        <span aria-hidden className={cn('size-1.5 rounded-full', details.marker)} />
+        <span className="sr-only">{details.label}</span>
+      </span>
+    )
+  }
+
+  const renderCalendarAvailability = (day: Date) => {
+    const availability = calendarDayAvailability(day)
+    if (!availability) return null
+    const details = DAY_AVAILABILITY[availability]
+    return (
+      <span className="mt-1 flex items-center justify-center gap-1" aria-label={details.label} title={details.label}>
+        <span aria-hidden className={cn('size-1.5 rounded-full', details.marker)} />
+        <span className="sr-only">{details.label}</span>
+      </span>
+    )
+  }
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMinutes(manilaNowMinutes()), 30_000)
@@ -265,33 +420,34 @@ export function StepSchedule({
   const timeSlots = useMemo(() => {
     if (!hours || hours.is_closed || !hours.open_time || !hours.close_time) return []
     const slots: string[] = []
-    const [openHour, openMinute] = hours.open_time.split(':').map(Number)
-    const [closeHour, closeMinute] = hours.close_time.split(':').map(Number)
+    const openTime = minutesSinceMidnight(hours.open_time)
+    const closeTime = minutesSinceMidnight(hours.close_time)
     // The first bookable slot is the later of the facility's opening time and
     // the system-wide 8:00 AM minimum, so no earlier option is ever offered.
-    let cursor = Math.max(openHour * 60 + openMinute, EARLIEST_START_MINUTES)
-    const close = closeHour * 60 + closeMinute
-    while (cursor < close) {
-      if (!isToday || cursor > nowMinutes) {
+    let cursor = Math.max(openTime, EARLIEST_START_MINUTES)
+    while (cursor + 30 <= closeTime) {
+      if ((!isToday || cursor > nowMinutes) && !hasReservationConflict(reservationsForSelectedDate, cursor, cursor + 30)) {
         slots.push(`${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`)
       }
       cursor += 30
     }
     return slots
-  }, [hours, isToday, nowMinutes])
+  }, [hours, isToday, nowMinutes, reservationsForSelectedDate])
 
   const endSlots = useMemo(() => {
     if (!startTime) return []
-    const [hour, minute] = startTime.split(':').map(Number)
-    let cursor = hour * 60 + minute + 30
-    const close = hours && !hours.is_closed && hours.close_time ? Number(hours.close_time.split(':')[0]) * 60 + Number(hours.close_time.split(':')[1]) : 24 * 60
+    const start = minutesSinceMidnight(startTime)
+    let cursor = start + 30
+    const close = hours && !hours.is_closed && hours.close_time ? minutesSinceMidnight(hours.close_time) : 24 * 60
     const slots: string[] = []
     while (cursor <= close) {
-      slots.push(`${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`)
+      if (!hasReservationConflict(reservationsForSelectedDate, start, cursor)) {
+        slots.push(`${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`)
+      }
       cursor += 30
     }
     return slots
-  }, [startTime, hours])
+  }, [startTime, hours, reservationsForSelectedDate])
 
   useEffect(() => {
     // Leave the default (and any restored selection) untouched until a
@@ -299,6 +455,7 @@ export function StepSchedule({
     // selection that is no longer valid (including one before 8:00 AM) is
     // cleared so it can never be submitted.
     if (!facility || !date) return
+    if (selectedReservationsPending || selectedReservationsError) return
     if (startTime && !timeSlots.includes(startTime)) {
       onStartTime('')
       onEndTime('')
@@ -307,34 +464,175 @@ export function StepSchedule({
     if (endTime && !endSlots.includes(endTime)) {
       onEndTime('')
     }
-  }, [facility, date, timeSlots, endSlots, startTime, endTime, onStartTime, onEndTime])
+  }, [facility, date, timeSlots, endSlots, startTime, endTime, onStartTime, onEndTime, selectedReservationsPending, selectedReservationsError])
 
+  /** Calendar View: the only effect of a click is choosing the reservation date. */
+  const selectDate = (day: Date) => {
+    onDateChange(day)
+    setMonth(day)
+  }
+  /** Booked Dates View: inspect existing reservations — never touch the form. */
+  const openBookedDate = (day: Date) => {
+    const dateKey = format(day, 'yyyy-MM-dd')
+    setSelectedBookedDate(dateKey)
+    setEventsModalOpen((eventsByDate.get(dateKey) ?? []).length > 0)
+  }
+  const changeMonth = (offset: number) => {
+    setMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1))
+    setSelectedBookedDate(null)
+    setEventsModalOpen(false)
+  }
+  /** Switching views must not reset the facility, date, or any other form state. */
+  const changeView = (next: 'calendar' | 'booked') => {
+    setEventsModalOpen(false)
+    setView(next)
+  }
+  const selectedBookedDateValue = selectedBookedDate
+    ? new Date(`${selectedBookedDate}T12:00:00`)
+    : null
+  const selectedEvents = selectedBookedDate ? eventsByDate.get(selectedBookedDate) ?? [] : []
+  const legend = (
+    <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-line pt-4 text-xs text-body" aria-label="Date availability legend">
+      {[
+        ['bg-status-available', 'Available'],
+        ['bg-status-pending', 'Partially booked'],
+        ['bg-status-rejected', 'Fully booked'],
+        ['bg-faint', 'Unavailable'],
+      ].map(([color, label]) => (
+        <span key={label} className="inline-flex items-center gap-2">
+          <span className={cn('size-2 rounded-full', color)} aria-hidden />{label}
+        </span>
+      ))}
+    </div>
+  )
+  // Calendar View shows aggregate availability only. Reservation event names
+  // and details stay exclusive to the Booked Dates View and its modal.
+  const calendarMonth = (
+    <MonthGrid
+      month={month}
+      selected={date}
+      onSelect={selectDate}
+      disabledDate={(day) => {
+        const availability = calendarDayAvailability(day)
+        return day < manilaCalendarDate() || availability === 'full' || availability === 'unavailable'
+      }}
+      renderDay={renderCalendarAvailability}
+      getDayLabel={(day) => {
+        const availability = calendarDayAvailability(day)
+        return availability ? DAY_AVAILABILITY[availability].label : ''
+      }}
+    />
+  )
+  // Booked Dates View: the same grid, showing actual backend reservation data.
+  const bookedMonth = (
+    <MonthGrid
+      month={month}
+      selected={selectedBookedDateValue}
+      onSelect={openBookedDate}
+      renderDay={renderAvailability}
+      getDayLabel={(day) => {
+        const availability = bookedDateAvailability(day)
+        return availability ? DAY_AVAILABILITY[availability].label : ''
+      }}
+    />
+  )
   return (
-    <section aria-label="Choose schedule" className="grid gap-6 lg:grid-cols-2">
+    <section aria-label="Choose schedule" className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">Reservation dates</h2>
+          <p className="mt-0.5 text-sm text-body">
+            {view === 'calendar'
+              ? `Select a date to reserve at ${facility?.name ?? 'your facility'}.`
+              : `Existing reservations at ${facility?.name ?? 'your facility'}.`}
+          </p>
+        </div>
+        <div className="inline-flex rounded-xl border border-line bg-softer p-1" role="group" aria-label="Reservation date view">
+          <button
+            type="button"
+            aria-pressed={view === 'calendar'}
+            onClick={() => changeView('calendar')}
+            className={cn('min-h-10 rounded-lg px-3 text-sm font-semibold transition-colors sm:px-4', view === 'calendar' ? 'bg-surface text-ink shadow-sm' : 'text-body hover:text-ink')}
+          >
+            Calendar View
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === 'booked'}
+            disabled={!facility}
+            onClick={() => changeView('booked')}
+            className={cn('min-h-10 rounded-lg px-3 text-sm font-semibold transition-colors sm:px-4', view === 'booked' ? 'bg-surface text-ink shadow-sm' : 'text-body hover:text-ink', !facility && 'cursor-not-allowed opacity-50')}
+          >
+            View Booked Dates
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="space-y-4">
       <Card>
         <CardHeader
-          title="Choose date"
-          description={facility ? `${facility.name} — select an available day` : 'Select a facility first'}
+          title={view === 'booked' ? 'Booked dates' : 'Choose date'}
+          description={facility ? `${facility.name} · ${view === 'booked' ? 'select a marked date to see reservation details' : 'select a date for your reservation'}` : 'Select a facility first'}
         />
         <div className="mt-4">
-          <MonthGrid
-            month={month}
-            selected={date}
-            onSelect={(day) => {
-              onDateChange(day)
-              setMonth(day)
-            }}
-          />
-        </div>
-        <div className="mt-4 flex items-center justify-between border-t border-line pt-4">
-          <Button variant="outline" size="sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>
-            Previous month
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>
-            Next month
-          </Button>
+          <CalendarHeader month={month} onPrev={() => changeMonth(-1)} onNext={() => changeMonth(1)} />
+          <div className="mt-4 overflow-hidden">
+            <div
+              className="flex w-[200%] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+              style={{ transform: view === 'booked' ? 'translateX(-50%)' : 'translateX(0)' }}
+            >
+              {/* Calendar View — reservation creation only: date selection, no
+                  booking markers, no event names, no event modal. */}
+              <div className="w-1/2 shrink-0" inert={view === 'booked'} aria-hidden={view === 'booked'}>
+                {calendarMonth}
+                {legend}
+              </div>
+              {/* Booked Dates View — existing reservations only: availability
+                  markers, monthly list, and event detail modal. Inspecting a
+                  date here never changes the reservation form. */}
+              <div className="w-1/2 shrink-0" inert={view !== 'booked'} aria-hidden={view !== 'booked'}>
+                <div className="space-y-4">
+                  {bookedMonth}
+                  {legend}
+                  <aside className="rounded-xl border border-line bg-soft p-3 sm:p-4" aria-label="Booked reservation dates">
+                    <h3 className="text-sm font-semibold text-ink">Reservations this month</h3>
+                    {!facility && <p className="mt-3 text-sm text-body">Select a facility to view booked dates.</p>}
+                    {facility && bookedDatesQuery.isPending && <p className="mt-3 text-sm text-body">Loading reservation dates…</p>}
+                    {facility && bookedDatesQuery.isError && <p role="alert" className="mt-3 text-sm text-status-rejected">Booked dates could not be loaded. Try another month or refresh this view.</p>}
+                    {facility && !bookedDatesQuery.isPending && !bookedDatesQuery.isError && bookedDates.length === 0 && (
+                      <p className="mt-3 text-sm leading-relaxed text-body">No reservations are scheduled at this facility this month.</p>
+                    )}
+                    {facility && selectedBookedDateValue && selectedEvents.length === 0 && (
+                      <p role="status" className="mt-3 rounded-lg bg-surface px-3 py-2 text-xs text-body">
+                        No reservations on {format(selectedBookedDateValue, 'MMMM d, yyyy')}.
+                      </p>
+                    )}
+                    {facility && bookedDates.length > 0 && (
+                      <ul className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+                        {[...eventsByDate.entries()].map(([eventDate, events]) => (
+                          <li key={eventDate}>
+                            <button
+                              type="button"
+                              aria-pressed={selectedBookedDate === eventDate}
+                              onClick={() => openBookedDate(new Date(`${eventDate}T12:00:00`))}
+                              className={cn('w-full rounded-lg border px-3 py-2.5 text-left transition-colors hover:border-brand/40 hover:bg-brand-soft/50', selectedBookedDate === eventDate ? 'border-brand/40 bg-brand-soft/50' : 'border-line bg-surface')}
+                            >
+                              <span className="block text-sm font-semibold text-ink">{format(new Date(`${eventDate}T12:00:00`), 'EEE, MMM d')}</span>
+                              <span className="mt-0.5 block text-xs text-body">{events.length} reservation{events.length === 1 ? '' : 's'}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </aside>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </Card>
+      </div>
 
       <div className="space-y-6">
         <Card>
@@ -348,7 +646,7 @@ export function StepSchedule({
                   onStartTime(event.target.value)
                   onEndTime('')
                 }}
-                disabled={timeSlots.length === 0}
+                disabled={timeSlots.length === 0 || selectedReservationsPending || selectedReservationsError}
               >
                 <option value="">Select…</option>
                 {timeSlots.map((slot) => (
@@ -363,7 +661,7 @@ export function StepSchedule({
                 id="end-time"
                 value={endTime}
                 onChange={(event) => onEndTime(event.target.value)}
-                disabled={!startTime}
+                disabled={!startTime || selectedReservationsPending || selectedReservationsError}
               >
                 <option value="">Select…</option>
                 {endSlots.map((slot) => (
@@ -374,6 +672,17 @@ export function StepSchedule({
               </Select>
             </Field>
           </div>
+          {selectedReservationsPending && (
+            <p role="status" className="mt-3 text-sm text-body">Checking existing reservations for this date…</p>
+          )}
+          {selectedReservationsError && (
+            <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-status-pending-bg px-3 py-2 text-sm text-status-pending">
+              <span>Existing reservations could not be loaded. Time selection is paused.</span>
+              <button type="button" className="font-semibold underline" onClick={() => void selectedDateReservationsQuery.refetch()}>
+                Retry
+              </button>
+            </div>
+          )}
           {isToday && (
             <p className="mt-3 text-[13px] text-muted">
               Only future time slots are shown for today.
@@ -423,6 +732,15 @@ export function StepSchedule({
           <div className="h-24 animate-pulse rounded-xl bg-soft" aria-hidden />
         )}
       </div>
+      </div>
+      {/* The modal exists only for the Booked Dates View, so closing it always
+          leaves the user there — the selected view is never changed. */}
+      <ReservationEventsModal
+        open={eventsModalOpen && selectedEvents.length > 0}
+        date={selectedBookedDateValue}
+        events={selectedEvents}
+        onClose={() => setEventsModalOpen(false)}
+      />
     </section>
   )
 }

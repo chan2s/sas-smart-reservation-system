@@ -882,6 +882,11 @@ class ReservationApiTests(TestCase):
         )
 
     def test_check_in_and_check_out(self):
+        staff = User.objects.create_user(
+            username="checkin-observer",
+            password="pass12345",
+            role=User.Role.STAFF,
+        )
         self._auth(self.requester)
         created = self.client.post(
             "/api/reservations/", self._payload(), format="json"
@@ -899,6 +904,15 @@ class ReservationApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ACTIVE")
+        from notifications.models import Notification
+
+        self.assertTrue(
+            Notification.objects.filter(
+                user=staff,
+                title="Reservation checked in",
+                event_key=f"{staff.pk}:reservation:{created['id']}:checked-in-staff:{staff.pk}",
+            ).exists()
+        )
 
         response = self.client.post(
             f"/api/reservations/{created['id']}/check_out/",
@@ -1381,6 +1395,7 @@ class RequesterCancellationTests(TestCase):
         recorded in the existing activity timeline + audit log (actor, status
         transition, reason message)."""
         from accounts.models import AuditLog
+        from notifications.models import Notification
 
         reservation = self._make_reservation()
         self.client.force_authenticate(self.requester)
@@ -1408,6 +1423,13 @@ class RequesterCancellationTests(TestCase):
         )
         self.assertEqual(audits.count(), 1)
         self.assertEqual(audits.first().actor_id, self.requester.id)
+        self.assertTrue(
+            Notification.objects.filter(
+                user=self.admin,
+                title="Reservation cancelled",
+                event_key=f"{self.admin.pk}:reservation:{reservation.pk}:cancelled-staff:{self.admin.pk}",
+            ).exists()
+        )
 
     def test_double_cancellation_rejected_without_duplicate_records(self):
         """A second cancel click (or a replayed request) is rejected safely and

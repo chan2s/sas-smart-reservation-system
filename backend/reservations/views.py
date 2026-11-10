@@ -1220,3 +1220,70 @@ def calendar_events(request):
             event["created_by"] = r.created_by.display_name
         events.append(event)
     return Response(events)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationThrottle])
+def public_booked_dates(request):
+    """Minimal facility schedule data used by the reservation date picker.
+
+    Live reservations, including pending requests, are returned for Booked
+    Dates visibility. Availability calculations separately filter to approved
+    reservations. The response excludes requester identity, contact details,
+    reservation references, notes, and all other private reservation data.
+    """
+    expiration.expire_overdue_reservations()
+    params = request.query_params
+    try:
+        facility_id = int(params.get("facility_id", ""))
+        start = datetime.date.fromisoformat(params.get("start", ""))
+        end = datetime.date.fromisoformat(params.get("end", ""))
+    except (TypeError, ValueError):
+        return Response(
+            {"detail": "A valid facility_id, start, and end are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if end < start or (end - start).days > 30:
+        return Response(
+            {"detail": "The date range must be within one calendar month."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not Facility.objects.filter(pk=facility_id, is_active=True).exists():
+        return Response({"detail": "Facility not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    exclude_id = params.get("exclude_id")
+    if exclude_id:
+        try:
+            exclude_id = int(exclude_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "Invalid exclude_id."}, status=status.HTTP_400_BAD_REQUEST)
+        target = Reservation.objects.filter(pk=exclude_id).first()
+        user = request.user
+        if target is None:
+            return Response({"detail": "Reservation not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not (user.is_authenticated and (target.requester_id == user.id or user.is_sas_staff)):
+            return Response({"detail": "You cannot exclude this reservation."}, status=status.HTTP_403_FORBIDDEN)
+
+    # The Booked Dates View intentionally includes pending reservations for
+    # visibility. Availability consumers use AVAILABILITY_BLOCKING_STATUSES.
+    reservations = Reservation.objects.filter(
+        facility_id=facility_id,
+        date__gte=start,
+        date__lte=end,
+        status__in=Reservation.ACTIVE_STATUSES,
+    ).select_related("facility").order_by("date", "start_time", "event_name")
+    if exclude_id:
+        reservations = reservations.exclude(pk=exclude_id)
+    return Response([
+        {
+            "event_name": reservation.event_name,
+            "facility_name": reservation.facility.name,
+            "date": reservation.date,
+            "start_time": reservation.start_time,
+            "end_time": reservation.end_time,
+            "status": reservation.status,
+            "status_label": reservation.get_status_display(),
+        }
+        for reservation in reservations
+    ])

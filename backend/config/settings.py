@@ -89,7 +89,12 @@ VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
 # A path to the PEM key on disk (recommended) or the encoded key itself.
 # Production Compose points this at the /run/secrets/vapid_private_key secret.
 VAPID_PRIVATE_KEY = _vapid_private_key(os.environ.get("VAPID_PRIVATE_KEY", "").strip())
-VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:admin@example.com").strip()
+VAPID_SUBJECT = os.environ.get(
+    "VAPID_SUBJECT",
+    os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:admin@example.com"),
+).strip()
+# Retain the old setting name for deployments and callers that still use it.
+VAPID_CLAIMS_EMAIL = VAPID_SUBJECT
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"

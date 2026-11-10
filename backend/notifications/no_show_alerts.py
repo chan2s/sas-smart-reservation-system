@@ -198,7 +198,8 @@ def refresh_alerts(now=None) -> dict:
         if should_send_push:
             transaction.on_commit(
                 lambda reservation_id=reservation.pk, alert_stage=stage, stamp=current.isoformat():
-                _send_possible_no_show_push(reservation_id, alert_stage, stamp)
+                _send_possible_no_show_push(reservation_id, alert_stage, stamp),
+                robust=True,
             )
         active_ids.append(reservation.pk)
 
@@ -237,7 +238,18 @@ def _send_possible_no_show_push(reservation_id, stage, stamp):
     from notifications.services import send_push_to_user
 
     User = get_user_model()
-    recipients = User.objects.filter(role__in=[User.Role.ADMIN, User.Role.STAFF]).values_list("id", flat=True)
+    recipients = list(
+        User.objects.filter(
+            role__in=[User.Role.ADMIN, User.Role.STAFF],
+            is_active=True,
+        ).values_list("id", flat=True)
+    )
+    logger.info(
+        "Possible no-show push event: reservation_id=%s stage=%s recipient_ids=%s",
+        reservation_id,
+        stage,
+        recipients,
+    )
     for user_id in recipients:
         send_push_to_user(
             user_id,

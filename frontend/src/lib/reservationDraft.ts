@@ -436,6 +436,8 @@ export interface SubmitReservationContext {
   items: SubmitItems[]
   /** Organization the reservation is for — derived from the account, never typed. */
   organization: string
+  /** Public internal requests: the selected registered organization's id. */
+  organizationId?: number
   /** Public requester email for account-free campus submissions. */
   contactEmail?: string
   /** Staff-only: create on behalf of another campus user. */
@@ -455,7 +457,7 @@ export interface SubmitReservationContext {
  */
 export function toCreateReservationPayload(
   draft: WizardDraft,
-  { items, organization, requesterId, external, contactEmail }: SubmitReservationContext,
+  { items, organization, organizationId, requesterId, external, contactEmail }: SubmitReservationContext,
 ): CreateReservationPayload {
   const base = {
     facility_id: draft.facilityId as number,
@@ -497,6 +499,7 @@ export function toCreateReservationPayload(
   return {
     ...base,
     organization,
+    ...(organizationId ? { organization_id: organizationId } : {}),
     contact_person: draft.contact.name.trim(),
     contact_email: contactEmail,
     contact_phone: normalizePhone(draft.contact.phone) || null,

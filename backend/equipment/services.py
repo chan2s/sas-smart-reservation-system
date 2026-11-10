@@ -19,13 +19,13 @@ def _open_maintenance_quantities() -> dict:
 
 
 def _reserved_quantities(date_str=None, start=None, end=None, exclude_reservation_id=None, include_all_dates=False) -> dict:
-    """equipment_id -> quantity reserved by active reservations on the window.
+    """equipment_id -> quantity committed by approved reservations on the window.
 
     Without date/time parameters:
-    - If ``include_all_dates=False`` (default): only today's reservations are
+    - If ``include_all_dates=False`` (default): only today's approved reservations are
       counted. This is for the at-a-glance inventory view, where summing across
       non-overlapping future dates would produce impossible totals.
-    - If ``include_all_dates=True``: all active reservations across all dates
+    - If ``include_all_dates=True``: all approved reservations across all dates
       are counted. This is for validation contexts (e.g. preventing inventory
       reduction below committed quantities).
 
@@ -46,19 +46,19 @@ def _reserved_quantities(date_str=None, start=None, end=None, exclude_reservatio
             date=target,
             start_time__lt=end,
             end_time__gt=start,
-            status__in=Reservation.ACTIVE_STATUSES,
+            status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES,
         )
     else:
         if include_all_dates:
-            items = items.filter(status__in=Reservation.ACTIVE_STATUSES)
+            items = items.filter(status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES)
         else:
-            # At-a-glance: count today's active reservations only.
+            # At-a-glance: count today's approved reservations only.
             # Future reservations don't reduce current availability — items
             # are returned after each event, so they can be re-reserved.
             today = timezone.localdate()
             items = items.filter(
                 date=today,
-                status__in=Reservation.ACTIVE_STATUSES,
+                status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES,
             )
     rows = items.values("items__equipment_id").annotate(total=Sum("items__quantity"))
     return {row["items__equipment_id"]: row["total"] for row in rows}

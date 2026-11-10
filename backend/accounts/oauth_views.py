@@ -30,6 +30,8 @@ from rest_framework.response import Response
 from accounts.login_activity import record_google_login
 from accounts.models import AuditLog
 from accounts.serializers import UserSerializer
+from notifications.models import Notification
+from notifications.services import notify_admins
 
 from rest_framework.decorators import throttle_classes
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -566,6 +568,13 @@ def google_callback(request):
             "Google OAuth: created SAS RESERVE account (id=%s) from a verified "
             "Google identity; awaiting administrator approval.",
             user.pk,
+        )
+        notify_admins(
+            Notification.Type.SYSTEM,
+            "New account registration",
+            "A new SAS RESERVE account is awaiting administrator review.",
+            "/admin/users",
+            event_key=f"account:{user.pk}:registered",
         )
         # Registration and authentication stay separate, exactly like the
         # password flow: no tokens are issued here. The SPA shows the success

@@ -362,11 +362,15 @@ class Reservation(models.Model):
         ACADEMIC = "ACADEMIC", "Academic Event"
         OTHER = "OTHER", "Other"
 
-    # Statuses that hold resources and block availability.
-    # EXPIRED is deliberately NOT here: an expired reservation never occupied
-    # the facility or its equipment, so it must not keep blocking them (while
-    # its record is still kept for history/audit).
+    # Live workflow statuses shown in upcoming reservation views. Availability
+    # checks use AVAILABILITY_BLOCKING_STATUSES below instead: pending requests
+    # remain visible but do not reserve facility or equipment time.
     ACTIVE_STATUSES = [Status.PENDING, Status.APPROVED, Status.ACTIVE]
+
+    # Facility and equipment availability policy: only an approved reservation
+    # commits a time slot. Pending requests remain visible in reservation
+    # schedules but do not prevent another request from being submitted.
+    AVAILABILITY_BLOCKING_STATUSES = [Status.APPROVED]
 
     # Historical/final statuses that no longer hold any resource and can never
     # transition back into the live workflow.

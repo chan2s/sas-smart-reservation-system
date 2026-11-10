@@ -29,11 +29,11 @@ EARLIEST_START_TIME = time_cls(8, 0)
 # ---------------------------------------------------------------------------
 
 def overlapping_reservations(facility_id, target_date, start, end, exclude_id=None):
-    """Reservations that hold the facility during [start, end) on target_date."""
+    """Approved reservations overlapping [start, end) on target_date."""
     qs = Reservation.objects.filter(
         facility_id=facility_id,
         date=target_date,
-        status__in=Reservation.ACTIVE_STATUSES,
+        status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES,
         start_time__lt=end,
         end_time__gt=start,
     )
@@ -43,12 +43,12 @@ def overlapping_reservations(facility_id, target_date, start, end, exclude_id=No
 
 
 def reserved_quantities(target_date, start, end, exclude_id=None) -> dict:
-    """equipment_id -> quantity requested by overlapping active reservations.
+    """equipment_id -> quantity committed by overlapping approved reservations.
 
     When ``target_date`` (or start/end) is ``None`` the corresponding filter is
     skipped, returning quantities reserved across all windows.
     """
-    qs = Reservation.objects.filter(status__in=Reservation.ACTIVE_STATUSES)
+    qs = Reservation.objects.filter(status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES)
     if target_date is not None:
         qs = qs.filter(date=target_date)
     if start is not None and end is not None:
@@ -371,7 +371,7 @@ def find_alternatives(
     """Propose up to ``limit`` fully-available time slots.
 
     Candidates are generated from the facility's opening time and from just
-    after each existing reservation ends, which yields realistic adjacent
+    after each approved reservation ends, which yields realistic adjacent
     slots. A buffer is applied between consecutive reservations. When
     ``exclude_id`` is given (the owner revising their own pending
     reservation), that reservation is skipped both as a candidate source and
@@ -397,7 +397,7 @@ def find_alternatives(
             Reservation.objects.filter(
                 facility=facility,
                 date=day,
-                status__in=Reservation.ACTIVE_STATUSES,
+                status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES,
             )
             .exclude(pk=exclude_id)
             .order_by("start_time")

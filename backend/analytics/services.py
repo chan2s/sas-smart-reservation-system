@@ -284,7 +284,9 @@ def facility_utilization(days: int = 30) -> dict:
 
         booked_seconds = 0.0
         for r in Reservation.objects.filter(
-            facility=facility, date__gte=start, status__in=Reservation.ACTIVE_STATUSES
+            facility=facility,
+            date__gte=start,
+            status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES,
         ):
             booked_seconds += (
                 datetime.combine(r.date, r.end_time)

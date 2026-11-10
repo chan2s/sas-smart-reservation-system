@@ -27,7 +27,7 @@ def facility_availability_summary(facility, date_str=None) -> dict:
         Reservation.objects.filter(
             facility=facility,
             date=target,
-            status__in=Reservation.ACTIVE_STATUSES,
+            status__in=Reservation.AVAILABILITY_BLOCKING_STATUSES,
         )
         .exclude(status=Reservation.Status.REJECTED)
         .count()

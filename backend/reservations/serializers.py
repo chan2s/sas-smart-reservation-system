@@ -7,6 +7,7 @@ from PIL import UnidentifiedImageError
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from accounts.models import Organization
 from equipment.models import Equipment
 from equipment.services import unassigned_equipment_for_facility
 from facilities.models import Facility
@@ -688,6 +689,12 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         required=False,
     )
     contact_email = serializers.EmailField(required=False, allow_blank=True)
+    # Public internal requests select a registered, active campus organization.
+    # Resolved server-side so the reservation links the real record instead of
+    # trusting a client-supplied name.
+    organization_id = serializers.IntegerField(
+        write_only=True, required=False, allow_null=True
+    )
     organization_type = serializers.ChoiceField(
         choices=Reservation.OrganizationType.choices,
         required=False,
@@ -724,6 +731,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "event_name",
             "event_type",
             "organization",
+            "organization_id",
             "organization_type",
             "purpose",
             "description",
@@ -762,6 +770,28 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         if self.context.get("public_submission"):
             requester_type = attrs.get("requester_type", Reservation.RequesterType.CAMPUS)
             attrs["requester_type"] = requester_type
+            organization_id = attrs.pop("organization_id", None)
+            if (
+                organization_id is not None
+                and requester_type != Reservation.RequesterType.EXTERNAL
+            ):
+                # Internal selections send the id; the registered record is the
+                # source of truth, so the client-sent name is never trusted.
+                organization = Organization.objects.filter(
+                    pk=organization_id,
+                    organization_type=Organization.OrganizationType.INTERNAL,
+                    is_active=True,
+                ).first()
+                if organization is None:
+                    raise serializers.ValidationError(
+                        {
+                            "organization_id": (
+                                "Select a registered, active college, office, or unit."
+                            )
+                        }
+                    )
+                attrs["_organization_ref"] = organization
+                attrs["organization"] = organization.organization_name
             if not (attrs.get("organization") or "").strip():
                 raise serializers.ValidationError({"organization": "Organization name is required."})
             if not (attrs.get("contact_person") or "").strip():
@@ -780,6 +810,10 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             else:
                 attrs["organization_type"] = ""
             return attrs
+
+        # Only the public campus intake accepts a selected organization id;
+        # authenticated creation resolves it from the account instead.
+        attrs.pop("organization_id", None)
 
         # Rebook lineage: resolve and authorise the referenced expired
         # reservation. This runs BEFORE the requester is resolved so a staff

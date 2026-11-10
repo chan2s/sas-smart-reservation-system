@@ -9,6 +9,7 @@ import type {
   ApprovalLetter,
   ApprovalLetterPreview,
   AvailabilityCheck,
+  BookedDateEvent,
   CalendarEvent,
   CampusUserOption,
   ChatbotResponse,
@@ -528,6 +529,8 @@ export interface CreateReservationPayload {
   event_name: string
   event_type: EventType
   organization: string
+  /** Public internal requests: the selected registered organization's id. */
+  organization_id?: number
   organization_type?: string
   purpose: string
   description: string
@@ -851,6 +854,20 @@ export const endpoints = {
     publicFlow ? '/api/public/reservations/availability/' : '/api/availability/check/',
     payload,
   ),
+  bookedDates: (params: {
+    facility_id: number
+    start: string
+    end: string
+    exclude_id?: number
+  }) => {
+    const qs = new URLSearchParams({
+      facility_id: String(params.facility_id),
+      start: params.start,
+      end: params.end,
+    })
+    if (params.exclude_id) qs.set('exclude_id', String(params.exclude_id))
+    return api.get<BookedDateEvent[]>(`/api/public/reservations/booked-dates/?${qs.toString()}`)
+  },
   recommendResources: (payload: {
     event_type: string
     expected_participants: number

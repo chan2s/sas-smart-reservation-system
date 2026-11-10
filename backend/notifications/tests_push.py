@@ -9,11 +9,27 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from notifications.models import Notification, PushSubscription
 from notifications.services import notify, notify_staff, send_push_to_user
 
 User = get_user_model()
+_TEST_PRIVATE_SCALAR = (7).to_bytes(32, "big")
+_TEST_PRIVATE_KEY = ec.derive_private_key(7, ec.SECP256R1())
+_TEST_PUBLIC_KEY = base64.urlsafe_b64encode(
+    _TEST_PRIVATE_KEY.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+).decode().rstrip("=")
+_TEST_PRIVATE_KEY_ENCODED = base64.urlsafe_b64encode(_TEST_PRIVATE_SCALAR).decode().rstrip("=")
+_TEST_VAPID_SETTINGS = {
+    "VAPID_PUBLIC_KEY": _TEST_PUBLIC_KEY,
+    "VAPID_PRIVATE_KEY": _TEST_PRIVATE_KEY_ENCODED,
+    "VAPID_SUBJECT": "mailto:test@example.test",
+    "VAPID_CLAIMS_EMAIL": "mailto:test@example.test",
+}
 
 
 class PushApiTests(TestCase):
@@ -89,6 +105,13 @@ class PushApiTests(TestCase):
         self.assertEqual(self.client.get("/api/notifications/").status_code, 200)
         self.assertEqual(PushSubscription.objects.filter(user=self.user).count(), 1)
 
+    @override_settings(**_TEST_VAPID_SETTINGS)
+    def test_public_key_endpoint_returns_only_a_valid_public_key(self):
+        response = self.client.get("/api/push/public-key/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"public_key": _TEST_PUBLIC_KEY})
+        self.assertNotIn(_TEST_PRIVATE_KEY_ENCODED, str(response.json()))
+
 
 class PushDeliveryTests(TestCase):
     def setUp(self):
@@ -101,7 +124,7 @@ class PushDeliveryTests(TestCase):
             auth="auth",
         )
 
-    @override_settings(VAPID_PUBLIC_KEY="public", VAPID_PRIVATE_KEY="private", VAPID_CLAIMS_EMAIL="mailto:test@example.test")
+    @override_settings(**_TEST_VAPID_SETTINGS)
     def test_successful_delivery_updates_last_successful_timestamp(self):
         with mock.patch("pywebpush.webpush") as webpush:
             send_push_to_user(self.user.pk, "RESERVATION", "/reservations/1", "reservation:1:approved")
@@ -114,15 +137,14 @@ class PushDeliveryTests(TestCase):
         self.assertEqual(content["url"], "/reservations/1")
         self.assertNotIn("event_name", content)
 
-    @override_settings(VAPID_PUBLIC_KEY="public", VAPID_PRIVATE_KEY="private", VAPID_CLAIMS_EMAIL="mailto:test@example.test")
-    def test_expired_subscription_is_deactivated(self):
+    @override_settings(**_TEST_VAPID_SETTINGS)
+    def test_expired_subscription_is_removed(self):
         from pywebpush import WebPushException
 
         gone = WebPushException("expired", response=mock.Mock(status_code=410))
         with mock.patch("pywebpush.webpush", side_effect=gone):
             send_push_to_user(self.user.pk, "RESERVATION", "/notifications")
-        self.device.refresh_from_db()
-        self.assertFalse(self.device.active)
+        self.assertFalse(PushSubscription.objects.filter(pk=self.device.pk).exists())
 
     def test_duplicate_event_key_creates_only_one_in_app_notification(self):
         with self.captureOnCommitCallbacks(execute=True):
@@ -141,7 +163,7 @@ class PushDeliveryTests(TestCase):
         self.assertTrue(Notification.objects.filter(user=staff).exists())
         self.assertFalse(Notification.objects.filter(user=requester).exists())
 
-    @override_settings(VAPID_PUBLIC_KEY="public", VAPID_PRIVATE_KEY="private", VAPID_CLAIMS_EMAIL="mailto:test@example.test")
+    @override_settings(**_TEST_VAPID_SETTINGS)
     def test_one_failed_device_does_not_block_other_devices(self):
         second = PushSubscription.objects.create(
             user=self.user,
@@ -158,7 +180,43 @@ class PushDeliveryTests(TestCase):
         self.assertIsNotNone(self.device.last_successful_delivery)
         self.assertIsNone(second.last_successful_delivery)
 
-    @override_settings(VAPID_PUBLIC_KEY="public", VAPID_PRIVATE_KEY="private", VAPID_CLAIMS_EMAIL="mailto:test@example.test")
+    @override_settings(**_TEST_VAPID_SETTINGS)
+    def test_expired_admin_device_does_not_block_other_staff_recipients(self):
+        admin = User.objects.create_user("delivery-admin", password="password123", role=User.Role.ADMIN)
+        staff = User.objects.create_user("delivery-staff", password="password123", role=User.Role.STAFF)
+        expired_device = PushSubscription.objects.create(
+            user=admin,
+            endpoint="https://fcm.googleapis.com/admin-device",
+            p256dh="p256dh-admin",
+            auth="auth-admin",
+        )
+        live_device = PushSubscription.objects.create(
+            user=staff,
+            endpoint="https://fcm.googleapis.com/staff-device",
+            p256dh="p256dh-staff",
+            auth="auth-staff",
+        )
+        from pywebpush import WebPushException
+
+        expired = WebPushException("expired", response=mock.Mock(status_code=410))
+        with mock.patch("pywebpush.webpush", side_effect=[expired, mock.DEFAULT]) as webpush:
+            with self.captureOnCommitCallbacks(execute=True):
+                notify_staff("RESERVATION", "New reservation", event_key="reservation:123:submitted")
+
+        self.assertFalse(PushSubscription.objects.filter(pk=expired_device.pk).exists())
+        live_device.refresh_from_db()
+        self.assertTrue(live_device.active)
+        self.assertIsNotNone(live_device.last_successful_delivery)
+        self.assertEqual(webpush.call_count, 2)
+
+    @override_settings(**_TEST_VAPID_SETTINGS)
+    def test_mismatched_vapid_keys_skip_delivery_without_raising(self):
+        with mock.patch("pywebpush.webpush") as webpush:
+            with override_settings(VAPID_PUBLIC_KEY="A" * 87):
+                send_push_to_user(self.user.pk, "RESERVATION", "/notifications")
+        webpush.assert_not_called()
+
+    @override_settings(**_TEST_VAPID_SETTINGS)
     def test_inactive_device_is_not_sent_push(self):
         self.device.active = False
         self.device.save(update_fields=["active"])

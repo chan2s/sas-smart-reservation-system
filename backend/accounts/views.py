@@ -3,6 +3,8 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .models import AuditLog
+from notifications.models import Notification
+from notifications.services import notify_admins
 from .permissions import IsAccountApprovedOrReadOnly
 from .throttling import (
     AuthLoginThrottle,
@@ -81,6 +83,13 @@ class RegisterView(generics.CreateAPIView):
                 detail="External organization registered at sign-up",
                 request=request,
             )
+        notify_admins(
+            Notification.Type.SYSTEM,
+            "New account registration",
+            "A new SAS RESERVE account is awaiting administrator review.",
+            "/admin/users",
+            event_key=f"account:{user.pk}:registered",
+        )
         return Response(
             UserSerializer(user).data,
             status=status.HTTP_201_CREATED,

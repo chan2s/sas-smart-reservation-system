@@ -1,29 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bell, BellOff, MonitorSmartphone, Trash2 } from 'lucide-react'
 import { endpoints } from '@/lib/api'
+import { ensureBrowserPushSubscription } from '@/lib/pushSubscription'
 import type { PushDevice } from '@/lib/types'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { useToast } from '@/components/ui/Toast'
 
 type PermissionState = NotificationPermission | 'unsupported'
-
-function applicationServerKey(value: string): ArrayBuffer {
-  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (value.length % 4)) % 4)
-  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0)).buffer as ArrayBuffer
-}
-
-function deviceLabel(): string {
-  const ua = navigator.userAgent
-  const browser = /Edg\//.test(ua) ? 'Microsoft Edge' : /Chrome\//.test(ua) ? 'Google Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser'
-  const os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iPod/.test(ua) ? 'iPhone/iPad' : /Mac OS/.test(ua) ? 'Mac' : 'Device'
-  return `${browser} on ${os}`
-}
-
-async function endpointFingerprint(endpoint: string): Promise<string> {
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint))
-  return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, '0')).join('')
-}
 
 export function PushNotificationsSection() {
   const { toast } = useToast()
@@ -48,7 +32,11 @@ export function PushNotificationsSection() {
       setDevices(registered)
       const subscription = await registration?.pushManager.getSubscription()
       setCurrentSubscribed(Boolean(subscription))
-      const fingerprint = subscription ? await endpointFingerprint(subscription.endpoint) : null
+      const fingerprint = subscription
+        ? await crypto.subtle.digest('SHA-256', new TextEncoder().encode(subscription.endpoint)).then((bytes) =>
+            Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, '0')).join(''),
+          )
+        : null
       setCurrentDevice(registered.find((device) => device.endpoint_fingerprint === fingerprint) ?? null)
       setPermission(Notification.permission)
     } catch {
@@ -65,20 +53,7 @@ export function PushNotificationsSection() {
       const result = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
       setPermission(result)
       if (result !== 'granted') return
-      const registration = await (await navigator.serviceWorker.getRegistration('/') ?? navigator.serviceWorker.register('/sw.js', { scope: '/' }))
-      const key = await endpoints.pushPublicKey()
-      const subscription = await registration.pushManager.getSubscription() ?? await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: applicationServerKey(key.public_key),
-      })
-      await endpoints.registerPushSubscription({
-        device_name: deviceLabel(),
-        endpoint: subscription.endpoint,
-        keys: {
-          p256dh: subscription.getKey('p256dh') ? btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('p256dh')!))) : '',
-          auth: subscription.getKey('auth') ? btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth')!))) : '',
-        },
-      })
+      await ensureBrowserPushSubscription({ reactivate: true })
       await refresh()
       toast('Push notifications are enabled on this device.')
     } catch {

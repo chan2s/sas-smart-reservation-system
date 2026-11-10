@@ -18,6 +18,7 @@ import {
   useCreateReservation,
   useFacilities,
   useFacilityResources,
+  useInternalOrganizations,
   useReservations,
   useResubmitReservation,
 } from '@/hooks/queries'
@@ -243,6 +244,9 @@ export function ReservationWizardPage() {
   const [external, setExternal] = useState(
     () => restored?.rebooker?.external ?? EMPTY_EXTERNAL,
   )
+  // Internal (account-free) requests pick from the registered, active campus
+  // organizations; the id is submitted so the reservation links the real record.
+  const [internalOrganizationId, setInternalOrganizationId] = useState('')
   // Rebook: resolve the original requester account so the "who is it for" step
   // is already satisfied for staff.
   const seedRequester =
@@ -706,6 +710,7 @@ export function ReservationWizardPage() {
   const requesterStepValid = !isAdmin
     ? publicFlow
       ? Boolean(
+          (requesterType === 'EXTERNAL' || internalOrganizationId) &&
           external.organization.trim() &&
           /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(external.contact_email.trim()) &&
           (requesterType !== 'EXTERNAL' || external.organization_type),
@@ -774,7 +779,11 @@ export function ReservationWizardPage() {
       }
     }
     if (stepKey === 'requester' && publicFlow && !requesterStepValid) {
-      setStepError('Enter the organization name and a valid contact email before continuing.')
+      setStepError(
+        requesterType === 'CAMPUS'
+          ? 'Select your college, office, or unit and enter a valid contact email before continuing.'
+          : 'Enter the organization name and a valid contact email before continuing.',
+      )
       return
     }
     if (stepKey === 'facility' && facilityId == null) {
@@ -886,7 +895,12 @@ export function ReservationWizardPage() {
       // The backend resolves the same value from the authenticated user;
       // sending it only keeps the payload self-describing.
       organization: isExternalRequester ? external.organization : reservingAs,
-      ...(publicFlow && requesterType === 'CAMPUS' ? { contactEmail: external.contact_email } : {}),
+      ...(publicFlow && requesterType === 'CAMPUS'
+        ? {
+            contactEmail: external.contact_email,
+            organizationId: Number(internalOrganizationId) || undefined,
+          }
+        : {}),
       ...(isAdmin && requesterType === 'CAMPUS' && selectedUser
         ? { requesterId: selectedUser.id }
         : {}),
@@ -1089,6 +1103,8 @@ export function ReservationWizardPage() {
           <PublicOrganizationStep
             requesterType={requesterType}
             organization={external.organization}
+            organizationId={internalOrganizationId}
+            onOrganizationId={setInternalOrganizationId}
             organizationType={external.organization_type}
             email={external.contact_email}
             onChange={(key, value) => setExternal((current) => ({ ...current, [key]: value }))}
@@ -1126,6 +1142,7 @@ export function ReservationWizardPage() {
         {stepKey === 'schedule' && (
           <StepSchedule
             facility={facility}
+            excludeReservationId={editingId}
             date={date}
             onDateChange={setDate}
             startTime={startTime}
@@ -1352,6 +1369,8 @@ function validationMessage(error: unknown, fallback: string): string {
 function PublicOrganizationStep({
   requesterType,
   organization,
+  organizationId,
+  onOrganizationId,
   organizationType,
   email,
   onChange,
@@ -1359,6 +1378,8 @@ function PublicOrganizationStep({
 }: {
   requesterType: 'CAMPUS' | 'EXTERNAL'
   organization: string
+  organizationId: string
+  onOrganizationId: (id: string) => void
   organizationType: string
   email: string
   onChange: (key: 'organization' | 'organization_type' | 'contact_email', value: string) => void
@@ -1373,17 +1394,26 @@ function PublicOrganizationStep({
         Add the organization and contact email for this reservation request.
       </p>
       <Card className="mt-5 grid gap-4 p-5 sm:grid-cols-2">
-        <Field label={requesterType === 'EXTERNAL' ? 'Organization name' : 'College, office, or unit'} htmlFor="public-organization">
-          <Input
-            id="public-organization"
-            value={organization}
-            onChange={(event) => onChange('organization', event.target.value)}
-            maxLength={120}
-            autoComplete="organization"
-            required
-            aria-invalid={showErrors && !organization.trim()}
+        {requesterType === 'EXTERNAL' ? (
+          <Field label="Organization name" htmlFor="public-organization">
+            <Input
+              id="public-organization"
+              value={organization}
+              onChange={(event) => onChange('organization', event.target.value)}
+              maxLength={120}
+              autoComplete="organization"
+              required
+              aria-invalid={showErrors && !organization.trim()}
+            />
+          </Field>
+        ) : (
+          <InternalOrganizationSelect
+            organizationId={organizationId}
+            onOrganizationId={onOrganizationId}
+            onChange={onChange}
+            showErrors={showErrors}
           />
-        </Field>
+        )}
         {requesterType === 'EXTERNAL' && (
           <Field label="Organization type" htmlFor="public-organization-type">
             <Select
@@ -1412,6 +1442,77 @@ function PublicOrganizationStep({
         </Field>
       </Card>
     </section>
+  )
+}
+
+/**
+ * Registered, active internal organizations, loaded from the existing
+ * /api/auth/internal-organizations/ endpoint. Rendered only for the internal
+ * flow, so the external reservation workflow never triggers this fetch.
+ */
+function InternalOrganizationSelect({
+  organizationId,
+  onOrganizationId,
+  onChange,
+  showErrors,
+}: {
+  organizationId: string
+  onOrganizationId: (id: string) => void
+  onChange: (key: 'organization' | 'organization_type' | 'contact_email', value: string) => void
+  showErrors: boolean
+}) {
+  const {
+    data: internalOrganizations,
+    isLoading,
+    isError,
+  } = useInternalOrganizations()
+  return (
+    <>
+      <Field
+        label="College, office, or unit"
+        htmlFor="public-organization"
+        error={
+          showErrors && !organizationId
+            ? 'Select your college, office, or unit.'
+            : undefined
+        }
+      >
+        <Select
+          id="public-organization"
+          value={organizationId}
+          onChange={(event) => {
+            const id = event.target.value
+            const selected = (internalOrganizations ?? []).find(
+              (item) => String(item.id) === id,
+            )
+            onOrganizationId(id)
+            onChange('organization', selected?.organization_name ?? '')
+          }}
+          required
+          disabled={isLoading || isError}
+          aria-invalid={showErrors && !organizationId}
+        >
+          <option value="">
+            {isLoading
+              ? 'Loading organizations…'
+              : isError
+                ? 'Could not load organizations'
+                : 'Select your college, office, or unit'}
+          </option>
+          {(internalOrganizations ?? []).map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.organization_name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {isError && (
+        <p role="alert" className="text-sm text-status-rejected sm:col-span-2">
+          We couldn&apos;t load the list of colleges, offices, and units. Check your
+          connection and try again.
+        </p>
+      )}
+    </>
   )
 }
 

@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 
 from accounts.management.commands.seed import Command as SeedCommand
 from accounts.models import AuditLog, Organization
+from notifications.models import Notification
 
 User = get_user_model()
 
@@ -454,6 +455,11 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.client = APIClient()
 
     def test_external_registration_creates_pending_organization(self):
+        admin = User.objects.create_user(
+            username="registration-admin",
+            password="pass12345",
+            role=User.Role.ADMIN,
+        )
         response = self.client.post(REGISTER_URL, _external_registration(), format="json")
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
@@ -481,6 +487,13 @@ class ExternalOrganizationRegistrationTests(TestCase):
         self.assertTrue(
             AuditLog.objects.filter(
                 actor=user, action=AuditLog.Action.ORGANIZATION_REGISTERED
+            ).exists()
+        )
+        self.assertTrue(
+            Notification.objects.filter(
+                user=admin,
+                title="New account registration",
+                event_key=f"{admin.pk}:account:{user.pk}:registered:{admin.pk}",
             ).exists()
         )
 

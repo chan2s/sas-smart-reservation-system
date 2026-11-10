@@ -23,6 +23,7 @@ from allauth.socialaccount.models import SocialAccount
 from django.core.signing import TimestampSigner
 from django.test import override_settings
 from django.urls import reverse
+from notifications.models import Notification
 from rest_framework.test import APIClient, APITestCase
 
 from .models import AuditLog, Organization, User
@@ -187,6 +188,11 @@ class GoogleRegistrationFlowTests(APITestCase):
         self.client = APIClient()
 
     def test_new_google_identity_registers_an_account(self):
+        admin = User.objects.create_user(
+            username="google-registration-admin",
+            password="pass12345",
+            role=User.Role.ADMIN,
+        )
         response = _callback(self.client, _start(self.client, intent="register"))
 
         # Registration success returns to the login page (registration never
@@ -213,6 +219,13 @@ class GoogleRegistrationFlowTests(APITestCase):
         self.assertTrue(
             SocialAccount.objects.filter(
                 provider=PROVIDER, uid=SUB, user=user
+            ).exists()
+        )
+        self.assertTrue(
+            Notification.objects.filter(
+                user=admin,
+                title="New account registration",
+                event_key=f"{admin.pk}:account:{user.pk}:registered:{admin.pk}",
             ).exists()
         )
 

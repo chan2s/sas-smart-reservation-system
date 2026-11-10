@@ -931,6 +931,17 @@ export interface CalendarEvent {
   created_by?: string
 }
 
+/** Privacy-limited event data returned to the reservation date picker. */
+export interface BookedDateEvent {
+  event_name: string
+  facility_name: string
+  date: string
+  start_time: string
+  end_time: string
+  status: ReservationStatus
+  status_label: string
+}
+
 export interface Paginated<T> {
   count: number
   next: string | null

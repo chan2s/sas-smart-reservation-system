@@ -3,6 +3,7 @@ import { Header, MobileBottomNav } from './Header'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import { AffiliationPrompt } from '@/components/organizations/AffiliationPrompt'
 import { ViewOnlyBanner } from '@/components/auth/ViewOnlyNotice'
+import { PushSubscriptionInitializer } from '@/components/notifications/PushSubscriptionInitializer'
 import { useAuth } from '@/hooks/useAuth'
 
 /**
@@ -27,6 +28,7 @@ export function AppShell() {
   const { isViewOnly, isApprovalLettersOnly } = useAuth()
   return (
     <div className="flex min-h-dvh flex-col bg-soft">
+      <PushSubscriptionInitializer />
       <Header />
 
       <main className="w-full flex-1">

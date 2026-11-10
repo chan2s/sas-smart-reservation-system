@@ -8,10 +8,12 @@ interface MonthGridProps {
   selected?: Date | null
   onSelect?: (date: Date) => void
   renderDay?: (date: Date) => React.ReactNode
+  getDayLabel?: (date: Date) => string
+  disabledDate?: (date: Date) => boolean
   className?: string
 }
 
-export function MonthGrid({ month, selected, onSelect, renderDay, className }: MonthGridProps) {
+export function MonthGrid({ month, selected, onSelect, renderDay, getDayLabel, disabledDate, className }: MonthGridProps) {
   const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 })
   const end = endOfWeek(endOfMonth(month), { weekStartsOn: 1 })
 
@@ -40,6 +42,7 @@ export function MonthGrid({ month, selected, onSelect, renderDay, className }: M
           const daySelected = selected != null && isSameDay(day, selected)
           const today = isToday(day)
           const interactive = !outside && Boolean(onSelect)
+          const disabled = Boolean(disabledDate?.(day))
           const content = (
             <>
               {format(day, 'd')}
@@ -52,14 +55,16 @@ export function MonthGrid({ month, selected, onSelect, renderDay, className }: M
             interactive && !daySelected && 'hover:bg-soft',
             today && !daySelected && 'font-bold text-brand',
             daySelected && 'bg-brand font-semibold text-white shadow-sm',
+            disabled && 'cursor-not-allowed opacity-45',
           )
           return interactive ? (
             <button
               key={day.toISOString()}
               type="button"
               onClick={() => onSelect?.(day)}
-              aria-label={format(day, 'MMMM d, yyyy')}
+              aria-label={[format(day, 'MMMM d, yyyy'), getDayLabel?.(day)].filter(Boolean).join(', ')}
               aria-pressed={daySelected}
+              disabled={disabled}
               className={cellClass}
             >
               {content}

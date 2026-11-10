@@ -2,6 +2,7 @@ import logging
 
 from django.utils import timesince
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from rest_framework import viewsets, status as http_status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -19,7 +20,7 @@ from .serializers import (
     PossibleNoShowAlertSerializer,
     PushSubscriptionSerializer,
 )
-from .services import normalize_app_origin
+from .services import normalize_app_origin, validate_vapid_configuration
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,19 @@ class VapidPublicKeyView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from django.conf import settings
-        if not settings.VAPID_PUBLIC_KEY:
-            return Response({"detail": "Web Push is not configured."}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-        return Response({"public_key": settings.VAPID_PUBLIC_KEY})
+        try:
+            public_key = validate_vapid_configuration()
+        except Exception as exc:
+            logger.error(
+                "VAPID public-key request rejected: configuration error=%s detail=%s",
+                type(exc).__name__,
+                str(exc),
+            )
+            return Response(
+                {"detail": "Web Push is not configured correctly."},
+                status=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"public_key": public_key})
 
 
 class PushSubscriptionListView(APIView):
@@ -59,11 +69,24 @@ class PushSubscriptionListView(APIView):
         serializer.is_valid(raise_exception=True)
         endpoint = serializer.validated_data["endpoint"]
         app_origin = _subscription_origin(request)
-        subscription = PushSubscription.objects.filter(endpoint=endpoint).first()
+        subscription_values = {
+            key: value
+            for key, value in serializer.validated_data.items()
+            if key != "endpoint"
+        }
+        with transaction.atomic():
+            subscription, created = PushSubscription.objects.select_for_update().get_or_create(
+                endpoint=endpoint,
+                defaults={
+                    **subscription_values,
+                    "user": request.user,
+                    "app_origin": app_origin,
+                },
+            )
         if subscription and subscription.user_id != request.user.pk:
             return Response({"detail": "This device is already registered to another account."}, status=http_status.HTTP_409_CONFLICT)
-        if subscription:
-            for key, value in serializer.validated_data.items():
+        if not created:
+            for key, value in subscription_values.items():
                 setattr(subscription, key, value)
             subscription.user = request.user
             # Keep the origin current on re-registration; never erase a known
@@ -71,8 +94,13 @@ class PushSubscriptionListView(APIView):
             subscription.app_origin = app_origin or subscription.app_origin
             subscription.active = True
             subscription.save()
-        else:
-            subscription = serializer.save(user=request.user, app_origin=app_origin)
+        logger.info(
+            "Push subscription %s: subscription_id=%s user_id=%s active=%s",
+            "created" if created else "updated",
+            subscription.pk,
+            request.user.pk,
+            subscription.active,
+        )
         return Response(PushSubscriptionSerializer(subscription).data, status=http_status.HTTP_201_CREATED)
 
 

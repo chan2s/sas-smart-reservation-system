@@ -11,6 +11,7 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
 
+from accounts.models import Organization
 from facilities.models import Facility, OperatingHour
 from reservations.models import Reservation
 
@@ -78,6 +79,35 @@ class PublicApprovalDocumentTests(TestCase):
             response = self.client.post(SUBMIT_URL, payload, format="json")
         self.assertEqual(response.status_code, 201, response.content)
         return Reservation.objects.get(pk=response.json()["id"])
+
+    def test_internal_submission_links_the_selected_registered_organization(self):
+        organization = Organization.objects.get(organization_code="CAS")
+
+        reservation = self.submit_public(
+            payload={
+                **self.public_payload(),
+                # The client-sent name is never trusted when an id is given.
+                "organization": "Typed instead of selected",
+                "organization_id": organization.id,
+            }
+        )
+
+        self.assertEqual(reservation.organization_ref_id, organization.id)
+        self.assertEqual(reservation.organization, organization.organization_name)
+
+    def test_internal_submission_rejects_an_inactive_organization(self):
+        organization = Organization.objects.get(organization_code="CAS")
+        organization.is_active = False
+        organization.save(update_fields=["is_active"])
+
+        response = self.client.post(
+            SUBMIT_URL,
+            {**self.public_payload(), "organization_id": organization.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("organization_id", response.json())
 
     def test_tracking_by_reference_returns_only_public_fields(self):
         reservation = self.submit_public()

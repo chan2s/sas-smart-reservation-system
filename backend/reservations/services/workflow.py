@@ -952,6 +952,14 @@ def check_in_reservation(reservation, actor, override=False):
                 else ""
             ),
         )
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "Reservation checked in",
+            f"{locked.event_name} at {locked.facility.name} has checked in.",
+            _reservation_link(locked),
+            exclude_user=actor,
+            event_key=f"reservation:{locked.pk}:checked-in-staff",
+        )
 
     # Keep the caller's in-memory instance in sync with the persisted write, so
     # the API layer serializes the checked-in state it just recorded.
