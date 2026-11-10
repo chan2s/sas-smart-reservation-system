@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/Card'
 import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Misc'
 import { BrandMark } from '@/components/auth/AuthPanel'
+import { ApprovalLetterCapture } from '@/components/reservations/ApprovalLetterCapture'
 
 /**
  * Public status view for a guest reservation request.
@@ -30,6 +31,7 @@ export function ReservationTrackPage() {
   const [approvalFile, setApprovalFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [uploadSuccess, setUploadSuccess] = useState(false)
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -70,6 +72,7 @@ export function ReservationTrackPage() {
       const result = await endpoints.uploadPublicApprovalLetter(id, approvalFile)
       queryClient.setQueryData(queryKey, result)
       setApprovalFile(null)
+      setUploadSuccess(true)
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'The document could not be uploaded. Try again.')
     } finally {
@@ -169,39 +172,35 @@ export function ReservationTrackPage() {
         )}
 
         {trackQuery.data && <TrackingResult reservation={trackQuery.data} />}
+        {uploadSuccess && (
+          <p role="status" className="mt-4 rounded-lg border border-status-available/25 bg-status-available-bg p-3 text-sm text-status-available">
+            Event approval letter uploaded successfully.
+          </p>
+        )}
 
         {trackQuery.data && trackQuery.data.status === 'PENDING' &&
           trackQuery.data.approval_document_status === 'AWAITING' && (
             <Card className="mt-5">
               <h2 className="text-base font-semibold text-ink">Event Approval Letter</h2>
               <p className="mt-1 text-sm leading-6 text-body">
-                Upload an image of your official event approval letter or authorization document. This document is required before your reservation can be approved.
+                This document is required before your reservation can be approved. Take a photo of your signed event approval letter or upload an image file.
               </p>
-              <Field className="mt-4" label="Choose an image" htmlFor="later-approval-letter" hint="JPG, JPEG, PNG, or WEBP; maximum 5 MB.">
-                <Input
-                  id="later-approval-letter"
-                  type="file"
-                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0] ?? null
-                    const extension = file?.name.split('.').pop()?.toLowerCase()
-                    if (file && !['jpg', 'jpeg', 'png', 'webp'].includes(extension ?? '')) {
-                      setApprovalFile(null)
-                      setUploadError('Choose a JPG, JPEG, PNG, or WEBP image.')
-                    } else if (file && file.size > 5 * 1024 * 1024) {
-                      setApprovalFile(null)
-                      setUploadError('The image must be 5 MB or smaller.')
-                    } else {
-                      setApprovalFile(file)
-                      setUploadError('')
-                    }
+              <div className="mt-4">
+                <ApprovalLetterCapture
+                  inputId="later-approval-letter"
+                  file={approvalFile}
+                  onFileChange={(file) => {
+                    setApprovalFile(file)
+                    setUploadError('')
                   }}
+                  onError={setUploadError}
                 />
-              </Field>
+              </div>
               {uploadError && <p role="alert" className="mt-3 text-sm text-status-rejected">{uploadError}</p>}
+              {uploading && <p className="mt-3 text-sm text-body" role="status">Uploading your approval letter…</p>}
               <Button
                 className="mt-4"
-                disabled={!approvalFile}
+                disabled={!approvalFile || uploading}
                 loading={uploading}
                 icon={<Upload className="size-4" aria-hidden />}
                 onClick={() => void uploadApprovalLetter()}

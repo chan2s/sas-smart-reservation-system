@@ -149,6 +149,8 @@ def public_reservation_upload_approval_letter(request):
         )
     if reservation.status != Reservation.Status.PENDING:
         return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
+    if reservation.has_approval_letter_document:
+        return Response({"detail": "An event approval letter has already been submitted."}, status=409)
 
     serializer = PublicApprovalLetterUploadSerializer(data=data)
     serializer.is_valid(raise_exception=True)
@@ -655,7 +657,12 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    @action(detail=True, methods=["post"], url_path="approval-letter-image")
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="approval-letter-image",
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
+    )
     def upload_approval_letter_image(self, request, pk=None):
         """Upload the required requester image while a reservation is pending."""
         reservation = self.get_object()
@@ -663,6 +670,8 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You cannot update this reservation."}, status=403)
         if reservation.status != Reservation.Status.PENDING:
             return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
+        if reservation.has_approval_letter_document:
+            return Response({"detail": "An event approval letter has already been submitted."}, status=409)
         serializer = PublicApprovalLetterUploadSerializer(
             data={"approval_letter_image": request.data.get("approval_letter_image")}
         )

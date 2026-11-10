@@ -51,6 +51,7 @@ const result = {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
   apiState.track.mockReset()
   apiState.legacyTrack.mockReset()
   apiState.upload.mockReset()
@@ -79,5 +80,54 @@ describe('ReservationTrackPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       "We couldn't find a reservation with that ID.",
     )
+  })
+
+  it('offers camera and file upload when the approval letter is missing', async () => {
+    apiState.track.mockResolvedValue(result)
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
+
+    expect(await screen.findByText('This document is required before your reservation can be approved. Take a photo of your signed event approval letter or upload an image file.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Take Photo' })).toBeTruthy()
+    expect(screen.getByLabelText('Upload approval letter image')).toBeTruthy()
+  })
+
+  it('hides the upload prompt when a letter is already submitted', async () => {
+    apiState.track.mockResolvedValue({
+      ...result,
+      approval_document_status: 'SUBMITTED',
+      approval_document_status_label: 'Approval Letter Submitted',
+    })
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
+
+    expect(await screen.findByText('Approval Letter Submitted')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Take Photo' })).toBeNull()
+    expect(screen.queryByLabelText('Upload approval letter image')).toBeNull()
+  })
+
+  it('uploads a selected image and refreshes the displayed status', async () => {
+    class TestURL extends URL {}
+    Object.assign(TestURL, {
+      createObjectURL: vi.fn(() => 'blob:approval-preview'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.stubGlobal('URL', TestURL)
+    apiState.track.mockResolvedValue(result)
+    apiState.upload.mockResolvedValue({
+      ...result,
+      approval_document_status: 'SUBMITTED',
+      approval_document_status_label: 'Approval Letter Submitted',
+    })
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
+
+    const file = new File(['valid image bytes'], 'approval.png', { type: 'image/png' })
+    fireEvent.change(await screen.findByLabelText('Upload approval letter image'), { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit approval letter' }))
+
+    await waitFor(() => expect(apiState.upload).toHaveBeenCalledWith('SAS-2026-00024', file))
+    expect(await screen.findByText('Approval Letter Submitted')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Take Photo' })).toBeNull()
   })
 })

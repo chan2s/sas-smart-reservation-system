@@ -153,6 +153,80 @@ class PublicApprovalDocumentTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_account_owner_can_upload_but_another_account_cannot(self):
+        requester = User.objects.create_user(
+            username="letter-owner", password="pass12345", role=User.Role.REQUESTER
+        )
+        other = User.objects.create_user(
+            username="not-letter-owner", password="pass12345", role=User.Role.REQUESTER
+        )
+        reservation = Reservation.objects.create(
+            requester=requester,
+            requester_type=Reservation.RequesterType.CAMPUS,
+            contact_email=requester.email,
+            event_name="Owner upload test",
+            facility=self.facility,
+            date=self.day,
+            start_time=time(9),
+            end_time=time(10),
+            status=Reservation.Status.PENDING,
+        )
+        url = f"/api/reservations/{reservation.pk}/approval-letter-image/"
+        payload = {
+            "approval_letter_image": SimpleUploadedFile(
+                "authorization.png", png_bytes(), content_type="image/png"
+            )
+        }
+
+        self.client.force_authenticate(other)
+        denied = self.client.post(url, payload, format="multipart")
+        self.assertEqual(denied.status_code, 404)
+        reservation.refresh_from_db()
+        self.assertFalse(reservation.approval_letter_image)
+
+        self.client.force_authenticate(requester)
+        uploaded = self.client.post(
+            url,
+            {
+                "approval_letter_image": SimpleUploadedFile(
+                    "authorization.png", png_bytes(), content_type="image/png"
+                )
+            },
+            format="multipart",
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.content)
+        reservation.refresh_from_db()
+        self.assertTrue(reservation.approval_letter_image)
+
+    def test_public_upload_rejects_an_account_owned_reservation(self):
+        requester = User.objects.create_user(
+            username="private-letter-owner", password="pass12345", role=User.Role.REQUESTER
+        )
+        reservation = Reservation.objects.create(
+            requester=requester,
+            requester_type=Reservation.RequesterType.CAMPUS,
+            contact_email=requester.email,
+            event_name="Private reservation",
+            facility=self.facility,
+            date=self.day,
+            start_time=time(9),
+            end_time=time(10),
+            status=Reservation.Status.PENDING,
+        )
+        response = self.client.post(
+            UPLOAD_URL,
+            {
+                "reservation_id": reservation.reservation_id,
+                "approval_letter_image": SimpleUploadedFile(
+                    "authorization.png", png_bytes(), content_type="image/png"
+                ),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 404)
+        reservation.refresh_from_db()
+        self.assertFalse(reservation.approval_letter_image)
+
     def test_file_is_optional_then_required_before_approval_and_private_to_staff(self):
         reservation = self.submit_public()
         self.assertEqual(reservation.approval_document_status, "AWAITING")
@@ -179,6 +253,18 @@ class PublicApprovalDocumentTests(TestCase):
         reservation.refresh_from_db()
         self.assertEqual(reservation.approval_document_status, "SUBMITTED")
         self.assertTrue(reservation.approval_letter_image.name.startswith("approval_letters/requester/"))
+
+        duplicate = self.client.post(
+            UPLOAD_URL,
+            {
+                "reservation_id": reservation.reservation_id,
+                "approval_letter_image": SimpleUploadedFile(
+                    "replacement.png", png_bytes(), content_type="image/png"
+                ),
+            },
+            format="multipart",
+        )
+        self.assertEqual(duplicate.status_code, 409)
 
         # The private media URL is never served directly.
         raw = self.client.get(f"/media/{reservation.approval_letter_image.name}")
