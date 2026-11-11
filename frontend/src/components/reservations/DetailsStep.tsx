@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertTriangle, CheckCircle2, Pencil, Plus, Sparkles } from 'lucide-react'
-import { Badge } from '@/components/ui/Badge'
+import { AlertTriangle, Pencil, Plus, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
@@ -20,7 +19,7 @@ import {
   type ReservationFieldKey,
 } from '@/lib/reservationDraft'
 import { cn } from '@/lib/utils'
-import type { SuggestedResource, UnmatchedRecommendation } from '@/hooks/useSuggestedResources'
+import type { SuggestedResource } from '@/hooks/useSuggestedResources'
 import type { EventType, ReservableResource } from '@/lib/types'
 
 /**
@@ -46,11 +45,11 @@ export function DetailsStep({
   facilityName,
   suggestions,
   suggestionsLoading,
-  unmatched,
-  included,
+  suggestionsError,
   items,
   onQuantity,
   onToggleSuggestion,
+  onIgnoreSuggestion,
   equipment,
   operatorConfig,
   operatorSelections,
@@ -72,13 +71,11 @@ export function DetailsStep({
   facilityName: string
   suggestions: SuggestedResource[]
   suggestionsLoading: boolean
-  /** Backend recommendations that could not be matched to facility inventory. */
-  unmatched: UnmatchedRecommendation[]
-  /** Items the facility already provides ("Cafeteria already provides Tables, Chairs."). */
-  included: string[]
+  suggestionsError: boolean
   items: Record<number, number>
   onQuantity: (equipmentId: number, quantity: number, available: number) => void
-  onToggleSuggestion: (equipmentId: number, checked: boolean, suggestedQuantity: number) => void
+  onToggleSuggestion: (equipmentId: number, suggestedQuantity: number, available: number) => void
+  onIgnoreSuggestion: (equipmentId: number) => void
   /** Facility resources that are NOT already listed as suggestions. */
   equipment: ReservableResource[]
   operatorConfig?: Record<number, OperatorConfig>
@@ -162,9 +159,6 @@ export function DetailsStep({
   // Additional (non-suggested) resources the requester picked — kept visible
   // even while the full picker is collapsed.
   const selectedExtras = equipment.filter((item) => (items[item.id] ?? 0) > 0)
-  const unverifiedSeating = suggestions.some((suggestion) => suggestion.seatingUnverified)
-  const showSuggestions =
-    suggestionsLoading || suggestions.length > 0 || included.length > 0 || unmatched.length > 0
   const contactComplete = Boolean(contact.name.trim()) && isValidPhMobile(contact.phone)
 
   return (
@@ -415,152 +409,52 @@ export function DetailsStep({
         </div>
       </Card>
 
-      {showSuggestions && (
+      <>
         <Card className="mt-5" padding="md">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-[17px] font-semibold text-ink">Suggested resources</h3>
               <p className="mt-1 text-sm text-body">
-                Based on your event type, participant count, and what
-                {facilityName ? ` ${facilityName} ` : ' the facility '}already provides. Uncheck
-                anything you don&apos;t need — your changes are kept if you edit the details again.
+                Suggestions use your event details, this facility&apos;s equipment, and availability
+                for the selected date and time. Add only what you need.
               </p>
             </div>
             <Sparkles className="mt-1 size-4 shrink-0 text-brand" aria-hidden />
           </div>
-
-          {/* What the facility itself supplies is never offered as an extra:
-              it is reported here, read-only. */}
-          {included.length > 0 && (
-            <p className="mt-4 flex items-start gap-2 rounded-xl border border-line bg-soft/70 px-3.5 py-2.5 text-[13px] text-body">
-              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-status-available" aria-hidden />
-              <span>
-                <span className="font-medium text-ink">Included:</span>{' '}
-                {facilityName || 'This facility'} already provides {included.join(', ')}.
-              </span>
+          {suggestionsLoading ? (
+            <div className="mt-4 h-16 animate-pulse rounded-xl bg-soft" role="status" aria-label="Checking equipment availability" />
+          ) : suggestionsError ? (
+            <p role="alert" className="mt-4 rounded-xl border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-status-pending">
+              Recommendations and availability could not be checked. Try changing the schedule or continue with the equipment list.
             </p>
-          )}
-
-          {/* A smart recommendation whose id is not in the facility's inventory
-              is reported, never offered: a generated name is not evidence the
-              item exists or is available. */}
-          {unmatched.length > 0 && (
-            <div
-              role="alert"
-              className="mt-3 rounded-xl border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-[13px] text-status-pending"
-            >
-              <p className="flex items-start gap-1.5 font-medium">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                Some suggestions could not be matched to{' '}
-                {facilityName || 'the facility'}&apos;s inventory
-              </p>
-              <ul className="mt-1.5 space-y-0.5 pl-5">
-                {unmatched.map((item, index) => (
-                  <li key={`${item.name}-${index}`} className="list-disc">
-                    <span className="font-medium">{item.name}</span> — {item.reason}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1.5 pl-5 text-xs">
-                Nothing is selected for these. Add the resource from the equipment list instead.
-              </p>
-            </div>
-          )}
-
-          {unverifiedSeating && (
-            <p className="mt-3 text-[13px] text-muted">
-              Seating for {facilityName || 'this facility'} has not been verified, so SAS cannot
-              tell how many chairs and tables it already provides. The rows below are real
-              inventory records — they are simply left unchecked. Add the seating you actually
-              need.
-            </p>
-          )}
-
-          {suggestionsLoading && suggestions.length === 0 ? (
-            <div className="mt-4 h-16 animate-pulse rounded-xl bg-soft" aria-hidden />
           ) : suggestions.length === 0 ? (
-            included.length > 0 && (
-              <p className="mt-4 text-sm text-muted">
-                Everything this event needs is already provided by the facility. Add anything else
-                from the equipment list below.
-              </p>
-            )
+            <p className="mt-4 text-sm text-muted">No matching available equipment was found for these event details and this schedule.</p>
           ) : (
             <ul className="mt-4 divide-y divide-line">
-              {suggestions.map((suggestion) => {
-                const quantity = items[suggestion.equipmentId] ?? 0
-                const checked = quantity > 0
-                const unavailable = suggestion.available <= 0
-                // The badge must never claim one number while the row holds
-                // another: an edited row says so, an untouched smart pick
-                // states its suggested quantity. A checked-by-default row that
-                // was unchecked counts as edited; an opt-in row left untouched
-                // (or accepted as suggested) does not.
-                const edited = checked ? quantity !== suggestion.quantity : suggestion.checkedByDefault
-                return (
-                  <li key={suggestion.equipmentId} className="flex items-start gap-3 py-3">
-                    <input
-                      id={`suggested-${suggestion.equipmentId}`}
-                      type="checkbox"
-                      className="mt-0.5 size-4 shrink-0 accent-[var(--color-brand)]"
-                      checked={checked}
-                      disabled={unavailable}
-                      onChange={(event) =>
-                        onToggleSuggestion(
-                          suggestion.equipmentId,
-                          event.target.checked,
-                          suggestion.quantity,
-                        )
-                      }
-                    />
-                    <label
-                      htmlFor={`suggested-${suggestion.equipmentId}`}
-                      className="min-w-0 flex-1 cursor-pointer"
-                    >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-sm font-medium text-ink">{suggestion.name}</span>
-                        {suggestion.seatingUnverified && (
-                          <Badge
-                            tone="amber"
-                            title="This equipment is a real inventory record; the facility's seating count is what is unverified."
-                          >
-                            Seating unverified
-                          </Badge>
-                        )}
-                        {edited ? (
-                          <Badge tone="sky">Edited</Badge>
-                        ) : suggestion.source === 'RECOMMENDER' ? (
-                          <Badge tone="brand">
-                            <Sparkles className="size-3" aria-hidden /> Smart pick ·{' '}
-                            {suggestion.quantity}
-                          </Badge>
-                        ) : null}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-muted">
-                        {suggestion.reason}
-                        {suggestion.available > 0 && ` · ${suggestion.available} available`}
-                        {suggestion.capped &&
-                          suggestion.available > 0 &&
-                          ` · capped at ${suggestion.available}`}
-                        {unavailable && ' · not available for this date and time'}
-                      </span>
-                    </label>
-                    <QuantityStepper
-                      value={quantity}
-                      max={suggestion.available}
-                      disabled={unavailable}
-                      label={suggestion.name}
-                      onChange={(next) =>
-                        onQuantity(suggestion.equipmentId, next, suggestion.available)
-                      }
-                    />
-                  </li>
-                )
-              })}
+              {suggestions.map((suggestion) => (
+                <li key={suggestion.equipmentId} className="flex flex-wrap items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink">
+                      {suggestion.name} — {suggestion.quantity} × {suggestion.unit}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {suggestion.reason} · {suggestion.available} available for this schedule
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button type="button" size="sm" onClick={() => onToggleSuggestion(suggestion.equipmentId, suggestion.quantity, suggestion.available)}>
+                      Add
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => onIgnoreSuggestion(suggestion.equipmentId)}>
+                      Ignore
+                    </Button>
+                  </div>
+                </li>
+              ))}
             </ul>
           )}
         </Card>
-      )}
+      </>
 
       <Card className="mt-5" padding="md">
         <div className="flex flex-wrap items-start justify-between gap-3">

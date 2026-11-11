@@ -596,6 +596,7 @@ export function useRecommendResources(publicReservation = false) {
   return useMutation({
     mutationFn: (payload: {
       event_type: string
+      event_name?: string
       expected_participants: number
       facility_id?: number
       purpose?: string

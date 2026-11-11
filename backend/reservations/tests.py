@@ -248,6 +248,59 @@ class AvailabilityServiceTests(TestCase):
         ceremony = recommend_resources("SPORTS", 300, facility_id=gym.id, purpose="Recognition ceremony")
         self.assertIn("Projectors", {r["category"] for r in ceremony})
 
+        titled_event = recommend_resources(
+            "SPORTS", 300, facility_id=gym.id, event_name="Presentation of team results"
+        )
+        projector = next(r for r in titled_event if r["category"] == "Projectors")
+        self.assertIn("event details", projector["reason"])
+
+    def test_programming_context_discovers_real_facility_workstations(self):
+        category = EquipmentCategory.objects.create(name="Computing Equipment")
+        laptops = Equipment.objects.create(
+            name="Laptop Workstation", category=category, total_quantity=8
+        )
+        FacilityResource.objects.create(
+            facility=self.facility, equipment=laptops, quantity=8
+        )
+
+        recommendations = recommend_resources(
+            "OTHER",
+            20,
+            facility_id=self.facility.id,
+            event_name="Programming workshop",
+            purpose="Hands-on software development",
+            target_date=date(2026, 9, 14),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+        )
+
+        workstation = next(r for r in recommendations if r["equipment_id"] == laptops.id)
+        self.assertEqual(workstation["quantity"], 20)
+        self.assertEqual(workstation["available"], 8)
+        self.assertEqual(workstation["recommended"], 8)
+        self.assertIn("hands-on computing", workstation["reason"])
+
+        without_context = recommend_resources(
+            "OTHER", 20, facility_id=self.facility.id,
+            target_date=date(2026, 9, 14),
+            start_time=time(9, 0), end_time=time(11, 0),
+        )
+        self.assertNotIn(laptops.id, {r["equipment_id"] for r in without_context})
+
+    def test_irrelevant_catalog_does_not_create_recommendations(self):
+        projector_category = EquipmentCategory.objects.create(name="Projectors")
+        projector = Equipment.objects.create(
+            name="Projector", category=projector_category, total_quantity=2
+        )
+        FacilityResource.objects.create(facility=self.facility, equipment=projector)
+
+        recommendations = recommend_resources(
+            "SPORTS", 30, facility_id=self.facility.id,
+            purpose="Inter-school league"
+        )
+
+        self.assertEqual(recommendations, [])
+
     def _recommendation_by_category(self, recommendations, name):
         return {r["category"]: r for r in recommendations}[name]
 
@@ -2278,6 +2331,7 @@ class RecommendationRuleTests(TestCase):
             end_time=time(11, 0),
             expected_participants=10,
             contact_person="x",
+            status=Reservation.Status.APPROVED,
         )
         ReservationItem.objects.create(reservation=blocking, equipment=mics, quantity=4)
 

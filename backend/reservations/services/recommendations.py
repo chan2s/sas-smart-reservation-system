@@ -36,9 +36,14 @@ from __future__ import annotations
 import math
 from datetime import date as date_cls
 from datetime import time as time_cls
+from django.db.models import Q
 
 from equipment.models import Equipment, EquipmentCategory
-from equipment.services import facility_has_resources, facility_resource_equipment_ids
+from equipment.services import (
+    configured_builtin_tokens_for_facility,
+    facility_has_resources,
+    facility_resource_equipment_ids,
+)
 from facilities.models import Facility
 
 from . import pricing
@@ -157,6 +162,15 @@ _PURPOSE_PROJECTOR_KEYWORDS = (
     "lecture",
 )
 
+# Context terms identify a hands-on computing activity, while equipment names
+# and category metadata determine which real catalog records can satisfy it.
+# This intentionally does not name or fabricate a particular inventory item.
+_COMPUTING_EVENT_KEYWORDS = (
+    "programming", "coding", "computer workshop", "computer lab",
+    "software development", "data science", "web development",
+)
+_COMPUTING_EQUIPMENT_KEYWORDS = ("computer", "laptop", "desktop", "workstation")
+
 
 # ---------------------------------------------------------------------------
 # DB-configured rules (staff-editable via Django admin)
@@ -259,6 +273,11 @@ def _rule_reason(rule: RecommendationRule, quantity: int, participants: int) -> 
 def _purpose_suggests_projector(purpose: str) -> bool:
     lowered = (purpose or "").lower()
     return any(keyword in lowered for keyword in _PURPOSE_PROJECTOR_KEYWORDS)
+
+
+def _context_suggests_computing(context: str) -> bool:
+    lowered = (context or "").lower()
+    return any(keyword in lowered for keyword in _COMPUTING_EVENT_KEYWORDS)
 
 
 def _adjust_profile(profile: dict, facility_type: str | None, purpose: str) -> dict:
@@ -375,6 +394,7 @@ def recommend_resources(
     target_date: date_cls | None = None,
     start_time: time_cls | None = None,
     end_time: time_cls | None = None,
+    event_name: str = "",
 ) -> list:
     """Recommend resources for an event profile.
 
@@ -429,8 +449,38 @@ def recommend_resources(
     if facility_id is not None and facility_has_resources(facility_id):
         assigned_ids = facility_resource_equipment_ids(facility_id)
 
-    profile = _adjust_profile(profile, facility_type, purpose)
+    # Event name, purpose, and notes describe the requested activity. Let all
+    # requester-provided context affect contextual equipment rules.
+    context = " ".join(
+        str(value or "") for value in (event_name, purpose, special_requirements)
+    )
+    profile = _adjust_profile(profile, facility_type, context)
     quantities = _evaluate_quantities(profile, participants)
+
+    if facility_id is not None:
+        facility_layout = Facility.objects.filter(pk=facility_id).only(
+            "seating_type", "built_in_seats"
+        ).first()
+        if facility_layout:
+            builtin_tokens = configured_builtin_tokens_for_facility(facility_id)
+            if facility_layout.seating_type in {
+                Facility.SeatingType.TABLES_AND_CHAIRS,
+                Facility.SeatingType.FIXED_ROWS,
+            }:
+                seating_allowance = facility_layout.built_in_seats or 0
+                for key in ("chairs", "tables"):
+                    if key in quantities:
+                        spec, needed = quantities[key]
+                        quantities[key] = (spec, max(0, needed - seating_allowance))
+            builtin_categories = {
+                "chairs": "chairs",
+                "tables": "tables",
+                "sound": "sound_system",
+                "projector": "projector",
+            }
+            for key, token in builtin_categories.items():
+                if token in builtin_tokens:
+                    quantities.pop(key, None)
 
     availability = equipment_availability_map(
         target_date, start_time, end_time, facility_id=facility_id
@@ -467,12 +517,42 @@ def recommend_resources(
         if not category or category.id in covered:
             continue
         reason, calculation = _explain(key, spec, quantity, participants)
+        if key == "projector" and _purpose_suggests_projector(context):
+            reason = "Recommended because the event details indicate a presentation or lecture."
         selected[category.id] = {
             "category": category,
             "quantity": quantity,
             "reason": reason,
             "calculation": calculation,
         }
+
+    # Hands-on computing activities need individual workstations. Discover
+    # eligible categories from the actual equipment catalog metadata; facility
+    # assignment and schedule availability are still enforced below.
+    if _context_suggests_computing(context):
+        catalog_terms = Q()
+        for term in _COMPUTING_EQUIPMENT_KEYWORDS:
+            catalog_terms |= (
+                Q(name__icontains=term)
+                | Q(description__icontains=term)
+                | Q(items__name__icontains=term)
+                | Q(items__description__icontains=term)
+            )
+        computer_categories = EquipmentCategory.objects.filter(
+            catalog_terms,
+            items__is_active=True,
+            items__status=Equipment.Status.AVAILABLE,
+        ).distinct()
+        for category in computer_categories:
+            selected.setdefault(
+                category.id,
+                {
+                    "category": category,
+                    "quantity": participants,
+                    "reason": "Recommended because the event details describe hands-on computing; one workstation per participant.",
+                    "calculation": f"{participants} participants × 1 workstation",
+                },
+            )
 
     recommendations = []
     for entry in sorted(selected.values(), key=lambda item: item["category"].name):
@@ -544,6 +624,7 @@ def recommend_resources_with_pricing(
     start_time: time_cls | None = None,
     end_time: time_cls | None = None,
     requester_type: str = Reservation.RequesterType.CAMPUS,
+    event_name: str = "",
 ) -> dict:
     """Recommend resources, then price them for the requester type.
 
@@ -561,6 +642,7 @@ def recommend_resources_with_pricing(
         event_type,
         participants,
         facility_id=facility_id,
+        event_name=event_name,
         purpose=purpose,
         special_requirements=special_requirements,
         target_date=target_date,

@@ -20,7 +20,6 @@ import {
   useOrganizations,
   useReservations,
 } from '@/hooks/queries'
-import { usePreferredBuiltinAmenities } from '@/hooks/usePreferredBuiltinAmenities'
 import { useSuggestedResources } from '@/hooks/useSuggestedResources'
 import { useToast } from '@/components/ui/Toast'
 import { ApiError, api, endpoints } from '@/lib/api'
@@ -31,7 +30,6 @@ import { Badge } from '@/components/ui/Badge'
 import { Stepper } from '@/components/reservations/Stepper'
 import { DetailsStep } from '@/components/reservations/DetailsStep'
 import type { OperatorConfig } from '@/components/reservations/OtherEquipmentPicker'
-import type { FacilitySeatingMetadata } from '@/components/reservations/resourceSuggestions'
 import {
   EARLIEST_START_TIME,
   StepFacility,
@@ -455,40 +453,22 @@ export function ReservationWizardPage() {
   const missingDetails = useMemo(() => missingFieldLabels(fieldErrors), [fieldErrors])
 
   // ------------------------------------------------------------------
-  // Suggested resources (rule config + the backend recommender)
+  // Suggested resources (backend rules + facility and schedule availability)
   // ------------------------------------------------------------------
-  // What the chosen facility already provides, so suggestions subtract it.
-  //
-  // Built-in amenities are derived from the facility's equipment configuration:
-  // a ``built_ins`` token only becomes an effective built-in amenity when the
-  // facility has an active resource whose equipment name matches the token.
-  // That keeps the wizard in sync with the configured inventory instead of a
-  // static list typed on the facility record.
-  const builtInAmenities = usePreferredBuiltinAmenities(facility)
-
-  const facilityMetadata = useMemo<FacilitySeatingMetadata>(
-    () => ({
-      seatingType: facility?.seating_type ?? null,
-      builtInSeats: facility?.built_in_seats ?? null,
-      builtIns: builtInAmenities,
-    }),
-    [facility, builtInAmenities],
-  )
-
   const {
     suggestions,
-    unmatched,
-    included,
     loading: suggestionsLoading,
+    error: suggestionsError,
+    ignore: ignoreSuggestion,
   } = useSuggestedResources({
     // Only fetch while the step that shows the suggestions is on screen — the
     // recommender takes the free-text purpose/notes, so it must not fire on
     // every keystroke while the requester is still on an earlier step.
     active: stepKey === 'details',
     eventType: details.eventType,
+    eventName: details.eventName,
     participants,
     equipment,
-    facility: facilityMetadata,
     facilityId,
     dateISO,
     startTime,
@@ -497,39 +477,8 @@ export function ReservationWizardPage() {
     staffNotes: details.staffNotes,
     requesterType,
     publicReservation: publicFlow,
+    selectedItems: items,
   })
-
-  // Suggestions are checked by default: seed the quantities, but never touch a
-  // resource the requester has edited by hand (including one they unchecked).
-  // In edit mode the seeding is skipped entirely — the reservation's existing
-  // resources and quantities must be preserved unless the requester changes
-  // them; suggestions remain visible as manual opt-ins.
-  const suggestionFingerprint = suggestions
-    .map((suggestion) => `${suggestion.equipmentId}:${suggestion.quantity}`)
-    .join(',')
-  useEffect(() => {
-    if (isEditing || !suggestionFingerprint) return
-    setItems((current) => {
-      let changed = false
-      const next = { ...current }
-      for (const suggestion of suggestions) {
-        if (userEditedItems.has(suggestion.equipmentId)) continue
-        // Rows the requester must opt into (unverified seating) seed to zero.
-        const target = suggestion.checkedByDefault ? suggestion.quantity : 0
-        if (target > 0) {
-          if (next[suggestion.equipmentId] !== target) {
-            next[suggestion.equipmentId] = target
-            changed = true
-          }
-        } else if (next[suggestion.equipmentId]) {
-          delete next[suggestion.equipmentId]
-          changed = true
-        }
-      }
-      return changed ? next : current
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestionFingerprint, userEditedItems])
 
   const itemsList = useMemo<SubmitItems[]>(
     () =>
@@ -715,15 +664,10 @@ export function ReservationWizardPage() {
     })
   }
 
-  /** Checkbox on a suggested row: unchecking clears the quantity and is remembered. */
-  function toggleSuggestion(equipmentId: number, checked: boolean, suggestedQuantity: number) {
+  /** Suggested resources are opt-in and stay within the backend-verified quantity. */
+  function addSuggestion(equipmentId: number, suggestedQuantity: number, available: number) {
     setUserEditedItems((current) => new Set(current).add(equipmentId))
-    setItems((current) => {
-      const next = { ...current }
-      if (checked) next[equipmentId] = Math.max(1, suggestedQuantity)
-      else delete next[equipmentId]
-      return next
-    })
+    setItems((current) => ({ ...current, [equipmentId]: Math.min(suggestedQuantity, available) }))
   }
 
   function useAlternative(alternative: AlternativeSlot) {
@@ -1403,11 +1347,11 @@ export function ReservationWizardPage() {
             facilityName={facility?.name ?? ''}
             suggestions={suggestions}
             suggestionsLoading={suggestionsLoading}
-            unmatched={unmatched}
-            included={included}
+            suggestionsError={suggestionsError}
             items={items}
             onQuantity={setQuantity}
-            onToggleSuggestion={toggleSuggestion}
+            onToggleSuggestion={addSuggestion}
+            onIgnoreSuggestion={ignoreSuggestion}
             equipment={otherEquipment}
             operatorConfig={operatorConfig}
             operatorSelections={operatorSelections}
