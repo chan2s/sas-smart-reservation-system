@@ -181,6 +181,21 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+describe('ReservationDetailPage direct editing access', () => {
+  it('offers the no-OTP edit form to authorized SAS staff for eligible reservations', () => {
+    state.reservation = reservation({ status: 'PENDING', can_edit: true })
+    renderPage()
+    expect(screen.getByRole('button', { name: 'Edit reservation' })).toBeTruthy()
+  })
+
+  it('does not expose the admin edit action to a non-staff viewer', () => {
+    state.isStaff = false
+    state.reservation = reservation({ status: 'PENDING', can_edit: true })
+    renderPage()
+    expect(screen.queryByRole('button', { name: 'Edit reservation' })).toBeNull()
+  })
+})
+
 describe('ReservationDetailPage approval email status', () => {
   it.each([
     ['NOT_SENT', 'Not sent'],

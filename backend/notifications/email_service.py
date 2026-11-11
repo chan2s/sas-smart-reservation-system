@@ -178,6 +178,38 @@ def send_reservation_email(
         return False
 
 
+def send_reservation_edit_otp(reservation, recipient_email: str, otp: str) -> bool:
+    """Send the one-time code used to authorize a pending reservation edit."""
+    return send_reservation_email(
+        recipient_email,
+        f"Verify reservation changes - {reservation.reservation_id}",
+        "reservation_edit_otp",
+        {
+            "site_name": SAS_RESERVE_SITE_NAME,
+            "reservation_id": reservation.reservation_id,
+            "otp": otp,
+            "expires_minutes": 5,
+        },
+    )
+
+
+def send_reservation_modified(reservation, recipient_email: str) -> bool:
+    """Confirm an OTP-verified reservation edit using the configured mailer."""
+    return send_reservation_email(
+        recipient_email,
+        f"Reservation updated - {reservation.reservation_id}",
+        "reservation_modified",
+        {
+            "site_name": SAS_RESERVE_SITE_NAME,
+            "reservation_id": reservation.reservation_id,
+            "event_name": reservation.event_name,
+            "facility": reservation.facility.name,
+            "date": reservation.date,
+            "start_time": reservation.start_time,
+            "end_time": reservation.end_time,
+            "purpose": reservation.purpose,
+        },
+    )
 def _classify_email_error(exc: Exception) -> str:
     """Map an email exception to a short, safe category (never logs secrets)."""
     if isinstance(exc, smtplib.SMTPAuthenticationError):

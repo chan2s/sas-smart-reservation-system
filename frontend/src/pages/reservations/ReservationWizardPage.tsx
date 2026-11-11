@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -18,12 +19,11 @@ import {
   useInternalOrganizations,
   useOrganizations,
   useReservations,
-  useResubmitReservation,
 } from '@/hooks/queries'
 import { usePreferredBuiltinAmenities } from '@/hooks/usePreferredBuiltinAmenities'
 import { useSuggestedResources } from '@/hooks/useSuggestedResources'
 import { useToast } from '@/components/ui/Toast'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, api, endpoints } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Field, Input, Select } from '@/components/ui/Form'
@@ -100,11 +100,13 @@ export function ReservationWizardPage() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
   const { organizationType } = useParams()
-  const publicFlow = organizationType === 'internal' || organizationType === 'external'
+  const [searchParams] = useSearchParams()
+  const publicEditReference = searchParams.get('publicEdit') ?? ''
+  const publicFlow = organizationType === 'internal' || organizationType === 'external' || Boolean(publicEditReference)
   const wizardActionBarRef = useRef<HTMLDivElement>(null)
   const publicRequesterType = organizationType === 'external' ? 'EXTERNAL' : 'CAMPUS'
-  const [searchParams] = useSearchParams()
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const { user, isStaff, loading: authLoading, updateUser } = useAuth()
   const isAdmin = !publicFlow && user?.role === 'ADMIN'
 
@@ -172,6 +174,17 @@ export function ReservationWizardPage() {
   const initial = useMemo(() => {
     const routeEditId = routeId != null && routeId !== '' ? Number(routeId) : null
     const draft = loadDraft(publicFlow)
+    if (publicEditReference) {
+      if (draft?.editingReservationId != null) {
+        return {
+          draft,
+          facilityId: draft.facilityId,
+          editId: draft.editingReservationId,
+          invalidEdit: false,
+        }
+      }
+      return { draft: null, facilityId: null, editId: null, invalidEdit: true }
+    }
     const param = searchParams.get('facility')
     const paramFacilityId = param ? Number(param) : null
     if (routeEditId != null) {
@@ -224,6 +237,10 @@ export function ReservationWizardPage() {
   // Direct entry to the edit route without a matching draft (stale or absent
   // sessionStorage): repair by returning to the reservation's detail page.
   useEffect(() => {
+    if (initial.invalidEdit && publicEditReference) {
+      navigate(`/track-reservation?reservation_id=${encodeURIComponent(publicEditReference)}`, { replace: true })
+      return
+    }
     if (initial.invalidEdit && editingId != null) {
       navigate(`/reservations/${editingId}`, { replace: true })
     }
@@ -259,6 +276,23 @@ export function ReservationWizardPage() {
   // Bumped on a failed Continue so the Details step can focus the first error.
   const [focusAttempt, setFocusAttempt] = useState(0)
   const [submitted, setSubmitted] = useState<ReservationDetail | PublicReservationSubmission | null>(null)
+  const [editOTP, setEditOTP] = useState<{
+    session: string
+    expiresAt: string
+    resendAvailableAt: string
+    emailHint: string
+  } | null>(null)
+  const [editOTPCode, setEditOTPCode] = useState('')
+  const [editOTPError, setEditOTPError] = useState('')
+  const [editOTPLoading, setEditOTPLoading] = useState(false)
+  const [editOTPNow, setEditOTPNow] = useState(Date.now())
+  const [editOTPSuccess, setEditOTPSuccess] = useState(false)
+
+  useEffect(() => {
+    if (!editOTP) return
+    const timer = window.setInterval(() => setEditOTPNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [editOTP])
 
   // Requester identification — administrators choose who the reservation is
   // FOR (campus user or external organization). Non-admins are always their
@@ -282,7 +316,7 @@ export function ReservationWizardPage() {
   const [internalOrganizationId, setInternalOrganizationId] = useState('')
   // In edit mode the requester step never renders, so the step list is the
   // campus one for everyone.
-  const steps = publicFlow ? PUBLIC_STEPS : isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
+  const steps = publicFlow && !isEditing ? PUBLIC_STEPS : isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
   const stepKey: StepKey = steps[Math.min(step, steps.length - 1)].key
 
   const { data: facilities } = useFacilities(undefined, publicFlow)
@@ -342,7 +376,6 @@ export function ReservationWizardPage() {
   // unreachable the wizard refuses to continue or submit.
   const { online } = useOffline()
   const createReservation = useCreateReservation(publicFlow)
-  const resubmitReservation = useResubmitReservation(editingId)
 
   const today = manilaCalendarDate()
   // Only past dates are invalid. Today IS bookable, but dates within the
@@ -547,10 +580,10 @@ export function ReservationWizardPage() {
       items: itemsList,
       // Trusted server-side: only staff can actually enable external fees.
       requester_type: requesterType,
-      // Edit mode: the reservation's own current slot moves with it, so it
-      // must not count as a conflict against itself (owner/staff honoured
-      // server-side; dropped from the request when not editing).
-      exclude_id: editingId ?? undefined,
+      // Authenticated edit checks may privately exclude the reservation being
+      // changed. Public checks cannot accept an exclude_id; pending requests
+      // do not reserve availability, and submit revalidates on the server.
+      exclude_id: publicEditReference ? undefined : editingId ?? undefined,
     }
   }, [
     scheduleComplete,
@@ -615,6 +648,10 @@ export function ReservationWizardPage() {
   // Draft persistence — restored on mount, saved on every change
   // ------------------------------------------------------------------
   useEffect(() => {
+    if (isEditing && editOTP) {
+      clearDraft(publicFlow)
+      return
+    }
     saveDraft({
       facilityId,
       dateISO,
@@ -647,6 +684,8 @@ export function ReservationWizardPage() {
     userEditedItems,
     stepKey,
     publicFlow,
+    isEditing,
+    editOTP,
   ])
 
   // Restore the step once the account is known (the step list differs for
@@ -866,21 +905,21 @@ export function ReservationWizardPage() {
       stepKey,
     }
 
-    // EDIT: revise the existing reservation in place. The status never
-    // changes here — the backend keeps it PENDING and re-enters the review
-    // queue — so there is no confirmation screen; the requester returns to
-    // the updated detail page.
+    // EDIT: the server stores this validated proposal encrypted and applies
+    // it only after the requester verifies the email code.
     if (isEditing) {
-      resubmitReservation.mutate(toResubmitPayload(draft, { items: itemsList }), {
-        onSuccess: (reservation) => {
+      if (isStaff && !publicEditReference) {
+        setEditOTPLoading(true)
+        setStepError(null)
+        try {
+          const reservation = await endpoints.resubmitReservation(
+            editingId!,
+            toResubmitPayload(draft, { items: itemsList }),
+          )
           clearDraft(publicFlow)
-          toast('Reservation updated and resubmitted for approval.')
+          toast('Reservation updated and returned to the SAS review queue.')
           navigate(`/reservations/${reservation.id}`)
-        },
-        onError: (error) => {
-          // The backend refused the revision because the facility/resources
-          // are no longer available (someone else booked first). Surface that
-          // report and send the requester back to the schedule step.
+        } catch (error) {
           if (error instanceof ApiError && error.status === 409 && error.data) {
             const data = error.data as { availability?: AvailabilityCheckResult }
             if (data.availability) {
@@ -889,9 +928,43 @@ export function ReservationWizardPage() {
               if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
             }
           }
-          toast(validationMessage(error, 'Unable to resubmit the reservation. Please review it.'), 'error')
-        },
-      })
+          toast(validationMessage(error, 'Unable to update the reservation. Please review your changes.'), 'error')
+        } finally {
+          setEditOTPLoading(false)
+        }
+        return
+      }
+      setEditOTPLoading(true)
+      setStepError(null)
+      try {
+        const payload = toResubmitPayload(draft, { items: itemsList })
+        const response = publicEditReference
+          ? await endpoints.requestPublicReservationEditOTP(publicEditReference, payload)
+          : await endpoints.requestReservationEditOTP(editingId!, payload)
+        if (!response.verification_session) {
+          throw new Error('The server did not start an email verification session.')
+        }
+        setEditOTP({
+          session: response.verification_session,
+          expiresAt: response.expires_at,
+          resendAvailableAt: response.resend_available_at,
+          emailHint: response.email_hint ?? '',
+        })
+        setEditOTPCode('')
+        setEditOTPError('')
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409 && error.data) {
+          const data = error.data as { availability?: AvailabilityCheckResult }
+          if (data.availability) {
+            setAvailabilityReport(data.availability)
+            setAvailabilityStatus(data.availability.overall.ok ? 'AVAILABLE' : 'UNAVAILABLE')
+            if (scheduleStepIndex >= 0) setStep(scheduleStepIndex)
+          }
+        }
+        toast(validationMessage(error, 'Unable to start email verification. Please review your changes.'), 'error')
+      } finally {
+        setEditOTPLoading(false)
+      }
       return
     }
 
@@ -941,6 +1014,60 @@ export function ReservationWizardPage() {
       },
     })
   }
+
+  async function verifyEditCode() {
+    if (!editOTP || editingId == null || editOTPLoading || editOTPCode.length !== 6) return
+    setEditOTPLoading(true)
+    setEditOTPError('')
+    try {
+      if (publicEditReference) {
+        await endpoints.verifyPublicReservationEditOTP(publicEditReference, editOTP.session, editOTPCode)
+      } else {
+        await endpoints.verifyReservationEditOTP(editingId, editOTP.session, editOTPCode)
+      }
+      clearDraft(publicFlow)
+      if (!publicEditReference) {
+        await queryClient.invalidateQueries({ queryKey: ['reservation', editingId] })
+        await queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      }
+      setEditOTPSuccess(true)
+      toast('Reservation updated and returned to the SAS review queue.')
+    } catch (error) {
+      setEditOTPError(validationMessage(error, 'Unable to verify this code. Please try again.'))
+    } finally {
+      setEditOTPLoading(false)
+    }
+  }
+
+  async function resendEditCode() {
+    if (!editOTP || editingId == null || editOTPLoading) return
+    setEditOTPLoading(true)
+    setEditOTPError('')
+    try {
+      const response = publicEditReference
+        ? await endpoints.resendPublicReservationEditOTP(publicEditReference, editOTP.session)
+        : await endpoints.resendReservationEditOTP(editingId!, editOTP.session)
+      setEditOTP((current) => current ? {
+        ...current,
+        expiresAt: response.expires_at,
+        resendAvailableAt: response.resend_available_at,
+      } : current)
+      setEditOTPCode('')
+    } catch (error) {
+      setEditOTPError(validationMessage(error, 'Unable to resend the code. Please try again.'))
+    } finally {
+      setEditOTPLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!editOTPSuccess || (editingId == null && !publicEditReference)) return
+    const destination = publicEditReference
+      ? `/track-reservation?reservation_id=${encodeURIComponent(publicEditReference)}`
+      : `/reservations/${editingId}`
+    const timer = window.setTimeout(() => navigate(destination), 900)
+    return () => window.clearTimeout(timer)
+  }, [editOTPSuccess, editingId, publicEditReference, navigate])
 
   // ------------------------------------------------------------------
   // Post-submit confirmation (uses the backend's actual status)
@@ -1014,17 +1141,102 @@ export function ReservationWizardPage() {
 
   // Equipment that is NOT already listed as a suggestion — rendered by the
   // "Add other equipment" picker so nothing appears twice on the step.
+  if (editOTP) {
+    const secondsLeft = Math.max(0, Math.ceil((Date.parse(editOTP.expiresAt) - editOTPNow) / 1000))
+    const resendSeconds = Math.max(
+      0,
+      Math.ceil((Date.parse(editOTP.resendAvailableAt) - editOTPNow) / 1000),
+    )
+    const countdown = `${String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:${String(secondsLeft % 60).padStart(2, '0')}`
+
+    return (
+      <div className="mx-auto max-w-lg pb-[calc(5rem_+_env(safe-area-inset-bottom))] lg:pb-0">
+        <Card className="p-6 sm:p-8">
+          {editOTPSuccess ? (
+            <div role="status" className="text-center">
+              <CheckCircle2 className="mx-auto size-10 text-status-available" aria-hidden />
+              <h1 className="mt-4 text-xl font-semibold text-ink">Reservation updated</h1>
+              <p className="mt-2 text-sm text-body">
+                Your changes were verified and returned to the SAS review queue.
+              </p>
+            </div>
+          ) : (
+            <>
+              <h1 className="text-xl font-semibold text-ink">Verify your changes</h1>
+              <p className="mt-2 text-sm leading-6 text-body">
+                Enter the six-digit code sent to {editOTP.emailHint || 'the email on your reservation'}.
+                Your reservation will not change until the code is verified.
+              </p>
+              <Field label="Six-digit verification code" className="mt-6">
+                <Input
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  value={editOTPCode}
+                  onChange={(event) => setEditOTPCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  className="text-center font-mono text-xl tracking-[0.45em]"
+                  disabled={editOTPLoading || secondsLeft === 0}
+                />
+              </Field>
+              <p className="mt-2 text-xs text-muted" role="timer">
+                {secondsLeft > 0 ? `Code expires in ${countdown}.` : 'This code has expired.'}
+              </p>
+              {editOTPError && (
+                <p role="alert" className="mt-3 rounded-lg bg-status-rejected-bg px-3 py-2 text-sm text-status-rejected">
+                  {editOTPError}
+                </p>
+              )}
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditOTP(null)
+                    setEditOTPCode('')
+                    setEditOTPError('')
+                  }}
+                  disabled={editOTPLoading}
+                >
+                  Back to changes
+                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="outline"
+                    onClick={() => void resendEditCode()}
+                    disabled={editOTPLoading || resendSeconds > 0}
+                  >
+                    {resendSeconds > 0 ? `Resend in ${resendSeconds}s` : 'Resend code'}
+                  </Button>
+                  <Button
+                    onClick={() => void verifyEditCode()}
+                    loading={editOTPLoading}
+                    disabled={editOTPLoading || secondsLeft === 0 || editOTPCode.length !== 6}
+                  >
+                    Verify and save
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
+    )
+  }
+
   const suggestedIds = new Set(suggestions.map((suggestion) => suggestion.equipmentId))
   const otherEquipment = equipment.filter((item) => !suggestedIds.has(item.id))
 
   return (
     <div className="mx-auto max-w-5xl pb-[calc(5rem_+_env(safe-area-inset-bottom))] lg:pb-0">
       <Link
-        to={isEditing && editingId != null ? `/reservations/${editingId}` : publicFlow ? '/reserve' : '/reservations'}
+        to={publicEditReference
+          ? `/track-reservation?reservation_id=${encodeURIComponent(publicEditReference)}`
+          : isEditing && editingId != null ? `/reservations/${editingId}` : publicFlow ? '/reserve' : '/reservations'}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-body transition-colors hover:text-ink"
       >
         <ArrowLeft className="size-4" />
-        {publicFlow ? 'Change organization type' : isEditing ? 'Back to reservation' : 'Back to reservations'}
+        {publicEditReference ? 'Back to tracking' : publicFlow ? 'Change organization type' : isEditing ? 'Back to reservation' : 'Back to reservations'}
       </Link>
 
       <div className="mt-4">
@@ -1039,7 +1251,9 @@ export function ReservationWizardPage() {
         </h1>
         <p className="mt-1.5 text-[15px] text-body">
           {isEditing
-            ? 'Adjust the details below and resubmit — the reservation returns to the SAS review queue for approval.'
+            ? isStaff && !publicEditReference
+              ? 'Adjust the details below and save. Changes are validated and returned to the SAS review queue.'
+              : 'Adjust the details below. We will email you a code and apply the changes after verification; the reservation remains subject to SAS review.'
             : isRebook
               ? 'This creates a new reservation that still needs approval. Choose a new date and time — the expired reservation is kept unchanged for history.'
               : 'Reserve a facility and the resources you need for your event.'}
@@ -1162,7 +1376,7 @@ export function ReservationWizardPage() {
         {stepKey === 'schedule' && (
           <StepSchedule
             facility={facility}
-            excludeReservationId={editingId}
+            excludeReservationId={publicEditReference ? null : editingId}
             date={date}
             onDateChange={setDate}
             startTime={startTime}
@@ -1304,7 +1518,7 @@ export function ReservationWizardPage() {
             <Button
               variant="outline"
               onClick={goBack}
-              disabled={createReservation.isPending || resubmitReservation.isPending}
+              disabled={createReservation.isPending || editOTPLoading}
             >
               <ArrowLeft className="size-4" /> Back
             </Button>
@@ -1327,12 +1541,12 @@ export function ReservationWizardPage() {
             ) : (
               <Button
                 onClick={submit}
-                loading={createReservation.isPending || resubmitReservation.isPending}
+                loading={createReservation.isPending || editOTPLoading}
                 disabled={
                   canSubmit === false ||
                   !online ||
                   createReservation.isPending ||
-                  resubmitReservation.isPending
+                  editOTPLoading
                 }
                 title={
                   !online
@@ -1345,7 +1559,7 @@ export function ReservationWizardPage() {
                 }
               >
                 {isEditing
-                  ? 'Resubmit reservation'
+                  ? 'Save changes'
                   : isAdmin
                     ? 'Create approved reservation'
                     : 'Submit reservation'}{' '}

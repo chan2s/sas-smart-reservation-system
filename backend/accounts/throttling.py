@@ -76,3 +76,15 @@ class PublicReservationThrottle(AnonRateThrottle):
     scope = "public_reservation"
 
 
+class ReservationEditOTPThrottle(UserRateThrottle):
+    """Per-account limit for starting, resending, and verifying edit OTPs."""
+
+    scope = "reservation_edit_otp"
+
+
+class PublicReservationEditOTPThrottle(AnonRateThrottle):
+    """Per-IP limit for guest reservation edit OTP requests."""
+
+    scope = "public_reservation_edit_otp"
+
+

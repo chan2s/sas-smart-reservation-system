@@ -468,7 +468,7 @@ def resubmit_reservation(reservation, actor, message=""):
         )
     default_message = (
         "Reservation updated and resubmitted."
-        if actor.is_sas_staff
+        if getattr(actor, "is_sas_staff", False)
         else "Reservation updated and resubmitted by requester."
     )
     updated_event = record_event(

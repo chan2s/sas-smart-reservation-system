@@ -1207,6 +1207,15 @@ class PublicTrackSerializer(serializers.Serializer):
     start_time = serializers.TimeField(read_only=True)
     end_time = serializers.TimeField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
+    can_edit = serializers.SerializerMethodField()
+
+    def get_can_edit(self, obj):
+        return bool(
+            obj.status == Reservation.Status.PENDING
+            and obj.requester_id is None
+            and obj.created_by_id is None
+            and obj.contact_email
+        )
 
 
 class PublicApprovalLetterUploadSerializer(serializers.Serializer):

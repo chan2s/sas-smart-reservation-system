@@ -7,6 +7,7 @@ const apiState = vi.hoisted(() => ({
   track: vi.fn(),
   legacyTrack: vi.fn(),
   upload: vi.fn(),
+  editDetails: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -14,6 +15,7 @@ vi.mock('@/lib/api', () => ({
     trackReservationById: apiState.track,
     trackPublicReservation: apiState.legacyTrack,
     uploadPublicApprovalLetter: apiState.upload,
+    publicReservationEditDetails: apiState.editDetails,
   },
 }))
 
@@ -28,6 +30,7 @@ function renderPage() {
       <MemoryRouter initialEntries={['/track-reservation?reservation_id=SAS-2026-00024']}>
         <Routes>
           <Route path="/track-reservation" element={<ReservationTrackPage />} />
+          <Route path="/reserve/:organizationType" element={<p>public edit form route</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -47,6 +50,7 @@ const result = {
   created_at: '2026-11-08T09:00:00+08:00',
   approval_document_status: 'AWAITING' as const,
   approval_document_status_label: 'Awaiting Approval Letter',
+  can_edit: true,
 }
 
 afterEach(() => {
@@ -55,6 +59,7 @@ afterEach(() => {
   apiState.track.mockReset()
   apiState.legacyTrack.mockReset()
   apiState.upload.mockReset()
+  apiState.editDetails.mockReset()
 })
 
 describe('ReservationTrackPage', () => {
@@ -70,6 +75,34 @@ describe('ReservationTrackPage', () => {
       expect(apiState.track).toHaveBeenCalledWith('SAS-2026-00024')
     })
     expect(await screen.findByText('Community Assembly')).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Edit Reservation' })).toBeTruthy()
+  })
+
+  it('opens the shared public edit form without requesting an email address', async () => {
+    apiState.track.mockResolvedValue(result)
+    apiState.editDetails.mockResolvedValue({
+      id: 24,
+      requester_type: 'CAMPUS',
+      organization: 'Community Association',
+      facility_id: 1,
+      date: '2026-12-14',
+      start_time: '09:00:00',
+      end_time: '11:00:00',
+      event_name: 'Community Assembly',
+      event_type: 'ACADEMIC',
+      purpose: 'Meeting',
+      description: '',
+      expected_participants: 20,
+      notes: '',
+      contact_person: 'Requester',
+      contact_phone: '',
+      items: [],
+    })
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Reservation' }))
+    await waitFor(() => expect(apiState.editDetails).toHaveBeenCalledWith('SAS-2026-00024'))
+    expect(await screen.findByText('public edit form route')).toBeTruthy()
   })
 
   it('shows a friendly message for an invalid reservation ID', async () => {

@@ -1,0 +1,9 @@
+{% extends "emails/base_email.html" %}
+{% block email_title %}Verify reservation changes | {{ site_name|default:"SAS RESERVE" }}{% endblock %}
+{% block email_content %}
+<h1 class="email-heading" style="margin:0 0 12px;color:#25234a;font-size:24px;line-height:1.3;">Verify your reservation changes</h1>
+<p class="email-copy" style="margin:0 0 18px;color:#4b5563;font-size:15px;line-height:1.7;">Someone requested changes to reservation <strong>{{ reservation_id }}</strong>. Enter this verification code in SAS RESERVE to continue:</p>
+<p style="margin:0 0 18px;padding:16px;text-align:center;border-radius:10px;background:#f4f5f9;color:#25234a;font-size:32px;font-weight:bold;letter-spacing:10px;">{{ otp }}</p>
+<p class="email-copy" style="margin:0 0 12px;color:#4b5563;font-size:14px;line-height:1.7;">This code expires in {{ expires_minutes }} minutes. Do not share it with anyone. SAS RESERVE staff will never ask you for this code.</p>
+<p class="email-muted" style="margin:0;color:#697386;font-size:13px;line-height:1.6;">If you did not request this change, you can ignore this message. Your reservation has not been changed.</p>
+{% endblock %}

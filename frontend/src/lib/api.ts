@@ -550,9 +550,8 @@ export interface CreateReservationPayload {
 }
 
 /**
- * Payload for POST /api/reservations/{id}/resubmit/ — a requester's revision
- * of a reservation that is awaiting review (usually after an administrator
- * requested changes). Deliberately narrower than CreateReservationPayload:
+ * Payload for an email-verified revision of a reservation awaiting review.
+ * Deliberately narrower than CreateReservationPayload:
  * requester identity, organization, and status are decided by the backend and
  * never accepted from the client. Description/special-requirements are
  * intentionally omitted so untouched legacy values are preserved server-side.
@@ -573,6 +572,13 @@ export interface ResubmitReservationPayload {
   items: { equipment_id: number; quantity: number; operator?: boolean }[]
 }
 
+export interface ReservationEditOTPResponse {
+  verification_session?: string
+  expires_at: string
+  resend_available_at: string
+  email_hint?: string
+}
+
 export interface PublicReservationTracking {
   reservation_id: string
   status: string
@@ -586,6 +592,26 @@ export interface PublicReservationTracking {
   created_at: string
   approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
   approval_document_status_label: string
+  can_edit: boolean
+}
+
+export interface PublicReservationEditDetails {
+  id: number
+  requester_type: 'CAMPUS' | 'EXTERNAL'
+  organization: string
+  facility_id: number
+  date: string
+  start_time: string
+  end_time: string
+  event_name: string
+  event_type: EventType
+  purpose: string
+  description: string
+  expected_participants: number
+  notes: string
+  contact_person: string
+  contact_phone: string | null
+  items: { equipment_id: number; quantity: number; operator_requested: boolean | null }[]
 }
 
 export interface PublicReservationSubmission {
@@ -664,6 +690,24 @@ export const endpoints = {
   trackReservationById: (reservation_id: string) =>
     api.post<PublicReservationTracking>('/api/public/reservations/track/', {
       reservation_id,
+    }),
+  publicReservationEditDetails: (reservation_id: string) =>
+    api.post<PublicReservationEditDetails>('/api/public/reservations/edit-details/', { reservation_id }),
+  requestPublicReservationEditOTP: (reservation_id: string, payload: ResubmitReservationPayload) =>
+    api.post<ReservationEditOTPResponse>('/api/public/reservations/request-edit-otp/', {
+      reservation_id,
+      ...payload,
+    }),
+  resendPublicReservationEditOTP: (reservation_id: string, verification_session: string) =>
+    api.post<ReservationEditOTPResponse>('/api/public/reservations/resend-edit-otp/', {
+      reservation_id,
+      verification_session,
+    }),
+  verifyPublicReservationEditOTP: (reservation_id: string, verification_session: string, otp: string) =>
+    api.post<PublicReservationTracking>('/api/public/reservations/verify-edit-otp/', {
+      reservation_id,
+      verification_session,
+      otp,
     }),
   uploadPublicApprovalLetter: (reservation_id: string, file: File) => {
     const form = new FormData()
@@ -809,11 +853,22 @@ export const endpoints = {
   reservationApprovalLetterFile: (id: number) =>
     `/api/reservations/${id}/approval-letter-image/file/`,
   /**
-   * Revise + resubmit a reservation that is awaiting review (owner/staff
-   * only, PENDING only). Returns the updated reservation with its timeline.
+   * Staff-only direct revision of a PENDING reservation. Requester edits use
+   * the OTP endpoints below.
    */
   resubmitReservation: (id: number, payload: ResubmitReservationPayload) =>
     api.post<ReservationDetail>(`/api/reservations/${id}/resubmit/`, payload),
+  requestReservationEditOTP: (id: number, payload: ResubmitReservationPayload) =>
+    api.post<ReservationEditOTPResponse>(`/api/reservations/${id}/request-edit-otp/`, payload),
+  resendReservationEditOTP: (id: number, verification_session: string) =>
+    api.post<ReservationEditOTPResponse>(`/api/reservations/${id}/resend-edit-otp/`, {
+      verification_session,
+    }),
+  verifyReservationEditOTP: (id: number, verification_session: string, otp: string) =>
+    api.post<ReservationDetail>(`/api/reservations/${id}/verify-edit-otp/`, {
+      verification_session,
+      otp,
+    }),
   reservationAction: (id: number, action: string, body: Record<string, unknown> = {}) =>
     api.post<
       ReservationDetail & {

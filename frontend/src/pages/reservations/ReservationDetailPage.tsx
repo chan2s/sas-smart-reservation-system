@@ -28,7 +28,7 @@ import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Field, Input, Textarea } from '@/components/ui/Form'
-import { draftFromReservation, saveDraft } from '@/lib/reservationDraft'
+import { draftForReservationEdit, draftFromReservation, saveDraft } from '@/lib/reservationDraft'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
 import type { ReservationDetail, ReservationEvent, ReservationFee } from '@/lib/types'
@@ -244,6 +244,12 @@ export function ReservationDetailPage() {
     navigate(`/reservations/new?rebookFrom=${reservation.id}`)
   }
 
+  function startEdit() {
+    if (!reservation || !isStaff || !reservation.can_edit || isViewOnly) return
+    saveDraft(draftForReservationEdit(reservation))
+    navigate(`/reservations/${reservation.id}/edit`)
+  }
+
   function runCheckIn(override: boolean) {
     action.mutate(
       { action: 'check_in', body: override ? { override: true } : {} },
@@ -359,6 +365,11 @@ export function ReservationDetailPage() {
               onClick={openRevisionModal}
             >
               Send Revision Request
+            </Button>
+          )}
+          {isStaff && reservation.can_edit && !isViewOnly && (
+            <Button variant="outline" onClick={startEdit}>
+              Edit reservation
             </Button>
           )}
           {canMarkNoShow && (

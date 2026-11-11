@@ -1,0 +1,10 @@
+SAS RESERVE - Reservation changes submitted
+
+Reservation {{ reservation_id }} was updated after email verification. It remains subject to SAS review.
+
+Event: {{ event_name }}
+Facility: {{ facility }}
+Date: {{ date|date:"F j, Y" }}
+Time: {{ start_time|time:"g:i A" }} - {{ end_time|time:"g:i A" }}
+
+The reservation remains pending until it completes the existing approval process.

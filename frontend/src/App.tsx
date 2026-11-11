@@ -281,6 +281,16 @@ export default function App() {
               </RequireApproved>
             }
           />
+          <Route
+            path="/reservations/:id/edit"
+            element={
+              <RequireApproved title="Editing a reservation">
+                <RequireStaff>
+                  <ReservationWizardPage />
+                </RequireStaff>
+              </RequireApproved>
+            }
+          />
           <Route path="/reservations/:id" element={<ReservationDetailPage />} />
           <Route
             path="/reservations/:id/check-in"

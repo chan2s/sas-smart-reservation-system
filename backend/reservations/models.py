@@ -897,6 +897,33 @@ class ReservationEvent(models.Model):
         return f"{self.reservation.reservation_id} — {self.event_type}"
 
 
+class ReservationEditVerification(models.Model):
+    """Short-lived, encrypted reservation edits awaiting email OTP approval."""
+
+    reservation = models.ForeignKey(
+        Reservation, on_delete=models.CASCADE, related_name="edit_verifications"
+    )
+    requester = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="reservation_edit_verifications",
+        null=True,
+        blank=True,
+    )
+    encrypted_payload = models.TextField()
+    otp_hash = models.CharField(max_length=256)
+    session_token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField(db_index=True)
+    resend_available_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["reservation", "consumed_at"])]
+
+
 class InspectionReport(models.Model):
     class FacilityCondition(models.TextChoices):
         EXCELLENT = "EXCELLENT", "Excellent"

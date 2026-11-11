@@ -11,6 +11,7 @@ and the owner-scoped ``exclude_id`` on the availability check.
 """
 
 from datetime import time, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -20,7 +21,7 @@ from rest_framework.test import APIClient
 from equipment.models import Equipment, EquipmentCategory
 from facilities.models import Facility, OperatingHour
 from notifications.models import Notification
-from reservations.models import Reservation, ReservationEvent
+from reservations.models import Reservation, ReservationEditVerification, ReservationEvent
 
 User = get_user_model()
 
@@ -32,7 +33,8 @@ class ReservationResubmitTests(TestCase):
             username="admin", password="pass12345", role=User.Role.ADMIN
         )
         self.requester = User.objects.create_user(
-            username="requester", password="pass12345", role=User.Role.REQUESTER
+            username="requester", password="pass12345", role=User.Role.REQUESTER,
+            email="requester@example.com",
         )
         self.other = User.objects.create_user(
             username="other", password="pass12345", role=User.Role.REQUESTER
@@ -80,7 +82,12 @@ class ReservationResubmitTests(TestCase):
         payload.update(overrides)
         response = self.client.post("/api/reservations/", payload, format="json")
         self.assertEqual(response.status_code, 201, response.content)
-        return Reservation.objects.get(pk=response.json()["id"])
+        reservation = Reservation.objects.get(pk=response.json()["id"])
+        # This test class exercises editing and resubmission rules, not the
+        # separate approval-letter gate. The DB constraint remains enabled.
+        reservation.approval_letter_required = False
+        reservation.save(update_fields=["approval_letter_required"])
+        return reservation
 
     def _request_changes(self, message="Please adjust the end time to 5:00 PM."):
         self.client.force_authenticate(self.admin)
@@ -110,12 +117,29 @@ class ReservationResubmitTests(TestCase):
         return payload
 
     def _resubmit(self, payload=None, user=None):
-        self.client.force_authenticate(user or self.requester)
-        return self.client.post(
-            f"/api/reservations/{self.reservation.id}/resubmit/",
-            payload or self._resubmit_payload(),
-            format="json",
-        )
+        actor = user or self.requester
+        self.client.force_authenticate(actor)
+        if actor.is_sas_staff:
+            return self.client.post(
+                f"/api/reservations/{self.reservation.id}/resubmit/",
+                payload or self._resubmit_payload(),
+                format="json",
+            )
+        code = {}
+        with patch("notifications.email_service.send_reservation_edit_otp") as send_otp:
+            send_otp.side_effect = lambda reservation, email, otp: code.setdefault("value", otp) or True
+            start = self.client.post(
+                f"/api/reservations/{self.reservation.id}/request-edit-otp/",
+                payload or self._resubmit_payload(),
+                format="json",
+            )
+            if start.status_code != 202:
+                return start
+            return self.client.post(
+                f"/api/reservations/{self.reservation.id}/verify-edit-otp/",
+                {"verification_session": start.json()["verification_session"], "otp": code["value"]},
+                format="json",
+            )
 
     def test_full_change_request_workflow(self):
         """Changes requested → owner edits the end time → resubmitted, still PENDING."""
@@ -210,8 +234,8 @@ class ReservationResubmitTests(TestCase):
         self.client.force_authenticate(self.requester)
 
         detail = self.client.get(f"/api/reservations/{self.reservation.id}/").json()
-        # A plain pending reservation is revisable by its owner, but nothing
-        # asks for changes yet.
+        # Staff may view the reservation, but only its owner can initiate the
+        # authenticated account OTP workflow.
         self.assertTrue(detail["can_edit"])
         self.assertFalse(detail["changes_requested"])
 
@@ -266,9 +290,9 @@ class ReservationResubmitTests(TestCase):
     def test_resubmit_conflicting_schedule_returns_409(self):
         """A conflicting booking made while awaiting review blocks the new slot."""
         self._request_changes()
-        # Someone else books 15:00–17:00 in the same facility meanwhile. (Built
-        # via the ORM: the create API would rightly refuse the overlap with the
-        # requester's own still-held 09:00–18:00 slot.)
+        # An approved reservation books 15:00–17:00 in the same facility
+        # meanwhile. Pending requests do not hold availability under the
+        # reservation policy, so this competing booking must be approved.
         Reservation.objects.create(
             facility=self.facility,
             date=self.day,
@@ -278,6 +302,8 @@ class ReservationResubmitTests(TestCase):
             event_type=Reservation.EventType.ACADEMIC,
             requester=self.other,
             expected_participants=10,
+            status=Reservation.Status.APPROVED,
+            approval_letter_required=False,
         )
 
         response = self._resubmit()
@@ -381,9 +407,19 @@ class ReservationResubmitTests(TestCase):
         )
         self.assertEqual(updated.actor, self.admin)
         self.assertEqual(updated.message, "Reservation updated and resubmitted.")
+        self.assertFalse(ReservationEditVerification.objects.filter(reservation=self.reservation).exists())
+
+    def test_staff_role_can_directly_resubmit_without_otp(self):
+        staff = User.objects.create_user(
+            username="staff-editor", password="pass12345", role=User.Role.STAFF
+        )
+        self._request_changes()
+        response = self._resubmit(user=staff)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(ReservationEditVerification.objects.filter(reservation=self.reservation).exists())
 
     def test_plain_pending_reservation_can_be_revised(self):
-        """A business-rule superset: the owner may revise any pending reservation."""
+        """The owner may revise a pending reservation after email verification."""
         response = self._resubmit()
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(
@@ -407,8 +443,20 @@ class ReservationResubmitTests(TestCase):
             Reservation.objects.get(pk=self.reservation.pk).end_time, time(18, 0)
         )
 
+    def test_requester_cannot_use_direct_resubmit_endpoint(self):
+        response = self.client.post(
+            f"/api/reservations/{self.reservation.id}/resubmit/",
+            self._resubmit_payload(),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.end_time, time(18, 0))
+
     def test_availability_check_exclude_id(self):
-        """Editing owners can exclude their own reservation from the check."""
+        """An approved booking blocks availability unless its owner excludes it."""
+        self.reservation.status = Reservation.Status.APPROVED
+        self.reservation.save(update_fields=["status"])
         self.client.force_authenticate(self.requester)
         base = {
             "facility_id": self.facility.id,

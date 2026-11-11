@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, CalendarDays, Check, CircleAlert, MapPin, Search, ShieldCheck, Upload } from 'lucide-react'
 import { format } from 'date-fns'
 import { endpoints, type PublicReservationTracking } from '@/lib/api'
@@ -12,6 +12,7 @@ import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Misc'
 import { BrandMark } from '@/components/auth/AuthPanel'
 import { ApprovalLetterCapture } from '@/components/reservations/ApprovalLetterCapture'
+import { draftForPublicReservationEdit, saveDraft } from '@/lib/reservationDraft'
 
 /**
  * Public status view for a guest reservation request.
@@ -32,6 +33,9 @@ export function ReservationTrackPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [uploadSuccess, setUploadSuccess] = useState(false)
+  const [startingEdit, setStartingEdit] = useState(false)
+  const [editError, setEditError] = useState('')
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -77,6 +81,22 @@ export function ReservationTrackPage() {
       setUploadError(error instanceof Error ? error.message : 'The document could not be uploaded. Try again.')
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function startEdit(reservation: PublicReservationTracking) {
+    if (!reservation.can_edit || startingEdit) return
+    setStartingEdit(true)
+    setEditError('')
+    try {
+      const details = await endpoints.publicReservationEditDetails(reservation.reservation_id)
+      saveDraft(draftForPublicReservationEdit(details), true)
+      const organizationType = details.requester_type === 'EXTERNAL' ? 'external' : 'internal'
+      navigate(`/reserve/${organizationType}?publicEdit=${encodeURIComponent(reservation.reservation_id)}`)
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'This reservation cannot be edited right now.')
+    } finally {
+      setStartingEdit(false)
     }
   }
 
@@ -171,7 +191,14 @@ export function ReservationTrackPage() {
           </Card>
         )}
 
-        {trackQuery.data && <TrackingResult reservation={trackQuery.data} />}
+        {trackQuery.data && (
+          <TrackingResult
+            reservation={trackQuery.data}
+            onEdit={() => void startEdit(trackQuery.data!)}
+            editing={startingEdit}
+          />
+        )}
+        {editError && <p role="alert" className="mt-3 text-sm text-status-rejected">{editError}</p>}
         {uploadSuccess && (
           <p role="status" className="mt-4 rounded-lg border border-status-available/25 bg-status-available-bg p-3 text-sm text-status-available">
             Event approval letter uploaded successfully.
@@ -221,7 +248,15 @@ export function ReservationTrackPage() {
   )
 }
 
-function TrackingResult({ reservation }: { reservation: PublicReservationTracking }) {
+function TrackingResult({
+  reservation,
+  onEdit,
+  editing,
+}: {
+  reservation: PublicReservationTracking
+  onEdit: () => void
+  editing: boolean
+}) {
   const terminal = ['REJECTED', 'CANCELLED', 'EXPIRED', 'NO_SHOW', 'COMPLETED'].includes(
     reservation.status,
   )
@@ -339,6 +374,11 @@ function TrackingResult({ reservation }: { reservation: PublicReservationTrackin
         >
           Sign in to SAS Reserve
         </Link>
+        {reservation.can_edit && (
+          <Button variant="outline" loading={editing} onClick={onEdit}>
+            Edit Reservation
+          </Button>
+        )}
       </div>
     </Card>
   )

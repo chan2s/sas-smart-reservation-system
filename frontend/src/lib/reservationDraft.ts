@@ -186,16 +186,15 @@ export function draftFromReservation(
 }
 
 /**
- * Build the wizard draft for EDITING a reservation that is awaiting review
- * (the "administrator requested changes" flow).
+ * Build the wizard draft for editing a reservation that is awaiting review.
  *
  * Unlike a rebook, the schedule IS carried over — the requester adjusts the
  * existing booking in place (e.g. move the end time from 6:00 PM to 5:00 PM)
  * rather than choosing a fresh slot. Every existing value is preserved:
  * resources and quantities (marked user-edited so suggestions never
  * overwrite them), contact details, and the organization snapshot. The
- * administrator's change request message travels with the draft so the edit
- * form can display it at the top.
+ * An administrator's latest change request, when present, travels with the
+ * draft so the edit form can display it at the top.
  */
 export function draftForReservationEdit(
   reservation: ReservationDetail,
@@ -247,6 +246,61 @@ export function draftForReservationEdit(
       : null,
     editRequesterType: reservation.requester_type,
     editOrganization: reservation.organization || '',
+  }
+}
+
+export interface PublicReservationEditDetails {
+  id: number
+  requester_type: RequesterType
+  organization: string
+  facility_id: number
+  date: string
+  start_time: string
+  end_time: string
+  event_name: string
+  event_type: EventType
+  purpose: string
+  description: string
+  expected_participants: number
+  notes: string
+  contact_person: string
+  contact_phone: string | null
+  items: { equipment_id: number; quantity: number; operator_requested: boolean | null }[]
+}
+
+/** Convert the deliberately limited public edit payload into the shared wizard draft. */
+export function draftForPublicReservationEdit(
+  reservation: PublicReservationEditDetails,
+): WizardDraft {
+  const items: Record<number, number> = {}
+  const operatorSelections: Record<number, boolean> = {}
+  for (const item of reservation.items) {
+    items[item.equipment_id] = item.quantity
+    if (item.operator_requested != null) operatorSelections[item.equipment_id] = item.operator_requested
+  }
+  return {
+    facilityId: reservation.facility_id,
+    dateISO: reservation.date,
+    startTime: reservation.start_time.slice(0, 5),
+    endTime: reservation.end_time.slice(0, 5),
+    details: {
+      eventName: reservation.event_name,
+      eventType: reservation.event_type,
+      expectedParticipants: String(reservation.expected_participants || ''),
+      purpose: reservation.purpose || '',
+      staffNotes: reservation.notes || '',
+    },
+    contact: { name: reservation.contact_person || '', phone: reservation.contact_phone || '' },
+    items,
+    operatorSelections,
+    userEditedItems: Object.keys(items).map(Number),
+    stepKey: 'facility',
+    rebookedFromId: null,
+    rebooker: null,
+    editingReservationId: reservation.id,
+    changeRequest: null,
+    editRequesterType: reservation.requester_type,
+    editOrganization: reservation.organization,
   }
 }
 

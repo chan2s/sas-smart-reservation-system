@@ -1,0 +1,13 @@
+{% extends "emails/base_email.html" %}
+{% block email_title %}Reservation updated | {{ site_name|default:"SAS RESERVE" }}{% endblock %}
+{% block email_content %}
+<h1 class="email-heading" style="margin:0 0 12px;color:#25234a;font-size:24px;line-height:1.3;">Reservation changes submitted</h1>
+<p class="email-copy" style="margin:0 0 18px;color:#4b5563;font-size:15px;line-height:1.7;">Reservation <strong>{{ reservation_id }}</strong> was updated after email verification. It remains subject to SAS review.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;">
+<tr><td style="padding:10px 14px;color:#697386;font-size:12px;">Event</td><td style="padding:10px 14px;color:#273043;font-size:14px;font-weight:bold;">{{ event_name }}</td></tr>
+<tr><td style="padding:10px 14px;color:#697386;font-size:12px;">Facility</td><td style="padding:10px 14px;color:#273043;font-size:14px;">{{ facility }}</td></tr>
+<tr><td style="padding:10px 14px;color:#697386;font-size:12px;">Date</td><td style="padding:10px 14px;color:#273043;font-size:14px;">{{ date|date:"F j, Y" }}</td></tr>
+<tr><td style="padding:10px 14px;color:#697386;font-size:12px;">Time</td><td style="padding:10px 14px;color:#273043;font-size:14px;">{{ start_time|time:"g:i A" }} – {{ end_time|time:"g:i A" }}</td></tr>
+</table>
+<p class="email-muted" style="margin:18px 0 0;color:#697386;font-size:13px;line-height:1.6;">The reservation remains pending until it completes the existing approval process.</p>
+{% endblock %}

@@ -6,6 +6,7 @@ from pathlib import Path
 from django.http import FileResponse
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, authentication_classes, permission_classes, throttle_classes
 from rest_framework.exceptions import ValidationError
@@ -16,12 +17,16 @@ from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
     IsSasStaff,
 )
-from accounts.throttling import PublicReservationThrottle
+from accounts.throttling import (
+    PublicReservationEditOTPThrottle,
+    PublicReservationThrottle,
+    ReservationEditOTPThrottle,
+)
 from facilities.models import Facility
 from equipment.services import unassigned_equipment_for_facility
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
-from .models import Reservation, ReservationEvent
+from .models import Reservation, ReservationEditVerification, ReservationEvent
 from .serializers import (
     ReservationCreateSerializer,
     ReservationDetailSerializer,
@@ -35,6 +40,15 @@ from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
 from .services.public_tracking import reservation_for_tracking_token
 from .services.recommendations import recommend_resources_with_pricing
+from .services.edit_verification import (
+    decrypt_payload,
+    encrypt_payload,
+    generate_otp,
+    generate_session_token,
+    hash_otp,
+    hash_session_token,
+    verify_otp,
+)
 
 
 def _record_rebook_lineage(request, reservation):
@@ -90,6 +104,26 @@ def _trusted_requester_type(request, requested) -> str:
     return Reservation.RequesterType.CAMPUS
 
 
+def _pending_edit_payload(serializer):
+    """Convert only validated editable fields into encrypted JSON-safe data."""
+    values = dict(serializer.validated_data)
+    values.pop("_availability_report", None)
+    return json.loads(json.dumps(values, default=lambda value: value.isoformat()))
+
+
+def _reservation_email(reservation):
+    if reservation.requester and reservation.requester.email:
+        return reservation.requester.email.strip()
+    return (reservation.contact_email or "").strip()
+
+
+def _masked_email(email):
+    local, separator, domain = email.partition("@")
+    if not separator:
+        return ""
+    return f"{local[:1]}{'*' * min(max(len(local) - 1, 2), 6)}@{domain}"
+
+
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
@@ -120,6 +154,232 @@ def public_reservation_track(request):
             {"detail": "We could not find a reservation with that ID."},
             status=status.HTTP_404_NOT_FOUND,
         )
+    return Response(PublicTrackSerializer(reservation).data)
+
+
+def _public_edit_reservation(reference, *, lock=False):
+    """Resolve only guest reservations eligible for reference-based editing."""
+    reference = str(reference or "").strip().upper()
+    if not reference:
+        return None
+    reservations = Reservation.objects.select_related("facility")
+    if lock:
+        reservations = reservations.select_for_update()
+    reservation = reservations.filter(
+        reservation_id__iexact=reference,
+        requester__isnull=True,
+        created_by__isnull=True,
+    ).first()
+    if (
+        reservation is None
+        or reservation.status != Reservation.Status.PENDING
+        or not reservation.contact_email.strip()
+    ):
+        return None
+    return reservation
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationEditOTPThrottle])
+def public_reservation_edit_details(request):
+    """Return only editable form values, never contact email or admin data."""
+    data = request.data if hasattr(request.data, "get") else {}
+    reservation = _public_edit_reservation(data.get("reservation_id"))
+    if reservation is None:
+        return Response({"detail": "This reservation cannot be edited."}, status=404)
+    return Response({
+        "id": reservation.pk,
+        "reservation_id": reservation.reservation_id,
+        "requester_type": reservation.requester_type,
+        "organization": reservation.organization,
+        "facility_id": reservation.facility_id,
+        "date": reservation.date,
+        "start_time": reservation.start_time,
+        "end_time": reservation.end_time,
+        "event_name": reservation.event_name,
+        "event_type": reservation.event_type,
+        "purpose": reservation.purpose,
+        "description": reservation.description,
+        "expected_participants": reservation.expected_participants,
+        "notes": reservation.notes,
+        "contact_person": reservation.contact_person,
+        "contact_phone": reservation.contact_phone,
+        "items": [
+            {
+                "equipment_id": item.equipment_id,
+                "quantity": item.quantity,
+                "operator_requested": item.operator_requested,
+            }
+            for item in reservation.items.all()
+        ],
+    })
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationEditOTPThrottle])
+def public_reservation_request_edit_otp(request):
+    data = request.data if hasattr(request.data, "get") else {}
+    reference = str(data.get("reservation_id", "")).strip().upper()
+    reservation = _public_edit_reservation(reference)
+    if reservation is None:
+        return Response({"detail": "This reservation cannot be edited."}, status=404)
+    serializer = ReservationResubmitSerializer(
+        reservation,
+        data=data,
+        context={"request": request, "public_submission": True},
+    )
+    try:
+        serializer.is_valid(raise_exception=True)
+    except ValidationError as exc:
+        if exc.get_codes().get("availability"):
+            return Response({
+                "detail": "Resource conflict detected",
+                "availability": getattr(serializer, "_availability_report", {}),
+            }, status=status.HTTP_409_CONFLICT)
+        raise
+
+    now = timezone.now()
+    otp = generate_otp()
+    session_token = generate_session_token()
+    with transaction.atomic():
+        reservation = _public_edit_reservation(reference, lock=True)
+        if reservation is None:
+            return Response({"detail": "This reservation cannot be edited."}, status=404)
+        ReservationEditVerification.objects.filter(
+            reservation=reservation,
+            requester__isnull=True,
+            consumed_at__isnull=True,
+        ).update(consumed_at=now)
+        verification = ReservationEditVerification.objects.create(
+            reservation=reservation,
+            requester=None,
+            encrypted_payload=encrypt_payload(_pending_edit_payload(serializer)),
+            otp_hash=hash_otp(otp),
+            session_token_hash=hash_session_token(session_token),
+            expires_at=now + datetime.timedelta(minutes=5),
+            resend_available_at=now + datetime.timedelta(seconds=60),
+        )
+
+    from notifications.email_service import send_reservation_edit_otp
+
+    if not send_reservation_edit_otp(reservation, reservation.contact_email.strip(), otp):
+        verification.delete()
+        return Response({"detail": "The verification email could not be sent. Please try again."}, status=503)
+    return Response({
+        "verification_session": session_token,
+        "expires_at": verification.expires_at,
+        "resend_available_at": verification.resend_available_at,
+        "email_hint": _masked_email(reservation.contact_email.strip()),
+    }, status=202)
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationEditOTPThrottle])
+def public_reservation_resend_edit_otp(request):
+    data = request.data if hasattr(request.data, "get") else {}
+    reference = str(data.get("reservation_id", "")).strip().upper()
+    session_token = str(data.get("verification_session", ""))
+    token_hash = hash_session_token(session_token) if session_token else ""
+    now = timezone.now()
+    with transaction.atomic():
+        reservation = _public_edit_reservation(reference, lock=True)
+        verification = None if reservation is None else ReservationEditVerification.objects.select_for_update().filter(
+            reservation=reservation,
+            requester__isnull=True,
+            session_token_hash=token_hash,
+            consumed_at__isnull=True,
+        ).first()
+        if reservation is None or verification is None:
+            return Response({"detail": "This verification session is no longer valid."}, status=400)
+        if now >= verification.expires_at:
+            verification.consumed_at = now
+            verification.save(update_fields=["consumed_at", "updated_at"])
+            return Response({"detail": "This verification code has expired. Start editing again."}, status=400)
+        if now < verification.resend_available_at:
+            return Response({"detail": "Please wait before requesting another code.", "resend_available_at": verification.resend_available_at}, status=429)
+        otp = generate_otp()
+        verification.otp_hash = hash_otp(otp)
+        verification.attempts = 0
+        verification.expires_at = now + datetime.timedelta(minutes=5)
+        verification.resend_available_at = now + datetime.timedelta(seconds=60)
+        verification.save(update_fields=["otp_hash", "attempts", "expires_at", "resend_available_at", "updated_at"])
+
+    from notifications.email_service import send_reservation_edit_otp
+
+    if not send_reservation_edit_otp(reservation, reservation.contact_email.strip(), otp):
+        verification.consumed_at = timezone.now()
+        verification.save(update_fields=["consumed_at", "updated_at"])
+        return Response({"detail": "The verification email could not be sent. Restart the edit."}, status=503)
+    return Response({"expires_at": verification.expires_at, "resend_available_at": verification.resend_available_at}, status=202)
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationEditOTPThrottle])
+def public_reservation_verify_edit_otp(request):
+    data = request.data if hasattr(request.data, "get") else {}
+    reference = str(data.get("reservation_id", "")).strip().upper()
+    session_token = str(data.get("verification_session", ""))
+    otp = str(data.get("otp", ""))
+    if len(otp) != 6 or not otp.isdigit():
+        return Response({"detail": "Enter the six-digit verification code."}, status=400)
+    token_hash = hash_session_token(session_token) if session_token else ""
+    now = timezone.now()
+    with transaction.atomic():
+        reservation = _public_edit_reservation(reference, lock=True)
+        verification = None if reservation is None else ReservationEditVerification.objects.select_for_update().filter(
+            reservation=reservation,
+            requester__isnull=True,
+            session_token_hash=token_hash,
+            consumed_at__isnull=True,
+        ).first()
+        if reservation is None or verification is None:
+            return Response({"detail": "This verification session is no longer valid."}, status=400)
+        if now >= verification.expires_at:
+            verification.consumed_at = now
+            verification.save(update_fields=["consumed_at", "updated_at"])
+            return Response({"detail": "This verification code has expired. Start editing again."}, status=400)
+        if verification.attempts >= 5:
+            return Response({"detail": "Too many incorrect codes. Start editing again."}, status=400)
+        if not verify_otp(otp, verification.otp_hash):
+            verification.attempts += 1
+            verification.save(update_fields=["attempts", "updated_at"])
+            return Response({"detail": f"Incorrect code. {max(0, 5 - verification.attempts)} attempts remaining."}, status=400)
+        verification.consumed_at = now
+        verification.save(update_fields=["consumed_at", "updated_at"])
+        try:
+            payload = decrypt_payload(verification.encrypted_payload)
+            serializer = ReservationResubmitSerializer(
+                reservation,
+                data=payload,
+                context={"request": request, "public_submission": True},
+            )
+            serializer.is_valid(raise_exception=True)
+        except ValueError as exc:
+            verification.delete()
+            return Response({"detail": str(exc)}, status=400)
+        except ValidationError as exc:
+            verification.delete()
+            if exc.get_codes().get("availability"):
+                return Response({"detail": "Availability changed while you were verifying. Review the schedule and try again.", "availability": getattr(serializer, "_availability_report", {})}, status=409)
+            return Response(exc.detail, status=400)
+        reservation = serializer.save()
+        workflow.resubmit_reservation(reservation, None)
+        verification.delete()
+        recipient_email = reservation.contact_email.strip()
+        from notifications.email_service import send_reservation_modified
+        if recipient_email:
+            transaction.on_commit(
+                lambda current=reservation, recipient=recipient_email: send_reservation_modified(current, recipient),
+                robust=True,
+            )
     return Response(PublicTrackSerializer(reservation).data)
 
 
@@ -803,13 +1063,263 @@ class ReservationViewSet(viewsets.ModelViewSet):
         data["revision_email_detail"] = detail
         return Response(data)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="request-edit-otp",
+        throttle_classes=[ReservationEditOTPThrottle],
+    )
+    def request_edit_otp(self, request, pk=None):
+        """Validate and hold an owner's proposed edit until email verification.
+
+        Only PENDING reservations are editable. APPROVED/ACTIVE reservations
+        remain locked so their approval cannot be silently invalidated; every
+        terminal status is locked by the same policy.
+        """
+        reservation = self.get_object()
+        if reservation.requester_id != request.user.id:
+            return Response(
+                {"detail": "You can only edit your own reservation."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if reservation.status != Reservation.Status.PENDING:
+            return Response(
+                {"detail": "Only reservations awaiting review can be edited."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ReservationResubmitSerializer(
+            reservation, data=request.data, context={"request": request}
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as exc:
+            if exc.get_codes().get("availability"):
+                return Response(
+                    {
+                        "detail": "Resource conflict detected",
+                        "availability": getattr(serializer, "_availability_report", {}),
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            raise
+
+        now = timezone.now()
+        otp = generate_otp()
+        session_token = generate_session_token()
+        with transaction.atomic():
+            reservation = Reservation.objects.select_for_update(of=("self",)).select_related(
+                "requester", "facility"
+            ).get(pk=reservation.pk)
+            if reservation.requester_id != request.user.id or reservation.status != Reservation.Status.PENDING:
+                return Response(
+                    {"detail": "Only your own reservation awaiting review can be edited."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            recipient_email = _reservation_email(reservation)
+            if not recipient_email:
+                return Response(
+                    {"detail": "There is no email address associated with this reservation."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            ReservationEditVerification.objects.filter(
+                reservation=reservation,
+                requester=request.user,
+                consumed_at__isnull=True,
+            ).update(consumed_at=now)
+            verification = ReservationEditVerification.objects.create(
+                reservation=reservation,
+                requester=request.user,
+                encrypted_payload=encrypt_payload(_pending_edit_payload(serializer)),
+                otp_hash=hash_otp(otp),
+                session_token_hash=hash_session_token(session_token),
+                expires_at=now + datetime.timedelta(minutes=5),
+                resend_available_at=now + datetime.timedelta(seconds=60),
+            )
+
+        from notifications.email_service import send_reservation_edit_otp
+
+        if not send_reservation_edit_otp(reservation, recipient_email, otp):
+            verification.delete()
+            return Response(
+                {"detail": "The verification email could not be sent. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(
+            {
+                "verification_session": session_token,
+                "expires_at": verification.expires_at,
+                "resend_available_at": verification.resend_available_at,
+                "email_hint": _masked_email(recipient_email),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="resend-edit-otp",
+        throttle_classes=[ReservationEditOTPThrottle],
+    )
+    def resend_edit_otp(self, request, pk=None):
+        reservation = self.get_object()
+        session_token = str(request.data.get("verification_session", ""))
+        token_hash = hash_session_token(session_token) if session_token else ""
+        now = timezone.now()
+        with transaction.atomic():
+            verification = ReservationEditVerification.objects.select_for_update().filter(
+                reservation=reservation,
+                requester=request.user,
+                session_token_hash=token_hash,
+                consumed_at__isnull=True,
+            ).first()
+            if verification is None:
+                return Response({"detail": "This verification session is no longer valid."}, status=400)
+            if reservation.requester_id != request.user.id or reservation.status != Reservation.Status.PENDING:
+                verification.consumed_at = now
+                verification.save(update_fields=["consumed_at", "updated_at"])
+                return Response({"detail": "This reservation can no longer be edited."}, status=400)
+            if now < verification.resend_available_at:
+                return Response(
+                    {
+                        "detail": "Please wait before requesting another code.",
+                        "resend_available_at": verification.resend_available_at,
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            recipient_email = _reservation_email(reservation)
+            if not recipient_email:
+                verification.consumed_at = now
+                verification.save(update_fields=["consumed_at", "updated_at"])
+                return Response({"detail": "There is no email address associated with this reservation."}, status=400)
+            otp = generate_otp()
+            verification.otp_hash = hash_otp(otp)
+            verification.attempts = 0
+            verification.expires_at = now + datetime.timedelta(minutes=5)
+            verification.resend_available_at = now + datetime.timedelta(seconds=60)
+            verification.save(
+                update_fields=["otp_hash", "attempts", "expires_at", "resend_available_at", "updated_at"]
+            )
+
+        from notifications.email_service import send_reservation_edit_otp
+
+        if not send_reservation_edit_otp(reservation, recipient_email, otp):
+            verification.consumed_at = timezone.now()
+            verification.save(update_fields=["consumed_at", "updated_at"])
+            return Response(
+                {"detail": "The verification email could not be sent. Please restart the edit."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(
+            {
+                "expires_at": verification.expires_at,
+                "resend_available_at": verification.resend_available_at,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="verify-edit-otp",
+        throttle_classes=[ReservationEditOTPThrottle],
+    )
+    def verify_edit_otp(self, request, pk=None):
+        reservation = self.get_object()
+        session_token = str(request.data.get("verification_session", ""))
+        otp = str(request.data.get("otp", ""))
+        if len(otp) != 6 or not otp.isdigit():
+            return Response({"detail": "Enter the six-digit verification code."}, status=400)
+        token_hash = hash_session_token(session_token) if session_token else ""
+        now = timezone.now()
+        with transaction.atomic():
+            reservation = Reservation.objects.select_for_update(of=("self",)).select_related(
+                "requester", "facility"
+            ).get(pk=reservation.pk)
+            verification = ReservationEditVerification.objects.select_for_update().filter(
+                reservation=reservation,
+                requester=request.user,
+                session_token_hash=token_hash,
+                consumed_at__isnull=True,
+            ).first()
+            if verification is None:
+                return Response({"detail": "This verification session is no longer valid."}, status=400)
+            if reservation.requester_id != request.user.id or reservation.status != Reservation.Status.PENDING:
+                verification.delete()
+                return Response({"detail": "This reservation can no longer be edited."}, status=400)
+            if now >= verification.expires_at:
+                return Response({"detail": "This verification code has expired. Request a new code."}, status=400)
+            if verification.attempts >= 5:
+                return Response({"detail": "Too many incorrect codes. Request a new code."}, status=400)
+            if not verify_otp(otp, verification.otp_hash):
+                verification.attempts += 1
+                attempts_left = max(0, 5 - verification.attempts)
+                if attempts_left == 0:
+                    verification.save(update_fields=["attempts", "updated_at"])
+                    message = "Too many incorrect codes. Request a new code."
+                else:
+                    verification.save(update_fields=["attempts", "updated_at"])
+                    message = f"Incorrect code. {attempts_left} attempts remaining."
+                return Response({"detail": message}, status=400)
+
+            verification.consumed_at = now
+            verification.save(update_fields=["consumed_at", "updated_at"])
+            try:
+                payload = decrypt_payload(verification.encrypted_payload)
+                serializer = ReservationResubmitSerializer(
+                    reservation, data=payload, context={"request": request}
+                )
+                serializer.is_valid(raise_exception=True)
+            except ValueError as exc:
+                verification.delete()
+                return Response({"detail": str(exc)}, status=400)
+            except ValidationError as exc:
+                verification.delete()
+                if exc.get_codes().get("availability"):
+                    return Response(
+                        {
+                            "detail": "Availability changed while you were verifying. Review the schedule and try again.",
+                            "availability": getattr(serializer, "_availability_report", {}),
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+            reservation = serializer.save()
+            workflow.resubmit_reservation(reservation, request.user)
+            verification.delete()
+
+            email = _reservation_email(reservation)
+            from notifications.email_service import send_reservation_modified
+
+            if email:
+                transaction.on_commit(
+                    lambda current=reservation, recipient=email: send_reservation_modified(
+                        current, recipient
+                    ),
+                    robust=True,
+                )
+            if reservation.requester_id:
+                notify(
+                    reservation.requester,
+                    Notification.Type.RESERVATION,
+                    "Reservation updated",
+                    f"{reservation.reservation_id} was updated and returned to the SAS review queue.",
+                    f"/reservations/{reservation.pk}",
+                    event_key=f"reservation:{reservation.pk}:verified-edit:{verification.pk}",
+                )
+
+        return Response(
+            ReservationDetailSerializer(reservation, context={"request": request}).data
+        )
+
     @action(detail=True, methods=["post"])
     def resubmit(self, request, pk=None):
         """Revise and resubmit a reservation that is awaiting review.
 
-        Authorization: the reservation owner or SAS staff — enforced here, on
-        top of the queryset (a non-staff user can never even resolve another
-        requester's reservation). Status policy: only a PENDING reservation —
+        Staff may use this internal action for a PENDING reservation. A
+        requester must use the email-verified edit actions above. Status
+        policy: only a PENDING reservation —
         the state an administrator's "request changes" leaves it in — can be
         resubmitted; approved, active, completed, cancelled, rejected, and
         expired reservations are refused. The payload is revalidated exactly
@@ -826,10 +1336,9 @@ class ReservationViewSet(viewsets.ModelViewSet):
             reservation = Reservation.objects.select_for_update().get(
                 pk=self.get_object().pk
             )
-            is_owner = reservation.requester_id == request.user.id
-            if not (is_owner or request.user.is_sas_staff):
+            if not request.user.is_sas_staff:
                 return Response(
-                    {"detail": "You do not have permission to edit this reservation."},
+                    {"detail": "Only authorized SAS staff can use direct reservation editing."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             if reservation.status != Reservation.Status.PENDING:
