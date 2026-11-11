@@ -139,13 +139,7 @@ export function LoginPage() {
                 </div>
               ) : (
                 <>
-                  <GoogleAuthButton onClick={handleGoogle} loading={googleLoading} />
 
-                  <div className="my-6 flex items-center gap-3" aria-hidden>
-                    <span className="h-px flex-1 bg-line" />
-                    <span className="text-xs text-muted">or</span>
-                    <span className="h-px flex-1 bg-line" />
-                  </div>
 
                   <form onSubmit={handleSubmit} className="space-y-5">
                     <Field label="Username" htmlFor="username">
@@ -216,4 +210,4 @@ export function LoginPage() {
       <ChatWidget />
     </div>
   )
-}
+}

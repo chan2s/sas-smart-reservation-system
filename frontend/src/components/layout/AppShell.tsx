@@ -1,4 +1,5 @@
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { Header, MobileBottomNav } from './Header'
 import { ChatWidget } from '@/components/chatbot/ChatWidget'
 import { AffiliationPrompt } from '@/components/organizations/AffiliationPrompt'
@@ -26,6 +27,54 @@ import { useAuth } from '@/hooks/useAuth'
  */
 export function AppShell() {
   const { isViewOnly } = useAuth()
+  const { pathname } = useLocation()
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
+
+  useEffect(() => {
+    const isReservationForm =
+      pathname === '/reservations/new' ||
+      /^\/reservations\/[^/]+\/edit\/?$/.test(pathname) ||
+      /^\/reserve\/(internal|external)\/?$/.test(pathname)
+
+    if (!isReservationForm) {
+      setKeyboardOpen(false)
+      return
+    }
+
+    const viewport = window.visualViewport
+    const isMobile = () => window.matchMedia('(max-width: 1023px)').matches
+    let fallbackViewportHeight = window.innerHeight
+
+    const updateKeyboardVisibility = () => {
+      if (!isMobile()) {
+        setKeyboardOpen(false)
+        return
+      }
+
+      if (viewport) {
+        const keyboardInset = window.innerHeight - viewport.offsetTop - viewport.height
+        setKeyboardOpen(keyboardInset > 120)
+        return
+      }
+
+      const heightDifference = fallbackViewportHeight - window.innerHeight
+      const visible = heightDifference > 120
+      setKeyboardOpen(visible)
+      if (!visible) fallbackViewportHeight = window.innerHeight
+    }
+
+    window.addEventListener('resize', updateKeyboardVisibility)
+    viewport?.addEventListener('resize', updateKeyboardVisibility)
+    viewport?.addEventListener('scroll', updateKeyboardVisibility)
+    updateKeyboardVisibility()
+
+    return () => {
+      window.removeEventListener('resize', updateKeyboardVisibility)
+      viewport?.removeEventListener('resize', updateKeyboardVisibility)
+      viewport?.removeEventListener('scroll', updateKeyboardVisibility)
+    }
+  }, [pathname])
+
   return (
     <div className="flex min-h-dvh flex-col bg-soft">
       <PushSubscriptionInitializer />
@@ -33,7 +82,9 @@ export function AppShell() {
 
       <main className="w-full flex-1">
         {/* Comfortable max content width — never overly wide on large monitors */}
-        <div className="mx-auto w-full max-w-[1440px] px-4 pb-24 pt-8 sm:px-6 lg:px-10 lg:pb-14 lg:pt-10">
+        <div
+          className={`mx-auto w-full max-w-[1440px] px-4 ${keyboardOpen ? 'pb-0' : 'pb-24'} pt-8 sm:px-6 lg:px-10 lg:pb-14 lg:pt-10`}
+        >
           {/* Pending-approval notice for a not-approved account (view-only). */}
           {isViewOnly && <ViewOnlyBanner className="mb-6" />}
           {/* Non-blocking nudge — never gates access for existing users. */}
@@ -42,7 +93,7 @@ export function AppShell() {
         </div>
       </main>
 
-      <MobileBottomNav />
+      <MobileBottomNav hidden={keyboardOpen} />
 
       {/* Floating rule-based assistant (backend-grounded, no AI client-side). */}
       <ChatWidget />

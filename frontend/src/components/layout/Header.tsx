@@ -410,11 +410,12 @@ export function Header() {
 // Mobile bottom navigation (kept from the previous design)
 // ---------------------------------------------------------------------------
 
-export function MobileBottomNav() {
+export function MobileBottomNav({ hidden = false }: { hidden?: boolean }) {
   const { isStaff } = useAuth()
   return (
     <nav
       aria-label="Mobile"
+      hidden={hidden}
       className="fixed inset-x-0 bottom-0 z-30 flex border-t border-white/10 bg-[var(--nav-background)]/95 pb-[env(safe-area-inset-bottom)] shadow-float backdrop-blur lg:hidden"
     >
       {primaryNavigationFor(isStaff).slice(0, 5).map((item) => (
