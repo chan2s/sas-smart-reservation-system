@@ -29,9 +29,9 @@ export function Stepper({ steps, current, onStepClick }: { steps: Step[]; curren
                 <span
                   className={cn(
                     'flex size-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold transition-colors duration-150',
-                    done && 'bg-status-available text-white',
-                    active && 'bg-brand text-white shadow-sm',
-                    !done && !active && 'bg-soft text-muted',
+                    done && 'bg-brand-soft text-brand',
+                    active && 'bg-brand text-white',
+                    !done && !active && 'border border-slate-200 bg-white text-muted',
                   )}
                 >
                   {done ? <Check className="size-4" aria-hidden /> : String(index + 1).padStart(2, '0')}
@@ -49,7 +49,7 @@ export function Stepper({ steps, current, onStepClick }: { steps: Step[]; curren
                 <span
                   className={cn(
                     'mx-3 h-px flex-1 transition-colors duration-300 sm:mx-4',
-                    index < current ? 'bg-status-available/50' : 'bg-line',
+                    index < current ? 'bg-brand/35' : 'bg-slate-200',
                   )}
                   aria-hidden
                 />

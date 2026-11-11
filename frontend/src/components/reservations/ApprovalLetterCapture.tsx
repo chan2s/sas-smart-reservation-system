@@ -195,7 +195,7 @@ export function ApprovalLetterCapture({ inputId = 'approval-letter-image-upload'
   return (
     <>
       <div className="space-y-3">
-        <p className="text-sm text-body">Add a clear photo or upload a scanned image of the signed event approval letter.</p>
+        <p className="text-sm leading-relaxed text-body">Add a clear photo or upload a scanned image of the signed event approval letter.</p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button
             type="button"
@@ -211,7 +211,7 @@ export function ApprovalLetterCapture({ inputId = 'approval-letter-image-upload'
           >
             Take Photo
           </Button>
-          <label className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition-colors hover:bg-soft focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand sm:w-auto">
+          <label className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink transition-colors hover:bg-slate-50 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand sm:w-auto">
             <Upload className="size-4" aria-hidden />
             Upload File
             <input
@@ -229,7 +229,7 @@ export function ApprovalLetterCapture({ inputId = 'approval-letter-image-upload'
         </div>
         <p className="text-xs text-muted">JPG, JPEG, PNG, or WEBP; maximum 5 MB.</p>
         {file && (
-          <div className="flex flex-col gap-3 rounded-xl border border-line bg-soft/50 p-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center">
             {selectedPreviewUrl && (
               <img
                 src={selectedPreviewUrl}
@@ -237,7 +237,21 @@ export function ApprovalLetterCapture({ inputId = 'approval-letter-image-upload'
                 className="max-h-48 w-full rounded-lg bg-white object-contain sm:w-40"
               />
             )}
-            <p className="min-w-0 break-all text-xs text-muted" role="status">Selected: {file.name}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-ink" role="status">Selected file</p>
+              <p className="mt-0.5 break-all text-xs text-body">{file.name}</p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full shrink-0 sm:w-auto"
+              onClick={() => {
+                onFileChange(null)
+                onError('')
+              }}
+            >
+              Remove file
+            </Button>
           </div>
         )}
       </div>
@@ -250,7 +264,7 @@ export function ApprovalLetterCapture({ inputId = 'approval-letter-image-upload'
             role="dialog"
             aria-modal="true"
             aria-labelledby="approval-camera-title"
-            className="my-auto w-full max-w-2xl rounded-2xl bg-surface p-4 shadow-2xl sm:p-6"
+            className="my-auto w-full max-w-2xl rounded-xl bg-white p-4 shadow-xl sm:p-6"
             onKeyDown={(event) => {
               if (event.key === 'Escape') closeCamera()
             }}

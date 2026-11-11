@@ -22,6 +22,9 @@ import type {
   ReservableResource,
 } from '@/lib/types'
 
+const reservationControlClass =
+  '!h-11 !rounded-md !border-slate-300 !bg-white !text-slate-900 placeholder:!text-slate-400 hover:!border-slate-400 focus:!border-brand focus:!ring-4 focus:!ring-brand/10'
+
 /**
  * Shared reservation workflow steps for the new-reservation wizard
  * (ReservationWizardPage): facility, schedule, the merged details & resources
@@ -145,13 +148,13 @@ export function StepFacility({
   onSelect: (id: number) => void
 }) {
   return (
-    <section aria-label="Choose facility">
+    <section aria-label="Choose facility" className="mx-auto w-full max-w-5xl">
       <h2 className="text-lg font-semibold text-ink">Choose facility</h2>
       <p className="mt-1 text-sm text-body">Select the space you need for your event.</p>
 
       {/* Disabled/archived facilities are already excluded by the backend, so
           this list only ever contains reservable spaces. */}
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {facilities.map((facility) => {
           const isSelected = selected === facility.id
           const unavailable = facility.status === 'MAINTENANCE' || facility.is_active === false
@@ -163,12 +166,12 @@ export function StepFacility({
               aria-pressed={isSelected}
               disabled={unavailable}
               className={cn(
-                'card card-hover overflow-hidden text-left transition-shadow',
-                isSelected && 'ring-2 ring-brand ring-offset-2',
+                'overflow-hidden rounded-lg border bg-white text-left transition-colors',
+                isSelected ? 'border-brand ring-2 ring-brand/15' : 'border-slate-200 hover:border-slate-300',
                 unavailable && 'cursor-not-allowed opacity-60',
               )}
             >
-              <div className="relative h-28">
+              <div className="relative h-32">
                 <FacilityImage
                   name={facility.name}
                   facilityType={facility.facility_type as never}
@@ -185,7 +188,7 @@ export function StepFacility({
                   )}
                 </div>
               </div>
-              <div className="p-4">
+              <div className="p-4 sm:p-5">
                 <p className="text-[15px] font-semibold text-ink">{facility.name}</p>
                 <p className="mt-0.5 text-xs text-muted">
                   {facility.facility_type_label} · Capacity {facility.capacity}
@@ -537,7 +540,7 @@ export function StepSchedule({
     />
   )
   return (
-    <section aria-label="Choose schedule" className="space-y-4">
+    <section aria-label="Choose schedule" className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-ink">Reservation dates</h2>
@@ -570,7 +573,7 @@ export function StepSchedule({
 
       <div className="grid gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-      <Card>
+      <Card className="!rounded-xl !border-slate-200 !shadow-none">
         <CardHeader
           title={view === 'booked' ? 'Booked dates' : 'Choose date'}
           description={facility ? `${facility.name} · ${view === 'booked' ? 'select a marked date to see reservation details' : 'select a date for your reservation'}` : 'Select a facility first'}
@@ -635,12 +638,13 @@ export function StepSchedule({
       </div>
 
       <div className="space-y-6">
-        <Card>
+        <Card className="!rounded-xl !border-slate-200 !shadow-none">
           <CardHeader title="Choose time" description="Slots follow the facility's operating hours" />
-          <div className="mt-5 grid grid-cols-2 gap-4">
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
             <Field label="Start time" htmlFor="start-time">
               <Select
                 id="start-time"
+                className={reservationControlClass}
                 value={startTime}
                 onChange={(event) => {
                   onStartTime(event.target.value)
@@ -659,6 +663,7 @@ export function StepSchedule({
             <Field label="End time" htmlFor="end-time">
               <Select
                 id="end-time"
+                className={reservationControlClass}
                 value={endTime}
                 onChange={(event) => onEndTime(event.target.value)}
                 disabled={!startTime || selectedReservationsPending || selectedReservationsError}
@@ -806,7 +811,7 @@ export function StepReview({
     .filter((entry) => entry.equipment)
 
   return (
-    <section aria-label="Review reservation" className="mx-auto max-w-3xl space-y-6">
+    <section aria-label="Review reservation" className="mx-auto w-full max-w-5xl space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-ink">Review your reservation</h2>
         <p className="mt-1 text-sm text-body">
@@ -822,7 +827,7 @@ export function StepReview({
 
       {requesterSection}
 
-      <Card>
+      <Card className="!rounded-xl !border-slate-200 !shadow-none">
         <dl className="divide-y divide-line">
           {/* Facility and schedule are captured in earlier steps: they are
               shown read-only here, with a link back to the step that owns them. */}

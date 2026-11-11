@@ -32,19 +32,19 @@ export function QuantityStepper({
         type="button"
         onClick={() => onChange(value - 1)}
         disabled={blocked || value <= 0}
-        className="flex size-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:bg-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex size-10 items-center justify-center rounded-md border border-slate-300 bg-white text-body transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
         aria-label={`Decrease ${label} quantity`}
       >
         <Minus className="size-3.5" aria-hidden />
       </button>
-      <span className="w-8 text-center text-sm font-semibold tabular-nums text-ink" aria-live="polite">
+      <span className="flex h-10 min-w-11 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-sm font-semibold tabular-nums text-ink" aria-live="polite">
         {value}
       </span>
       <button
         type="button"
         onClick={() => onChange(value + 1)}
         disabled={blocked || value >= max}
-        className="flex size-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:bg-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex size-10 items-center justify-center rounded-md border border-slate-300 bg-white text-body transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
         aria-label={`Increase ${label} quantity`}
       >
         <Plus className="size-3.5" aria-hidden />

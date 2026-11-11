@@ -18,9 +18,16 @@ import {
   type EventDetailsDraft,
   type ReservationFieldKey,
 } from '@/lib/reservationDraft'
-import { cn } from '@/lib/utils'
+import { cn, formatCurrency } from '@/lib/utils'
 import type { SuggestedResource } from '@/hooks/useSuggestedResources'
 import type { EventType, ReservableResource } from '@/lib/types'
+
+const reservationControlClass =
+  '!h-11 !rounded-md !border-slate-300 !bg-white !text-slate-900 placeholder:!text-slate-400 hover:!border-slate-400 focus:!border-brand focus:!ring-4 focus:!ring-brand/10'
+const reservationTextareaClass =
+  '!rounded-md !border-slate-300 !bg-white !text-slate-900 placeholder:!text-slate-400 hover:!border-slate-400 focus:!border-brand focus:!ring-4 focus:!ring-brand/10'
+const reservationInvalidControlClass =
+  '!border-status-rejected focus:!border-status-rejected focus:!ring-status-rejected/10'
 
 /**
  * Step 3 — "Details & Resources".
@@ -162,7 +169,7 @@ export function DetailsStep({
   const contactComplete = Boolean(contact.name.trim()) && isValidPhMobile(contact.phone)
 
   return (
-    <section aria-label="Event details and resources" className="mx-auto max-w-3xl">
+    <section aria-label="Event details and resources" className="mx-auto w-full max-w-5xl">
       <h2 className="text-lg font-semibold text-ink">Details &amp; resources</h2>
       <p className="mt-1 text-sm text-body">
         Tell SAS about your event, then confirm the resources you need.
@@ -181,12 +188,16 @@ export function DetailsStep({
         )}
       </p>
 
-      <Card className="mt-4" padding="md">
-        <div ref={formRef} onKeyDown={handleKeyDown} className="grid gap-4 sm:grid-cols-2">
+      <Card className="mt-5 !rounded-xl !border !border-slate-200 !bg-white !shadow-none" padding="lg">
+        <section aria-labelledby="event-information-heading">
+          <h3 id="event-information-heading" className="text-sm font-semibold text-ink">Event information</h3>
+          <p className="mt-1 text-xs text-muted">Fields marked with an asterisk are required.</p>
+        <div ref={formRef} onKeyDown={handleKeyDown} className="mt-5 grid gap-x-5 gap-y-5 sm:grid-cols-2">
           <Field
             label="Event name"
             htmlFor={RESERVATION_FIELD_IDS.eventName}
             className="sm:col-span-2"
+            required
             error={visibleError('eventName')}
           >
             <Input
@@ -197,6 +208,7 @@ export function DetailsStep({
               onChange={(event) => set('eventName', event.target.value)}
               onBlur={() => markTouched('eventName')}
               placeholder="e.g. Student Leadership Seminar"
+              className={cn(reservationControlClass, visibleError('eventName') && reservationInvalidControlClass)}
               aria-invalid={Boolean(visibleError('eventName'))}
               aria-describedby={
                 visibleError('eventName') ? `${RESERVATION_FIELD_IDS.eventName}-error` : undefined
@@ -207,10 +219,12 @@ export function DetailsStep({
           <Field
             label="Event type"
             htmlFor={RESERVATION_FIELD_IDS.eventType}
+            required
             error={visibleError('eventType')}
           >
             <Select
               id={RESERVATION_FIELD_IDS.eventType}
+              className={cn(reservationControlClass, visibleError('eventType') && reservationInvalidControlClass)}
               value={details.eventType}
               onChange={(event) => {
                 set('eventType', event.target.value as EventType)
@@ -235,6 +249,7 @@ export function DetailsStep({
           <Field
             label="Expected participants"
             htmlFor={RESERVATION_FIELD_IDS.expectedParticipants}
+            required
             hint={capacity > 0 ? `Max ${capacity} for ${facilityName}` : undefined}
             error={visibleError('expectedParticipants')}
           >
@@ -248,6 +263,7 @@ export function DetailsStep({
               onChange={(event) => set('expectedParticipants', event.target.value)}
               onBlur={() => markTouched('expectedParticipants')}
               placeholder="e.g. 150"
+              className={cn(reservationControlClass, visibleError('expectedParticipants') && reservationInvalidControlClass)}
               aria-invalid={Boolean(visibleError('expectedParticipants'))}
               aria-describedby={
                 visibleError('expectedParticipants')
@@ -261,12 +277,14 @@ export function DetailsStep({
             label="Purpose"
             htmlFor={RESERVATION_FIELD_IDS.purpose}
             className="sm:col-span-2"
+            required
             hint={`${details.purpose.length}/${PURPOSE_MAX}`}
             error={visibleError('purpose')}
           >
             <Textarea
               id={RESERVATION_FIELD_IDS.purpose}
               rows={2}
+              className={cn(`${reservationTextareaClass} min-h-28`, visibleError('purpose') && reservationInvalidControlClass)}
               maxLength={PURPOSE_MAX}
               value={details.purpose}
               onChange={(event) => set('purpose', event.target.value)}
@@ -279,13 +297,19 @@ export function DetailsStep({
             />
           </Field>
 
+          <div className="sm:col-span-2 border-t border-slate-200 pt-5">
+            <h3 className="text-sm font-semibold text-ink">Contact information</h3>
+            <p className="mt-1 text-xs text-muted">Who SAS should contact about this reservation.</p>
+          </div>
+
           <div className="sm:col-span-2">
             {editingContact ? (
-              <div className="rounded-xl border border-line bg-soft/60 p-3.5">
-                <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+                <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
                   <Field
                     label="Contact name"
                     htmlFor={RESERVATION_FIELD_IDS.contactName}
+                    required
                     error={visibleError('contactName')}
                   >
                     <Input
@@ -294,6 +318,7 @@ export function DetailsStep({
                       onChange={(event) => onContactChange({ ...contact, name: event.target.value })}
                       onBlur={() => markTouched('contactName')}
                       placeholder="e.g. Juan Dela Cruz"
+                      className={cn(reservationControlClass, visibleError('contactName') && reservationInvalidControlClass)}
                       aria-invalid={Boolean(visibleError('contactName'))}
                       aria-describedby={
                         visibleError('contactName')
@@ -305,6 +330,7 @@ export function DetailsStep({
                   <Field
                     label="Contact phone"
                     htmlFor={RESERVATION_FIELD_IDS.contactPhone}
+                    required
                     hint="PH mobile: 09XXXXXXXXX or +639XXXXXXXXX"
                     error={visibleError('contactPhone')}
                   >
@@ -316,6 +342,7 @@ export function DetailsStep({
                       onChange={(event) => onContactChange({ ...contact, phone: event.target.value })}
                       onBlur={() => markTouched('contactPhone')}
                       placeholder="e.g. 09171234567"
+                      className={cn(reservationControlClass, visibleError('contactPhone') && reservationInvalidControlClass)}
                       aria-invalid={Boolean(visibleError('contactPhone'))}
                       aria-describedby={
                         visibleError('contactPhone')
@@ -357,8 +384,8 @@ export function DetailsStep({
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-soft/60 px-3.5 py-2.5">
-                <p className="min-w-0 truncate text-sm text-body">
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-4 py-3">
+                <p className="min-w-0 break-words text-sm text-body">
                   <span className="font-medium text-ink">Contact:</span> {contact.name} ·{' '}
                   {contact.phone}
                 </p>
@@ -381,10 +408,12 @@ export function DetailsStep({
             label="Notes for SAS staff (Optional)"
             htmlFor="event-staff-notes"
             className="sm:col-span-2"
+            hint="Optional details about setup, access, or special requirements."
           >
             <Textarea
               id="event-staff-notes"
               rows={2}
+              className={`${reservationTextareaClass} min-h-24`}
               value={details.staffNotes}
               onChange={(event) => set('staffNotes', event.target.value)}
               placeholder="Special setup, accessibility needs, or anything else we should know."
@@ -395,7 +424,7 @@ export function DetailsStep({
               label="Event Approval Letter"
               htmlFor="event-approval-letter"
               className="sm:col-span-2"
-              hint="Upload an image of your official event approval letter or authorization document. This document is required before your reservation can be approved. Optional during submission; you can provide it later. JPG, JPEG, PNG, or WEBP, up to 5 MB."
+              hint="Optional when submitting. The signed letter is required before approval. JPG, JPEG, PNG, or WEBP; maximum 5 MB."
               error={approvalLetterError || undefined}
             >
               <ApprovalLetterCapture
@@ -407,13 +436,12 @@ export function DetailsStep({
             </Field>
           )}
         </div>
-      </Card>
+        </section>
 
-      <>
-        <Card className="mt-5" padding="md">
-          <div className="flex items-start justify-between gap-4">
+        <section aria-labelledby="suggested-resources-heading" className="mt-7 border-t border-slate-200 pt-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h3 className="text-[17px] font-semibold text-ink">Suggested resources</h3>
+              <h3 id="suggested-resources-heading" className="text-base font-semibold text-ink">Suggested resources</h3>
               <p className="mt-1 text-sm text-body">
                 Suggestions use your event details, this facility&apos;s equipment, and availability
                 for the selected date and time. Add only what you need.
@@ -422,17 +450,17 @@ export function DetailsStep({
             <Sparkles className="mt-1 size-4 shrink-0 text-brand" aria-hidden />
           </div>
           {suggestionsLoading ? (
-            <div className="mt-4 h-16 animate-pulse rounded-xl bg-soft" role="status" aria-label="Checking equipment availability" />
+            <div className="mt-4 h-16 animate-pulse rounded-lg bg-slate-100" role="status" aria-label="Checking equipment availability" />
           ) : suggestionsError ? (
-            <p role="alert" className="mt-4 rounded-xl border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-status-pending">
+            <p role="alert" className="mt-4 rounded-lg border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-status-pending">
               Recommendations and availability could not be checked. Try changing the schedule or continue with the equipment list.
             </p>
           ) : suggestions.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">No matching available equipment was found for these event details and this schedule.</p>
+            <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-body">No matching available equipment was found for these event details and this schedule.</p>
           ) : (
             <ul className="mt-4 divide-y divide-line">
               {suggestions.map((suggestion) => (
-                <li key={suggestion.equipmentId} className="flex flex-wrap items-center gap-3 py-3">
+                <li key={suggestion.equipmentId} className="flex flex-wrap items-center gap-3 py-4">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-ink">
                       {suggestion.name} — {suggestion.quantity} × {suggestion.unit}
@@ -441,11 +469,11 @@ export function DetailsStep({
                       {suggestion.reason} · {suggestion.available} available for this schedule
                     </p>
                   </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button type="button" size="sm" onClick={() => onToggleSuggestion(suggestion.equipmentId, suggestion.quantity, suggestion.available)}>
+                  <div className="flex w-full shrink-0 gap-2 sm:w-auto">
+                    <Button type="button" size="md" className="flex-1 sm:flex-none" onClick={() => onToggleSuggestion(suggestion.equipmentId, suggestion.quantity, suggestion.available)}>
                       Add
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => onIgnoreSuggestion(suggestion.equipmentId)}>
+                    <Button type="button" size="md" variant="outline" className="flex-1 sm:flex-none" onClick={() => onIgnoreSuggestion(suggestion.equipmentId)}>
                       Ignore
                     </Button>
                   </div>
@@ -453,13 +481,12 @@ export function DetailsStep({
               ))}
             </ul>
           )}
-        </Card>
-      </>
+        </section>
 
-      <Card className="mt-5" padding="md">
+      <section aria-labelledby="other-equipment-heading" className="mt-7 border-t border-slate-200 pt-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-[17px] font-semibold text-ink">Other equipment</h3>
+            <h3 id="other-equipment-heading" className="text-base font-semibold text-ink">Other equipment</h3>
             <p className="mt-1 text-sm text-body">
               Add anything the suggestions above missed. Quantities are limited by what is free for
               your date and time.
@@ -468,7 +495,8 @@ export function DetailsStep({
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            size="md"
+            className="w-full sm:w-auto"
             onClick={() => setShowPicker((open) => !open)}
             icon={<Plus className={cn('size-4 transition-transform', showPicker && 'rotate-45')} />}
             aria-expanded={showPicker}
@@ -479,24 +507,34 @@ export function DetailsStep({
         </div>
 
         {!showPicker && selectedExtras.length > 0 && (
-          <ul className="mt-4 divide-y divide-line">
-            {selectedExtras.map((item) => (
-              <li key={item.id} className="flex items-center gap-3 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-ink">{item.name}</p>
-                  <p className="text-xs text-muted">
-                    {item.availability.available} of {item.total_quantity} units available
-                  </p>
-                </div>
-                <QuantityStepper
-                  value={items[item.id] ?? 0}
-                  max={item.availability.available}
-                  label={item.name}
-                  onChange={(next) => onQuantity(item.id, next, item.availability.available)}
-                />
-              </li>
-            ))}
-          </ul>
+          <div className="mt-5">
+            <h4 className="text-sm font-medium text-ink">Selected equipment</h4>
+            <ul className="mt-2 divide-y divide-slate-200 border-y border-slate-200">
+              {selectedExtras.map((item) => (
+                <li key={item.id} className="flex flex-wrap items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink">{item.name}</p>
+                    <p className="text-xs text-muted">
+                      {item.availability.available} of {item.total_quantity} {item.unit}{item.total_quantity === 1 ? '' : 's'} available
+                    </p>
+                    {operatorConfig?.[item.id]?.fee && Number(operatorConfig[item.id].fee) > 0 &&
+                      (operatorSelections?.[item.id] || operatorConfig[item.id].required) && (
+                        <p className="mt-1 text-xs text-body">
+                          Operator service: {formatCurrency(operatorConfig[item.id].fee)}
+                          {operatorConfig[item.id].required ? ' · required' : ''}
+                        </p>
+                      )}
+                  </div>
+                  <QuantityStepper
+                    value={items[item.id] ?? 0}
+                    max={item.availability.available}
+                    label={item.name}
+                    onChange={(next) => onQuantity(item.id, next, item.availability.available)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {showPicker && (
@@ -519,6 +557,7 @@ export function DetailsStep({
             Operator/service fees are shown with each resource that offers one.
           </p>
         )}
+      </section>
       </Card>
     </section>
   )

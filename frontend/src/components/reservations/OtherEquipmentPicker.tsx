@@ -80,15 +80,15 @@ export function OtherEquipmentPicker({
                 <div
                   key={item.id}
                   className={cn(
-                    'rounded-xl border border-line bg-surface p-4 transition-colors',
-                    requested > 0 && 'border-brand/40 bg-brand-soft/40',
+                    'rounded-lg border border-slate-200 bg-white p-3 transition-colors sm:p-4',
+                    requested > 0 && 'border-brand/40 bg-brand-soft/30',
                   )}
                 >
-                  <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:gap-4">
                     <button
                       type="button"
                       onClick={() => setViewingItem(item)}
-                      className="group relative shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                      className="group relative shrink-0 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                       aria-label={`View image of ${item.name}`}
                       title="Click to view image"
                     >
@@ -108,14 +108,14 @@ export function OtherEquipmentPicker({
                     <button
                       type="button"
                       onClick={() => setViewingItem(item)}
-                      className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                      className="min-w-[calc(100%-3.5rem)] flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 sm:min-w-0"
                       aria-label={`View details of ${item.name}`}
                     >
                       <p className="truncate text-sm font-medium text-ink group-hover:text-brand">
                         {item.name}
                       </p>
                       <p className="mt-0.5 text-xs text-body">
-                        {available} of {item.total_quantity} units available
+                        {available} of {item.total_quantity} {item.unit}{item.total_quantity === 1 ? '' : 's'} available
                         {item.availability.status !== 'AVAILABLE' &&
                           item.availability.status !== 'PARTIAL' && (
                             <span className="text-status-rejected"> · unavailable now</span>
@@ -133,7 +133,7 @@ export function OtherEquipmentPicker({
                     />
                   </div>
                   {operatorConfig?.[item.id]?.available && (
-                    <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line/70 pt-3 text-xs text-body">
+                    <label className="mt-3 flex min-h-10 cursor-pointer items-center gap-2 border-t border-slate-200 pt-3 text-sm text-body">
                       <input
                         type="checkbox"
                         className="size-3.5 accent-[var(--color-brand)]"

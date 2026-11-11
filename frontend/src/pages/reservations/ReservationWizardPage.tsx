@@ -68,6 +68,11 @@ import type {
 } from '@/lib/types'
 import type { PublicReservationSubmission } from '@/lib/api'
 
+const reservationControlClass =
+  '!h-11 !rounded-md !border-slate-300 !bg-white !text-slate-900 placeholder:!text-slate-400 hover:!border-slate-400 focus:!border-brand focus:!ring-4 focus:!ring-brand/10'
+const reservationInvalidControlClass =
+  '!border-status-rejected focus:!border-status-rejected focus:!ring-status-rejected/10'
+
 /**
  * Shared reservation flow with organization-specific intake and requester steps.
  *
@@ -1120,7 +1125,7 @@ export function ReservationWizardPage() {
                   value={editOTPCode}
                   onChange={(event) => setEditOTPCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
                   placeholder="000000"
-                  className="text-center font-mono text-xl tracking-[0.45em]"
+                  className={`${reservationControlClass} text-center font-mono text-xl tracking-[0.45em]`}
                   disabled={editOTPLoading || secondsLeft === 0}
                 />
               </Field>
@@ -1172,7 +1177,7 @@ export function ReservationWizardPage() {
   const otherEquipment = equipment.filter((item) => !suggestedIds.has(item.id))
 
   return (
-    <div className="mx-auto max-w-5xl pb-[calc(5rem_+_env(safe-area-inset-bottom))] lg:pb-0">
+    <div className="mx-auto w-full max-w-5xl pb-[calc(5rem_+_env(safe-area-inset-bottom))] lg:pb-0">
       <Link
         to={publicEditReference
           ? `/track-reservation?reservation_id=${encodeURIComponent(publicEditReference)}`
@@ -1183,8 +1188,8 @@ export function ReservationWizardPage() {
         {publicEditReference ? 'Back to tracking' : publicFlow ? 'Change organization type' : isEditing ? 'Back to reservation' : 'Back to reservations'}
       </Link>
 
-      <div className="mt-4">
-        <h1 className="text-[32px] font-semibold tracking-tight text-ink">
+      <div className="mt-5">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-[30px]">
           {isEditing
             ? 'Edit reservation'
             : isRebook
@@ -1248,7 +1253,7 @@ export function ReservationWizardPage() {
         </div>
       )}
 
-      <div className="mt-8">
+      <div className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-4 sm:px-5">
         <Stepper
           steps={steps}
           current={step}
@@ -1263,7 +1268,7 @@ export function ReservationWizardPage() {
         />
       </div>
 
-      <div className="mt-8">
+      <div className="mt-6">
         {stepKey === 'requester' && publicFlow && (
           <PublicOrganizationStep
             requesterType={requesterType}
@@ -1431,7 +1436,7 @@ export function ReservationWizardPage() {
       <div
         ref={wizardActionBarRef}
         className={cn(
-          'fixed inset-x-0 z-20 mt-0 border-t border-line bg-soft px-4 py-4 sm:px-6 lg:sticky lg:inset-x-auto lg:z-10 lg:mt-6 lg:bottom-0 lg:-mx-10 lg:px-10',
+          'fixed inset-x-0 z-20 mt-0 border-t border-slate-200 bg-white px-4 py-3.5 sm:px-6 lg:sticky lg:inset-x-auto lg:z-10 lg:mt-6 lg:bottom-0 lg:-mx-10 lg:px-10',
           publicFlow
             ? 'bottom-[calc(env(safe-area-inset-bottom)_+_var(--wizard-keyboard-inset,0px))]'
             : 'bottom-[calc(4rem_+_env(safe-area-inset-bottom)_+_var(--wizard-keyboard-inset,0px))]',
@@ -1461,6 +1466,7 @@ export function ReservationWizardPage() {
           <div className="flex items-center justify-between gap-3">
             <Button
               variant="outline"
+              className="min-h-11 min-w-28"
               onClick={goBack}
               disabled={createReservation.isPending || editOTPLoading}
             >
@@ -1469,6 +1475,7 @@ export function ReservationWizardPage() {
             {step < steps.length - 1 ? (
               <div className="flex flex-col items-end gap-1">
                 <Button
+                  className="min-h-11 min-w-32"
                   onClick={goNext}
                   disabled={!canContinue}
                   title={continueBlockedReason}
@@ -1484,6 +1491,7 @@ export function ReservationWizardPage() {
               </div>
             ) : (
               <Button
+                className="min-h-11 min-w-36"
                 onClick={submit}
                 loading={createReservation.isPending || editOTPLoading}
                 disabled={
@@ -1560,14 +1568,14 @@ function PublicOrganizationStep({
   showErrors: boolean
 }) {
   return (
-    <section aria-label="Organization information" className="mx-auto max-w-3xl">
+    <section aria-label="Organization information" className="mx-auto w-full max-w-5xl">
       <h2 className="text-lg font-semibold text-ink">
         {requesterType === 'EXTERNAL' ? 'External organization details' : 'Internal organization details'}
       </h2>
       <p className="mt-1 text-sm text-body">
         Add the organization and contact email for this reservation request.
       </p>
-      <Card className="mt-5 grid gap-4 p-5 sm:grid-cols-2">
+      <Card className="mt-5 !rounded-xl !border-slate-200 !shadow-none grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
         {requesterType === 'EXTERNAL' ? (
           <Field label="Organization name" htmlFor="public-organization">
             <Input
@@ -1577,6 +1585,7 @@ function PublicOrganizationStep({
               maxLength={120}
               autoComplete="organization"
               required
+              className={cn(reservationControlClass, showErrors && !organization.trim() && reservationInvalidControlClass)}
               aria-invalid={showErrors && !organization.trim()}
             />
           </Field>
@@ -1594,6 +1603,7 @@ function PublicOrganizationStep({
               id="public-organization-type"
               value={organizationType}
               onChange={(event) => onChange('organization_type', event.target.value)}
+              className={reservationControlClass}
               required
             >
               {ORGANIZATION_TYPE_OPTIONS.map(([value, label]) => (
@@ -1610,6 +1620,10 @@ function PublicOrganizationStep({
             onChange={(event) => onChange('contact_email', event.target.value)}
             maxLength={254}
             autoComplete="email"
+            className={cn(
+              reservationControlClass,
+              showErrors && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && reservationInvalidControlClass,
+            )}
             required
             aria-invalid={showErrors && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())}
           />
@@ -1663,6 +1677,7 @@ function InternalOrganizationSelect({
             onChange('organization', selected?.organization_name ?? '')
           }}
           required
+          className={cn(reservationControlClass, showErrors && !organizationId && reservationInvalidControlClass)}
           disabled={isLoading || isError}
           aria-invalid={showErrors && !organizationId}
         >
@@ -1752,7 +1767,7 @@ export function AdminOrganizationRequesterStep({
     : externalRows.filter((organization) => organization.is_active && !organization.is_internal)
 
   return (
-    <section aria-label="Who is this reservation for?">
+    <section aria-label="Who is this reservation for?" className="mx-auto w-full max-w-5xl">
       <h2 className="text-lg font-semibold text-ink">Who is this reservation for?</h2>
       <p className="mt-1 text-sm text-body">
         Select the organization requesting this reservation. You can create reservations on behalf of internal or external organizations.
@@ -1764,8 +1779,8 @@ export function AdminOrganizationRequesterStep({
           onClick={() => onRequesterType('CAMPUS')}
           aria-pressed={requesterType === 'CAMPUS'}
           className={cn(
-            'card text-left transition-shadow',
-            requesterType === 'CAMPUS' && 'ring-2 ring-brand ring-offset-2',
+            'rounded-lg border bg-white text-left transition-colors',
+            requesterType === 'CAMPUS' ? 'border-brand ring-2 ring-brand/15' : 'border-slate-200 hover:border-slate-300',
           )}
         >
           <div className="flex items-start gap-3 p-4">
@@ -1785,8 +1800,8 @@ export function AdminOrganizationRequesterStep({
           onClick={() => onRequesterType('EXTERNAL')}
           aria-pressed={requesterType === 'EXTERNAL'}
           className={cn(
-            'card text-left transition-shadow',
-            requesterType === 'EXTERNAL' && 'ring-2 ring-brand ring-offset-2',
+            'rounded-lg border bg-white text-left transition-colors',
+            requesterType === 'EXTERNAL' ? 'border-brand ring-2 ring-brand/15' : 'border-slate-200 hover:border-slate-300',
           )}
         >
           <div className="flex items-start gap-3 p-4">
@@ -1803,7 +1818,7 @@ export function AdminOrganizationRequesterStep({
         </button>
       </div>
 
-      <Card className="mt-5">
+      <Card className="mt-5 !rounded-xl !border-slate-200 !shadow-none">
         <CardHeader
           title={requesterType === 'CAMPUS' ? 'Search internal organizations' : 'Search external organizations'}
           description={requesterType === 'CAMPUS'
@@ -1817,7 +1832,7 @@ export function AdminOrganizationRequesterStep({
             value={search}
             onChange={(event) => onSearch(event.target.value)}
             placeholder="Search organization name or acronym…"
-            className="pl-9"
+            className={`${reservationControlClass} pl-9`}
             aria-label={requesterType === 'CAMPUS' ? 'Search internal organizations' : 'Search external organizations'}
           />
         </div>
