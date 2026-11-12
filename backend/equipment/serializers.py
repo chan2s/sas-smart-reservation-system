@@ -116,6 +116,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
         decimal_places=2,
         min_value=Decimal("0.00"),
         default=Decimal("0.00"),
+        read_only=True,
     )
 
     class Meta:
@@ -144,7 +145,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("availability", "has_history")
+        read_only_fields = ("availability", "has_history", "price")
 
     def get_images(self, obj):
         """The gallery, ordered by the model's ordering.
@@ -216,6 +217,15 @@ class EquipmentSerializer(serializers.ModelSerializer):
                 attrs["is_active"] = self.instance.is_active
             else:
                 attrs["is_active"] = True
+        active = attrs.get("is_active", self.instance.is_active if self.instance else True)
+        name = attrs.get("name", self.instance.name if self.instance else "").strip()
+        if active and name.casefold() not in {"led wall", "sound system", "plastic chairs"}:
+            raise serializers.ValidationError({"name": "Only LED Wall, Sound System, and Plastic Chairs are in the official rental catalog."})
+        category = attrs.get("category", self.instance.category if self.instance else None)
+        if active and category and (
+            category.name.casefold() != name.casefold() or not category.is_active
+        ):
+            raise serializers.ValidationError({"category_id": "Use the matching active category from the official equipment catalog."})
         return attrs
 
     def validate_total_quantity(self, value):
@@ -432,6 +442,12 @@ class FacilityResourceWriteSerializer(serializers.ModelSerializer):
         # Suppress DRF's generic unique-together message; ``validate`` below
         # explains exactly which item is already assigned to which facility.
         validators = []
+        read_only_fields = (
+            "additional_fee",
+            "operator_available",
+            "operator_required",
+            "operator_fee",
+        )
 
     def validate(self, attrs):
         facility = attrs.get("facility") or getattr(self.instance, "facility", None)

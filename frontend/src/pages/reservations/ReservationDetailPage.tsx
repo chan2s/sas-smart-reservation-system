@@ -520,7 +520,7 @@ export function ReservationDetailPage() {
           </Card>
 
           {/* Estimated cost — snapshotted external-organization fees. */}
-          {reservation.requester_type === 'EXTERNAL' && (
+          {reservation.requester_type === 'EXTERNAL' ? (
             <Card>
               <CardHeader
                 title="Estimated cost"
@@ -562,6 +562,15 @@ export function ReservationDetailPage() {
                   </div>
                 </div>
               )}
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader
+                title="Internal Reservation — No Payment Required"
+                description="All official rental charges and applicable fees are waived for this internal reservation."
+              />
+              <p className="mt-4 text-xl font-semibold tabular-nums text-ink">PHP 0.00</p>
+              <p className="mt-1 text-sm text-muted">No payment obligation or balance is due.</p>
             </Card>
           )}
 

@@ -1061,6 +1061,11 @@ export function ReservationWizardPage() {
               </Link>.
             </p>
           )}
+          {submitted.requester_type === 'CAMPUS' && (
+            <p role="status" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-available/25 bg-status-available-bg p-4 text-left text-sm leading-6 text-status-available">
+              Internal Reservation — No Payment Required. Your final payable amount is PHP 0.00.
+            </p>
+          )}
 
           <dl className="mt-6 divide-y divide-line rounded-xl border border-line bg-soft/60 px-5 text-left">
             <ConfirmationRow label="Reservation ID" value={submitted.reservation_id} />

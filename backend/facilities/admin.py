@@ -1,4 +1,6 @@
 from django.contrib import admin, messages
+from django import forms
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
@@ -40,6 +42,23 @@ class FacilityResourceInline(admin.TabularInline):
     )
 
 
+class OfficialFacilityAdminForm(forms.ModelForm):
+    class Meta:
+        model = Facility
+        fields = "__all__"
+
+    def clean(self):
+        values = super().clean()
+        if values.get("is_active", True):
+            expected_type = {
+                "gymnasium": Facility.FacilityType.GYMNASIUM,
+                "dorm cafeteria": Facility.FacilityType.CAFETERIA,
+            }.get((values.get("name") or "").strip().casefold())
+            if expected_type is None or values.get("facility_type") != expected_type:
+                raise ValidationError("Only Gymnasium and Dorm Cafeteria can be active in the official catalog.")
+        return values
+
+
 class FacilityImageInline(admin.TabularInline):
     """Multiple images per facility, edited right on the Facility page.
 
@@ -55,6 +74,7 @@ class FacilityImageInline(admin.TabularInline):
 
 @admin.register(Facility)
 class FacilityAdmin(admin.ModelAdmin):
+    form = OfficialFacilityAdminForm
     list_display = (
         "name",
         "facility_type",

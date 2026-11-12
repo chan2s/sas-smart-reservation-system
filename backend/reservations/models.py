@@ -149,7 +149,7 @@ class RecommendationRule(models.Model):
 
 
 class PricingRule(models.Model):
-    """A staff-editable rate applied to EXTERNAL organization reservations only.
+    """One staff-editable official rental rate for the unified catalog.
 
     Prices used to be invisible to the codebase; keeping them here means the
     SAS Office can change a rate in Django admin without touching any source
@@ -167,8 +167,8 @@ class PricingRule(models.Model):
       ``flat`` for the whole reservation by default (₱500 service pay), and
       ``hour`` per event hour when a per-hour operator rate is configured.
 
-    These rules never apply to internal campus requesters; the pricing
-    service decides that from the trusted ``Reservation.requester_type``.
+    The pricing service uses the same rates for internal and external
+    reservations; only the payment treatment differs by trusted requester type.
     """
 
     class FeeType(models.TextChoices):
@@ -176,6 +176,12 @@ class PricingRule(models.Model):
         OVERTIME = "OVERTIME", "Overtime fee"
         EQUIPMENT = "EQUIPMENT", "Equipment fee"
         OPERATOR = "OPERATOR", "Operator fee"
+        ENVIRONMENTAL = "ENVIRONMENTAL", "Environmental fee"
+
+    class RentalPeriod(models.TextChoices):
+        WHOLE_DAY = "WHOLE_DAY", "Whole day"
+        HALF_DAY = "HALF_DAY", "Half day"
+        PER_HOUR = "PER_HOUR", "Per hour"
 
     class Unit(models.TextChoices):
         FLAT = "flat", "Flat per reservation"
@@ -222,6 +228,12 @@ class PricingRule(models.Model):
             "for the standard 8:00 AM–5:00 PM facility day."
         ),
     )
+    rental_period = models.CharField(
+        max_length=16,
+        choices=RentalPeriod.choices,
+        blank=True,
+        help_text="Facility rental period covered by this official rate.",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -265,6 +277,7 @@ class ReservationFee(models.Model):
         OVERTIME = "OVERTIME", "Overtime"
         EQUIPMENT = "EQUIPMENT", "Equipment"
         OPERATOR = "OPERATOR", "Operator"
+        ENVIRONMENTAL = "ENVIRONMENTAL", "Environmental"
 
     reservation = models.ForeignKey(
         "Reservation", on_delete=models.CASCADE, related_name="fees"

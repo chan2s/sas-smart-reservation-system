@@ -72,7 +72,7 @@ def facility_has_resources(facility_id) -> bool:
     if not facility_id:
         return False
     return FacilityResource.objects.filter(
-        facility_id=facility_id, is_active=True
+        facility_id=facility_id, is_active=True, equipment__is_active=True
     ).exists()
 
 
@@ -85,7 +85,7 @@ def facility_resource_equipment_ids(facility_id) -> set:
     if not facility_id:
         return set()
     return set(
-        FacilityResource.objects.filter(facility_id=facility_id, is_active=True)
+        FacilityResource.objects.filter(facility_id=facility_id, is_active=True, equipment__is_active=True)
         .values_list("equipment_id", flat=True)
     )
 
@@ -99,7 +99,7 @@ def facility_resource_limits(facility_id) -> dict:
     if not facility_id:
         return {}
     rows = FacilityResource.objects.filter(
-        facility_id=facility_id, is_active=True
+        facility_id=facility_id, is_active=True, equipment__is_active=True
     ).select_related("equipment")
     limits = {}
     for row in rows:

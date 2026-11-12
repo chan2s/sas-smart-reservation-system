@@ -8,6 +8,7 @@ class EquipmentCategory(models.Model):
     name = models.CharField(max_length=80, unique=True)
     icon = models.CharField(max_length=40, blank=True)  # lucide icon key used by the frontend
     description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["name"]
@@ -59,18 +60,15 @@ class Equipment(models.Model):
     )
     storage_location = models.CharField(max_length=120, blank=True)
     asset_code = models.CharField(max_length=60, blank=True)
-    #: Per-unit price configured by the SAS Office in the equipment manager.
-    #: This is the primary source for reservation equipment pricing; ``0``
-    #: falls back to the per-category ``PricingRule`` (legacy behaviour), and
-    #: a facility's own ``FacilityResource.additional_fee`` still overrides
-    #: both for that facility. Never negative (see the model constraint).
+    #: Legacy per-item value retained for historical records. Current rental
+    #: prices are managed centrally through reservations.PricingRule.
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         default=Decimal("0.00"),
         help_text=(
-            "Per-unit price used when pricing reservations. "
-            "0 = use the configured per-category rate (no item override)."
+            "Legacy item price retained for historical records. Manage current "
+            "rental rates in the unified pricing configuration."
         ),
     )
     image = models.ImageField(upload_to="equipment/", blank=True, null=True)

@@ -53,7 +53,7 @@ class EquipmentCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     any authenticated or anonymous caller — only writes (never exposed here)
     would require staff.
     """
-    queryset = EquipmentCategory.objects.all()
+    queryset = EquipmentCategory.objects.filter(is_active=True)
     serializer_class = EquipmentCategorySerializer
     pagination_class = None
     permission_classes = [AllowAny]

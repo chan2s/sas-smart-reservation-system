@@ -203,6 +203,7 @@ class PricingRuleAdmin(admin.ModelAdmin):
         "display_label_admin",
         "facility_type",
         "equipment_category",
+        "rental_period",
         "unit",
         "unit_price",
         "is_active",
@@ -215,14 +216,11 @@ class PricingRuleAdmin(admin.ModelAdmin):
         (
             "What is charged",
             {
-                "fields": ("fee_type", "label", "unit_price", "unit", "included_hours"),
+                "fields": ("fee_type", "label", "rental_period", "unit_price", "unit", "included_hours"),
                 "description": (
-                    "Rates apply to EXTERNAL organization reservations only. "
-                    "Internal campus requesters are always free. A facility "
-                    "fee is a flat base price; ``included hours`` is how many "
-                    "hours that flat fee covers (9 = the standard 8:00 AM–"
-                    "5:00 PM day). An overtime fee is charged per hour beyond "
-                    "that base."
+                    "One official rate table applies to every reservation. "
+                    "External reservations pay these rates; internal reservations "
+                    "use them as reference values and receive full waivers."
                 ),
             },
         ),
@@ -231,11 +229,8 @@ class PricingRuleAdmin(admin.ModelAdmin):
             {
                 "fields": ("facility_type", "equipment_category"),
                 "description": (
-                    "Facility and overtime fees match a facility type. "
-                    "Equipment and operator fees match an equipment category; "
-                    "an operator fee is a flat service charge (or per event "
-                    "hour when configured as 'hour') whenever that category "
-                    "is part of the reservation."
+                    "Facility rates match facility type and rental period. "
+                    "Equipment and operator rates match the unified equipment category."
                 ),
             },
         ),

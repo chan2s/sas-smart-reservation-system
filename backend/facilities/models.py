@@ -4,7 +4,7 @@ from django.db import models
 class Facility(models.Model):
     class FacilityType(models.TextChoices):
         GYMNASIUM = "GYMNASIUM", "Gymnasium"
-        CAFETERIA = "CAFETERIA", "Cafeteria"
+        CAFETERIA = "CAFETERIA", "Dorm Cafeteria"
         AVR = "AVR", "Audio-Visual Room"
         MULTI_PURPOSE = "MULTI_PURPOSE", "Multi-Purpose Hall"
         OUTDOOR = "OUTDOOR", "Outdoor Area"

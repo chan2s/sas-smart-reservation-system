@@ -538,7 +538,7 @@ def public_availability_check(request):
     def quote(date_value, start_value, end_value):
         return quote_to_dict(quote_fees(
             requester_type, facility=facility, items=data.get("items", []),
-            start_time=start_value, end_time=end_value,
+            start_time=start_value, end_time=end_value, target_date=date_value,
         ))
     report["pricing"] = quote(target_date, start, end)
     report["alternatives"] = find_alternatives(
@@ -640,6 +640,7 @@ def public_reservation_submit(request):
         "start_time": reservation.start_time,
         "end_time": reservation.end_time,
         "requester": reservation.organization or reservation.contact_person,
+        "requester_type": reservation.requester_type,
         "approval_document_status": reservation.approval_document_status,
         "approval_document_status_label": reservation.get_approval_document_status_display(),
     }, status=status.HTTP_201_CREATED)
@@ -1588,6 +1589,7 @@ def availability_check(request):
             items=data.get("items", []),
             start_time=start,
             end_time=end,
+            target_date=target_date,
         )
         return quote_to_dict(quote)
 

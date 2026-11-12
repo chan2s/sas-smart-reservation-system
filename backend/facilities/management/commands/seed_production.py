@@ -29,7 +29,7 @@ FACILITIES = [
         "is_active": True,
     },
     {
-        "name": "Cafeteria",
+        "name": "Dorm Cafeteria",
         "facility_type": Facility.FacilityType.CAFETERIA,
         "description": (
             "The campus cafeteria serves as an open event space during "
@@ -49,72 +49,11 @@ FACILITIES = [
         "status": Facility.Status.OPERATIONAL,
         "is_active": True,
     },
-    {
-        "name": "Audio-Visual Room",
-        "facility_type": Facility.FacilityType.AVR,
-        "description": (
-            "A fully equipped presentation room with a 4K projector, "
-            "surround sound, and flexible seating. Ideal for seminars, "
-            "workshops, and accreditation-related activities."
-        ),
-        "capacity": 120,
-        "location": "Academic Building, 2nd Floor",
-        "rules": [
-            "Only SAS-trained operators may handle the projector system",
-            "Keep the room dimmed when using the projector",
-            "Report any equipment malfunction immediately",
-        ],
-        "seating_type": None,
-        "built_in_seats": None,
-        "built_ins": [],
-        "status": Facility.Status.OPERATIONAL,
-        "is_active": True,
-    },
-    {
-        "name": "Repro AVR",
-        "facility_type": Facility.FacilityType.AVR,
-        "description": "",
-        "capacity": 50,
-        "location": "",
-        "rules": [],
-        "seating_type": None,
-        "built_in_seats": None,
-        "built_ins": [],
-        "status": Facility.Status.OPERATIONAL,
-        "is_active": True,
-    },
 ]
 EQUIPMENT_CATEGORIES = [
-    {
-        "name": "Chairs",
-        "icon": "armchair",
-        "description": "",
-    },
-    {
-        "name": "Microphones",
-        "icon": "mic",
-        "description": "",
-    },
-    {
-        "name": "Other Equipment",
-        "icon": "package",
-        "description": "",
-    },
-    {
-        "name": "Projectors",
-        "icon": "projector",
-        "description": "",
-    },
-    {
-        "name": "Sound Systems",
-        "icon": "volume-2",
-        "description": "",
-    },
-    {
-        "name": "Tables",
-        "icon": "table",
-        "description": "",
-    },
+    {"name": "LED Wall", "icon": "monitor", "description": ""},
+    {"name": "Sound System", "icon": "volume-2", "description": ""},
+    {"name": "Plastic Chairs", "icon": "armchair", "description": ""},
 ]
 
 class Command(BaseCommand):
@@ -132,6 +71,9 @@ class Command(BaseCommand):
                     "description": data["description"],
                 },
             )
+            if not category.is_active:
+                category.is_active = True
+                category.save(update_fields=["is_active"])
 
         if created:
             self.stdout.write(
@@ -145,6 +87,9 @@ class Command(BaseCommand):
         self.stdout.write("Seeding facilities...")
 
         facilities = {}
+
+        Facility.objects.exclude(name__in=[item["name"] for item in FACILITIES]).update(is_active=False)
+        EquipmentCategory.objects.exclude(name__in=[item["name"] for item in EQUIPMENT_CATEGORIES]).update(is_active=False)
 
         for data in FACILITIES:
             name = data["name"]

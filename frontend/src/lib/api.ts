@@ -625,6 +625,7 @@ export interface PublicReservationSubmission {
   start_time: string
   end_time: string
   requester: string
+  requester_type: 'CAMPUS' | 'EXTERNAL'
   approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
   approval_document_status_label: string
 }

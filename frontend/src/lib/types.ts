@@ -525,7 +525,7 @@ export interface ReservationFee {
  * of truth for every amount.
  */
 export interface PricingFeeLine {
-  fee_type: 'FACILITY' | 'OVERTIME' | 'EQUIPMENT' | 'OPERATOR'
+  fee_type: 'FACILITY' | 'OVERTIME' | 'EQUIPMENT' | 'OPERATOR' | 'ENVIRONMENTAL'
   fee_type_label: string
   description: string
   quantity: string
@@ -536,6 +536,10 @@ export interface PricingFeeLine {
   equipment_category_id?: number | null
   /** The selected item's configured counting unit (EQUIPMENT lines only). */
   equipment_unit?: string | null
+  waived?: boolean
+  waiver_reason?: string
+  rental_period?: 'WHOLE_DAY' | 'HALF_DAY' | 'PER_HOUR' | ''
+  period_label?: string
 }
 
 /**
@@ -559,6 +563,7 @@ export interface PricingQuote {
   equipment_subtotal: string
   fees: PricingFeeLine[]
   total: string
+  reference_total: string
   /** Human note clarifying that the amount is an estimate until approval. */
   note: string
 }
@@ -750,11 +755,13 @@ export interface Recommendation {
   reason: string // why this quantity, e.g. "1 chair per participant"
   calculation: string // exact arithmetic, e.g. "ceil(29 / 10) = 3"
   warning: string | null // only when the rule quantity exceeds stock
-  /** Per-unit external rate for this item, or null when no rate applies. */
+  /** Official configured rate for this item, or null when unpriced. */
   unit_price?: string | null
-  /** Estimated cost of the recommended quantity, e.g. "500.00". */
+  /** Payable estimate for the requester type (zero for internal reservations). */
   estimated_cost?: string
-  /** True when an external-organization rate covers this item. */
+  /** Official reference value for the recommended quantity. */
+  reference_cost?: string
+  /** True when this item is chargeable for the requester type. */
   fee_applies?: boolean
 }
 

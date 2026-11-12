@@ -1,39 +1,19 @@
-"""External-organization pricing engine.
+"""Official reservation quote and payment treatment.
 
-This is the single source of truth for what an EXTERNAL organization is
-charged. It is deliberately *not* a standalone billing feature: the smart
+This is the single source of truth for the official rental values. It is
+deliberately *not* a standalone billing feature: the smart
 recommendation engine calls into it to estimate cost, and reservation
 creation calls into it to snapshot the final amount. It never trusts a
 client-supplied total.
 
-Rules live in the ``PricingRule`` table (staff-editable in Django admin), so
-rates can change without touching source code:
+Official rates live in the staff-editable ``PricingRule`` table. Facility
+rates use whole-day, half-day, and hourly periods. Equipment rates use the
+approved equipment categories, and environmental/operator fees use the same
+table. The booking date and time determine operator applicability.
 
-* ``FACILITY``  — flat fee per reservation, matched on the facility *type*
-  (e.g. Gymnasium ₱5,000, Cafeteria ₱5,000). A facility type with no rule is
-  free (e.g. AVR = ₱0). The ₱5,000 is a *fixed base fee* covering the first
-  ``included_hours`` hours (the standard 8:00 AM–5:00 PM window = 9 hours);
-  it is never treated as an hourly rate.
-* ``OVERTIME``  — per-hour fee matched on the facility *type*, charged only
-  for the hours beyond the matching facility rule's ``included_hours``
-  (e.g. ₱300 per hour past the 9-hour base period).
-* ``EQUIPMENT`` — per-unit fee matched on the equipment *category*
-  (e.g. chairs ₱5 each, sound system ₱1,000 each). This is the *legacy*
-  fallback: the primary source for equipment pricing is each item's own
-  ``Equipment.price``, configured per item in the equipment manager. A
-  facility's ``FacilityResource.additional_fee`` overrides both for that
-  facility.
-* ``OPERATOR``  — fee triggered when a matching equipment category is part of
-  the reservation (e.g. a sound system needs its operator). Charged ``flat``
-  for the whole reservation by default (₱500 service pay); a rule configured
-  as ``hour`` is charged per event hour instead. Operator time always comes
-  from the reservation's own ``end_time - start_time`` — never the current
-  time.
-
-Pricing only ever applies to ``Reservation.RequesterType.EXTERNAL``. Internal
-campus requesters (students, faculty, employees, campus organizations)
-remain free; ``quote_fees`` returns an empty breakdown for them regardless of
-what the caller passes in.
+External reservations pay the official total. Internal campus reservations
+receive the same itemized reference quote with every line waived and a payable
+total of zero. Their waived lines are never persisted as fee obligations.
 """
 
 from __future__ import annotations
@@ -160,7 +140,7 @@ def _resolve_items(items) -> list[tuple[Equipment, int, bool | None]]:
         equipment = item.get("equipment")
         if equipment is None and item.get("equipment_id"):
             equipment = (
-                Equipment.objects.filter(pk=item["equipment_id"])
+                Equipment.objects.filter(pk=item["equipment_id"], is_active=True)
                 .select_related("category")
                 .first()
             )
@@ -189,6 +169,7 @@ def quote_fees(
     items=None,
     start_time=None,
     end_time=None,
+    target_date=None,
 ) -> dict:
     """Compute the applicable external-organization fees for a reservation.
 
@@ -210,7 +191,8 @@ def quote_fees(
     ``quote_to_dict`` adds an ``equipment_subtotal`` (sum of the EQUIPMENT
     lines) for the client breakdown.
 
-    Internal requesters always get an empty, zero-total quote.
+    Internal requesters receive the same official reference fees, marked
+    waived, with a zero payable total.
     """
     currency = CURRENCY
     external = is_external(requester_type)
@@ -226,9 +208,6 @@ def quote_fees(
         "fees": [],
         "total": Decimal("0.00"),
     }
-    if not external:
-        return base
-
     fees: list[dict] = []
 
     # Facility flat fee ------------------------------------------------------
@@ -239,37 +218,41 @@ def quote_fees(
     if facility_rule is not None:
         included_hours = money(facility_rule.included_hours)
         price = money(facility_rule.unit_price)
+        # Official rental periods are selected from the scheduled duration.
+        # The period rates themselves remain staff managed in PricingRule.
+        if duration >= Decimal("8.00"):
+            period = "WHOLE_DAY"
+            period_label = "Whole day"
+        elif duration >= Decimal("4.00"):
+            period = "HALF_DAY"
+            period_label = "Half day"
+        else:
+            period = "PER_HOUR"
+            period_label = "Per hour"
+        period_rule = PricingRule.objects.filter(
+            is_active=True,
+            fee_type=PricingRule.FeeType.FACILITY,
+            facility_type=facility.facility_type,
+            rental_period=period,
+        ).order_by("id").first()
+        if period_rule is not None:
+            facility_rule = period_rule
+            price = money(period_rule.unit_price)
+        facility_quantity = duration if period == "PER_HOUR" else Decimal("1.00")
+        facility_subtotal = money(price * facility_quantity)
         fees.append(
             {
                 "fee_type": PricingRule.FeeType.FACILITY,
                 "description": facility_rule.display_label,
                 "quantity": Decimal("1.00"),
-                "unit": PricingRule.Unit.FLAT,
+                "unit": PricingRule.Unit.HOUR if period == "PER_HOUR" else PricingRule.Unit.FLAT,
                 "unit_price": price,
-                "subtotal": price,
+                "quantity": facility_quantity,
+                "subtotal": facility_subtotal,
+                "rental_period": period,
+                "period_label": period_label,
             }
         )
-
-    # Overtime ---------------------------------------------------------------
-    # Only the hours beyond the inclusive base period are charged, at the
-    # facility's overtime rate. 9 hours or less is always ₱0 overtime.
-    overtime_hours = Decimal("0.00")
-    if facility_rule is not None:
-        overtime_rule = _overtime_rule(facility)
-        excess_hours = max(Decimal("0.00"), duration - included_hours)
-        if overtime_rule is not None and excess_hours > 0:
-            overtime_hours = excess_hours
-            unit_price = money(overtime_rule.unit_price)
-            fees.append(
-                {
-                    "fee_type": PricingRule.FeeType.OVERTIME,
-                    "description": overtime_rule.display_label,
-                    "quantity": overtime_hours,
-                    "unit": PricingRule.Unit.HOUR,
-                    "unit_price": unit_price,
-                    "subtotal": money(unit_price * overtime_hours),
-                }
-            )
 
     # Equipment + operator fees ---------------------------------------------
     # Unit prices resolve in priority order:
@@ -287,6 +270,32 @@ def quote_fees(
     operator_triggers: dict[int, PricingRule] = {}
     for equipment, quantity, operator_requested in _resolve_items(items):
         category_id = equipment.category_id
+        normalized_name = equipment.name.strip().casefold()
+        if normalized_name in {"led wall", "sound system", "plastic chairs"}:
+            if normalized_name == "led wall":
+                equipment_period = "WHOLE_DAY" if duration >= Decimal("8") else "HALF_DAY"
+                official_rule = PricingRule.objects.filter(
+                    is_active=True,
+                    fee_type=PricingRule.FeeType.EQUIPMENT,
+                    equipment_category_id=equipment.category_id,
+                    rental_period=equipment_period,
+                ).order_by("id").first()
+            else:
+                official_rule = equipment_rules.get(category_id)
+            official_equipment_price = money(official_rule.unit_price) if official_rule else Decimal("0.00")
+            line_quantity = quantity if normalized_name == "plastic chairs" else 1
+            fees.append({
+                "fee_type": PricingRule.FeeType.EQUIPMENT,
+                "description": equipment.name,
+                "quantity": money(quantity),
+                "unit": PricingRule.Unit.FLAT if normalized_name == "led wall" else PricingRule.Unit.UNIT,
+                "unit_price": official_equipment_price,
+                "subtotal": money(official_equipment_price * line_quantity),
+                "equipment_id": equipment.id,
+                "equipment_category_id": category_id,
+                "equipment_unit": equipment.unit,
+            })
+            continue
         resource = facility_resources.get(equipment.id)
         rule = equipment_rules.get(category_id)
         # The equipment item's own price — the primary per-item rate.
@@ -332,6 +341,7 @@ def quote_fees(
             if (
                 (resource.operator_required or operator_requested is True)
                 and operator_fee > 0
+                and external
             ):
                 fees.append(
                     {
@@ -381,10 +391,15 @@ def quote_fees(
         if category_id in operator_rules and operator_requested is not False:
             operator_triggers.setdefault(category_id, operator_rules[category_id])
 
+
     # Operator fee only applies when a triggering resource (e.g. a sound
     # system) is present. A ``flat`` operator rate is a single service charge
     # for the reservation; an ``hour`` rate scales with the event duration.
-    for category_id, rule in operator_triggers.items():
+    operator_time_applies = bool(
+        target_date
+        and (target_date.weekday() >= 5 or (end_time and end_time > time_cls(17, 0)))
+    )
+    for category_id, rule in (operator_triggers.items() if external and operator_time_applies else []):
         unit_price = money(rule.unit_price)
         charge_per_hour = (rule.unit or PricingRule.Unit.UNIT) == PricingRule.Unit.HOUR
         if charge_per_hour:
@@ -407,11 +422,46 @@ def quote_fees(
             }
         )
 
-    total = money(sum((line["subtotal"] for line in fees), Decimal("0.00")))
+    environmental_rule = PricingRule.objects.filter(
+        is_active=True, fee_type=PricingRule.FeeType.ENVIRONMENTAL
+    ).order_by("id").first()
+    environmental_price = money(environmental_rule.unit_price) if environmental_rule else Decimal("500.00")
+    fees.append({
+        "fee_type": PricingRule.FeeType.ENVIRONMENTAL,
+        "description": "Environmental Fee",
+        "quantity": Decimal("1.00"),
+        "unit": PricingRule.Unit.FLAT,
+        "unit_price": environmental_price,
+        "subtotal": environmental_price,
+    })
+    if operator_time_applies:
+        operator_rules_by_category = _rules_by_category(PricingRule.FeeType.OPERATOR)
+        selected_equipment = _resolve_items(items)
+        for equipment_name, label in (("led wall", "LED Wall Operator"), ("sound system", "Sound System Operator")):
+            matching = next((equipment for equipment, _, _ in selected_equipment if equipment.name.strip().casefold() == equipment_name), None)
+            operator_rule = operator_rules_by_category.get(matching.category_id) if matching else None
+            if matching and operator_rule:
+                operator_price = money(operator_rule.unit_price)
+                fees.append({
+                    "fee_type": PricingRule.FeeType.OPERATOR,
+                    "description": label,
+                    "quantity": Decimal("1.00"),
+                    "unit": PricingRule.Unit.FLAT,
+                    "unit_price": operator_price,
+                    "subtotal": operator_price,
+                })
+    if not external:
+        for line in fees:
+            line["waived"] = True
+            line["waiver_reason"] = "Internal Reservation — No Payment Required"
+
+    reference_total = money(sum((line["subtotal"] for line in fees), Decimal("0.00")))
+    total = reference_total if external else Decimal("0.00")
+    base["reference_total"] = reference_total
     base["fees"] = fees
-    base["total"] = total
+    base["total"] = total if external else Decimal("0.00")
     base["included_hours"] = included_hours
-    base["overtime_hours"] = overtime_hours
+    base["overtime_hours"] = Decimal("0.00")
     return base
 
 
@@ -442,6 +492,10 @@ def fee_line_to_dict(line: dict) -> dict:
         "equipment_category_id": line.get("equipment_category_id"),
         # Counting unit of the selected equipment item (EQUIPMENT lines only).
         "equipment_unit": line.get("equipment_unit"),
+        "waived": line.get("waived", False),
+        "waiver_reason": line.get("waiver_reason", ""),
+        "rental_period": line.get("rental_period", ""),
+        "period_label": line.get("period_label", ""),
     }
 
 
@@ -471,11 +525,12 @@ def quote_to_dict(quote: dict) -> dict:
         "equipment_subtotal": f"{equipment_subtotal:.2f}",
         "fees": [fee_line_to_dict(line) for line in quote["fees"]],
         "total": f"{money(quote['total']):.2f}",
+        "reference_total": f"{money(quote.get('reference_total', quote['total'])):.2f}",
         "note": (
             "Estimated external organization fee. The SAS Office confirms the "
             "final amount when the reservation is approved."
             if quote["external"]
-            else "No external organization fees apply to internal campus requesters."
+            else "Internal Reservation — No Payment Required. Official charges are waived."
         ),
     }
 
@@ -496,6 +551,7 @@ def calculate_for_reservation(reservation) -> dict:
         items=items,
         start_time=reservation.start_time,
         end_time=reservation.end_time,
+        target_date=reservation.date,
     )
 
 
@@ -523,7 +579,7 @@ def snapshot_reservation_fees(reservation) -> Decimal:
             subtotal=line["subtotal"],
         )
         for line in quote["fees"]
-    ]
+    ] if is_external(reservation.requester_type) else []
     with transaction.atomic():
         reservation.fees.all().delete()
         if rows:
@@ -557,6 +613,7 @@ def rates_payload() -> list[dict]:
             "unit": rule.unit,
             "unit_label": rule.get_unit_display(),
             "unit_price": f"{money(rule.unit_price):.2f}",
+            "rental_period": rule.rental_period,
         }
         for rule in rules
     ]

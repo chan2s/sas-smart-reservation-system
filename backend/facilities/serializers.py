@@ -227,6 +227,10 @@ class FacilitySerializer(serializers.ModelSerializer):
         name = (value or "").strip()
         if not name:
             raise serializers.ValidationError("Facility name is required.")
+        if name.casefold() not in {"gymnasium", "dorm cafeteria"}:
+            raise serializers.ValidationError(
+                "Only Gymnasium and Dorm Cafeteria are in the official rental catalog."
+            )
         existing = Facility.objects.filter(name__iexact=name)
         if self.instance is not None:
             existing = existing.exclude(pk=self.instance.pk)
@@ -240,6 +244,22 @@ class FacilitySerializer(serializers.ModelSerializer):
         if value is not None and value < 0:
             raise serializers.ValidationError("Capacity cannot be negative.")
         return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        name = attrs.get("name", self.instance.name if self.instance else "")
+        facility_type = attrs.get(
+            "facility_type", self.instance.facility_type if self.instance else None
+        )
+        expected = {
+            "gymnasium": Facility.FacilityType.GYMNASIUM,
+            "dorm cafeteria": Facility.FacilityType.CAFETERIA,
+        }.get(name.strip().casefold())
+        if expected and facility_type != expected:
+            raise serializers.ValidationError(
+                {"facility_type": "Facility type must match the official catalog entry."}
+            )
+        return attrs
 
     def get_has_history(self, obj):
         """True when the facility has reservations and must be archived."""

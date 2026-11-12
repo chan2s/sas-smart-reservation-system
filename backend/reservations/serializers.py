@@ -771,27 +771,44 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             requester_type = attrs.get("requester_type", Reservation.RequesterType.CAMPUS)
             attrs["requester_type"] = requester_type
             organization_id = attrs.pop("organization_id", None)
-            if (
-                organization_id is not None
-                and requester_type != Reservation.RequesterType.EXTERNAL
-            ):
-                # Internal selections send the id; the registered record is the
-                # source of truth, so the client-sent name is never trusted.
+            if requester_type == Reservation.RequesterType.CAMPUS:
+                # Internal public submissions must resolve to a registered
+                # internal organization. The display name and type are never
+                # trusted from the submitted form.
                 organization = Organization.objects.filter(
                     pk=organization_id,
                     organization_type=Organization.OrganizationType.INTERNAL,
                     is_active=True,
-                ).first()
+                ).first() if organization_id is not None else None
                 if organization is None:
                     raise serializers.ValidationError(
-                        {
-                            "organization_id": (
-                                "Select a registered, active college, office, or unit."
-                            )
-                        }
+                        {"organization_id": "Select a registered, active college, office, or unit for an internal reservation."}
                     )
                 attrs["_organization_ref"] = organization
                 attrs["organization"] = organization.organization_name
+            elif organization_id is not None:
+                organization = Organization.objects.filter(
+                    pk=organization_id,
+                    organization_type__in=[
+                        Organization.OrganizationType.GOVERNMENT_AGENCY,
+                        Organization.OrganizationType.NGO,
+                        Organization.OrganizationType.PRIVATE_ORGANIZATION,
+                        Organization.OrganizationType.COMMUNITY_ORGANIZATION,
+                        Organization.OrganizationType.SCHOOL_UNIVERSITY,
+                        Organization.OrganizationType.OTHER,
+                    ],
+                    verification_status=Organization.VerificationStatus.APPROVED,
+                    is_active=True,
+                ).first()
+                if organization is None:
+                    raise serializers.ValidationError(
+                        {"organization_id": "Select an active, approved external organization."}
+                    )
+                attrs["_organization_ref"] = organization
+                attrs["organization"] = organization.organization_name
+                attrs["organization_type"] = Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
+                    organization.organization_type, Reservation.OrganizationType.OTHER
+                )
             if not (attrs.get("organization") or "").strip():
                 raise serializers.ValidationError({"organization": "Organization name is required."})
             if not (attrs.get("contact_person") or "").strip():

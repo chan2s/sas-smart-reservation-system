@@ -55,7 +55,7 @@ FACILITIES = [
         ],
     },
     {
-        "name": "Cafeteria",
+        "name": "Dorm Cafeteria",
         "facility_type": Facility.FacilityType.CAFETERIA,
         "description": (
             "The campus cafeteria serves as an open event space during "
@@ -75,55 +75,12 @@ FACILITIES = [
             "Waste segregation is strictly enforced",
         ],
     },
-    {
-        "name": "Audio-Visual Room",
-        "facility_type": Facility.FacilityType.AVR,
-        "description": (
-            "A fully equipped presentation room with a 4K projector, surround "
-            "sound, and flexible seating. Ideal for seminars, workshops, and "
-            "accreditation-related activities."
-        ),
-        "capacity": 120,
-        "location": "Academic Building, 2nd Floor",
-        # Its own movable chairs seat the full capacity; the 4K projector and
-        # surround sound are built in (never suggested, shown as "included").
-        # Microphones are NOT built in, so they stay suggestible.
-        "seating_type": Facility.SeatingType.TABLES_AND_CHAIRS,
-        "built_in_seats": 120,
-        "built_ins": ["projector", "sound_system"],
-        "rules": [
-            "Only SAS-trained operators may handle the projector system",
-            "Keep the room dimmed when using the projector",
-            "Report any equipment malfunction immediately",
-        ],
-    },
 ]
 
 EQUIPMENT = [
-    ("Sound Systems", "volume-2", [
-        {"name": "Portable Sound System", "total": 4, "location": "SAS Equipment Room A", "unit": "set", "asset_code": "SAS-AUD-001"},
-        {"name": "Stage Sound System", "total": 2, "location": "SAS Equipment Room A", "unit": "set", "asset_code": "SAS-AUD-002"},
-    ]),
-    ("Microphones", "mic", [
-        {"name": "Wireless Microphone", "total": 8, "location": "SAS Equipment Room A", "unit": "unit", "asset_code": "SAS-MIC-001"},
-        {"name": "Wired Microphone", "total": 6, "location": "SAS Equipment Room A", "unit": "unit", "asset_code": "SAS-MIC-002"},
-    ]),
-    ("Projectors", "projector", [
-        {"name": "Portable Projector", "total": 3, "location": "SAS Equipment Room B", "unit": "unit", "asset_code": "SAS-PRJ-001"},
-        {"name": "Projector Screen", "total": 4, "location": "SAS Equipment Room B", "unit": "unit", "asset_code": "SAS-PRJ-002"},
-    ]),
-    ("Tables", "table", [
-        {"name": "Folding Table (6 ft)", "total": 40, "location": "SAS Storage", "unit": "unit", "asset_code": "SAS-FUR-001"},
-        {"name": "Round Table", "total": 20, "location": "SAS Storage", "unit": "unit", "asset_code": "SAS-FUR-002"},
-    ]),
-    ("Chairs", "armchair", [
-        {"name": "Folding Chair", "total": 200, "location": "SAS Storage", "unit": "unit", "asset_code": "SAS-FUR-003"},
-        {"name": "Stackable Chair", "total": 100, "location": "SAS Storage", "unit": "unit", "asset_code": "SAS-FUR-004"},
-    ]),
-    ("Other Equipment", "package", [
-        {"name": "Extension Cord (50 ft)", "total": 10, "location": "SAS Equipment Room B", "unit": "unit", "asset_code": "SAS-ELE-001"},
-        {"name": "Event Signage Stand", "total": 6, "location": "SAS Storage", "unit": "unit", "asset_code": "SAS-OTH-001"},
-    ]),
+    ("LED Wall", "monitor", [{"name": "LED Wall", "total": 1, "location": "", "unit": "unit", "asset_code": ""}]),
+    ("Sound System", "volume-2", [{"name": "Sound System", "total": 6, "location": "", "unit": "set", "asset_code": ""}]),
+    ("Plastic Chairs", "armchair", [{"name": "Plastic Chairs", "total": 300, "location": "", "unit": "piece", "asset_code": ""}]),
 ]
 
 
@@ -213,6 +170,7 @@ class Command(BaseCommand):
             self.stdout.write("  + requester (Requester)")
 
     def seed_facilities(self):
+        Facility.objects.exclude(name__in=[row["name"] for row in FACILITIES]).update(is_active=False)
         for index, data in enumerate(FACILITIES):
             facility, created = Facility.objects.get_or_create(
                 name=data["name"],
@@ -227,6 +185,9 @@ class Command(BaseCommand):
                     "built_ins": data.get("built_ins", []),
                 },
             )
+            if not facility.is_active:
+                facility.is_active = True
+                facility.save(update_fields=["is_active", "updated_at"])
             if created:
                 self.stdout.write(f"  + Facility: {facility.name}")
             elif self._backfill_seating_metadata(facility, data):
@@ -264,10 +225,14 @@ class Command(BaseCommand):
         return True
 
     def seed_equipment(self):
+        Equipment.objects.update(is_active=False)
+        EquipmentCategory.objects.update(is_active=False)
         for category_name, icon, items in EQUIPMENT:
             category, created = EquipmentCategory.objects.get_or_create(
                 name=category_name, defaults={"icon": icon}
             )
+            category.is_active = True
+            category.save(update_fields=["is_active"])
             if created:
                 self.stdout.write(f"  + Category: {category_name}")
             for item in items:
@@ -281,153 +246,102 @@ class Command(BaseCommand):
                         "asset_code": item.get("asset_code", ""),
                     },
                 )
+                if not eq.is_active:
+                    eq.is_active = True
+                    eq.save(update_fields=["is_active"])
+                if eq.total_quantity == 0 and item["total"] > 0:
+                    eq.total_quantity = item["total"]
+                    eq.save(update_fields=["total_quantity", "updated_at"])
                 if created:
                     self.stdout.write(f"    + {eq.name} ({eq.total_quantity})")
 
     def seed_facility_resources(self):
-        """Assign resources/equipment to the facilities that actually use them.
-
-        This is the reference data behind the reservation form's facility →
-        resource filtering. Assignments mirror the real SAS inventory:
-
-        * Gymnasium — sound systems, microphones, chairs, tables.
-        * Audio-Visual Room — projector, sound system, microphones, chairs.
-        * Cafeteria — tables, chairs, sound system.
-
-        Sound systems carry the ₱500 operator service (opt-in by default).
-        Resources have no additional per-unit fee (chairs/tables are free), and
-        the facility's own facility/overtime fees still apply on top.
-        """
-        OPERATOR_FEE = "500.00"
-        assignments = {
-            "Gymnasium": [
-                ("Portable Sound System", True),
-                ("Stage Sound System", True),
-                ("Wireless Microphone", False),
-                ("Wired Microphone", False),
-                ("Folding Chair", False),
-                ("Stackable Chair", False),
-                ("Folding Table (6 ft)", False),
-                ("Round Table", False),
-            ],
-            "Audio-Visual Room": [
-                ("Portable Projector", False),
-                ("Projector Screen", False),
-                ("Portable Sound System", True),
-                ("Wireless Microphone", False),
-                ("Folding Chair", False),
-                ("Stackable Chair", False),
-            ],
-            "Cafeteria": [
-                ("Folding Table (6 ft)", False),
-                ("Round Table", False),
-                ("Folding Chair", False),
-                ("Stackable Chair", False),
-                ("Portable Sound System", True),
-            ],
-        }
-
-        for facility_name, resources in assignments.items():
-            facility = Facility.objects.filter(name=facility_name).first()
-            if facility is None:
-                continue
-            for equipment_name, has_operator in resources:
-                equipment = Equipment.objects.filter(name=equipment_name).first()
-                if equipment is None:
-                    continue
-                _, created = FacilityResource.objects.get_or_create(
+        """Expose the same official equipment catalog at both official spaces."""
+        for facility in Facility.objects.filter(name__in=["Gymnasium", "Dorm Cafeteria"], is_active=True):
+            for equipment in Equipment.objects.filter(is_active=True):
+                FacilityResource.objects.update_or_create(
                     facility=facility,
                     equipment=equipment,
                     defaults={
+                        "is_active": True,
                         "additional_fee": "0.00",
-                        "operator_available": has_operator,
+                        "operator_available": False,
                         "operator_required": False,
-                        "operator_fee": OPERATOR_FEE if has_operator else "0.00",
+                        "operator_fee": "0.00",
                     },
                 )
-                if created:
-                    self.stdout.write(
-                        f"  + {facility.name} resource: {equipment.name}"
-                    )
 
     def seed_pricing(self):
-        """Default external-organization rates (staff-editable in admin).
-
-        Idempotent: ``get_or_create`` keyed on the fee target, so re-running
-        seed never duplicates a rate or overwrites a price staff have changed.
-        """
-        # Facility base rates: ₱5,000 flat for the standard 9-hour day
-        # (8:00 AM–5:00 PM). ``included_hours`` records the hours the flat fee
-        # covers; anything beyond it is billed as overtime below.
-        facilities = [
-            (Facility.FacilityType.GYMNASIUM, "Gymnasium", "5000.00"),
-            (Facility.FacilityType.CAFETERIA, "Cafeteria", "5000.00"),
-        ]
-        for facility_type, label, price in facilities:
-            rule, created = PricingRule.objects.get_or_create(
-                fee_type=PricingRule.FeeType.FACILITY,
-                facility_type=facility_type,
-                defaults={
-                    "label": label,
-                    "unit": PricingRule.Unit.FLAT,
-                    "unit_price": price,
-                    "included_hours": 9,
-                },
-            )
-            if created:
-                self.stdout.write(f"  + Pricing: {label} ₱{price} / {9}h")
-            elif not rule.included_hours:
-                rule.included_hours = 9
-                rule.save(update_fields=["included_hours"])
-
-        # Overtime: ₱300 for every hour past the facility's 9-hour base period.
-        for facility_type, label in (
-            (Facility.FacilityType.GYMNASIUM, "Gymnasium Overtime"),
-            (Facility.FacilityType.CAFETERIA, "Cafeteria Overtime"),
-        ):
-            _, created = PricingRule.objects.get_or_create(
-                fee_type=PricingRule.FeeType.OVERTIME,
-                facility_type=facility_type,
-                defaults={
-                    "label": label,
-                    "unit": PricingRule.Unit.HOUR,
-                    "unit_price": "300.00",
-                    "included_hours": 9,
-                },
-            )
-            if created:
-                self.stdout.write(f"  + Pricing: {label} ₱300.00/hour")
-
-        equipment_rates = [
-            ("Chairs", "Chairs", "5.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
-            ("Sound Systems", "Sound System", "1000.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
-            # Sound-system operator service pay: ₱500 flat for the reservation.
-            ("Sound Systems", "Sound System Operator", "500.00", PricingRule.Unit.FLAT, PricingRule.FeeType.OPERATOR),
-        ]
-        for category_name, label, price, unit, fee_type in equipment_rates:
-            category = EquipmentCategory.objects.filter(name=category_name).first()
-            if category is None:
-                continue
-            _, created = PricingRule.objects.get_or_create(
+        """Seed the single official rate configuration."""
+        PricingRule.objects.all().update(is_active=False)
+        facilities = (
+            (Facility.FacilityType.GYMNASIUM, "Gymnasium"),
+            (Facility.FacilityType.CAFETERIA, "Dorm Cafeteria"),
+        )
+        periods = (
+            ("WHOLE_DAY", "5000.00", PricingRule.Unit.FLAT),
+            ("HALF_DAY", "2500.00", PricingRule.Unit.FLAT),
+            ("PER_HOUR", "650.00", PricingRule.Unit.HOUR),
+        )
+        for facility_type, label in facilities:
+            for period, price, unit in periods:
+                PricingRule.objects.update_or_create(
+                    fee_type=PricingRule.FeeType.FACILITY,
+                    facility_type=facility_type,
+                    equipment_category=None,
+                    rental_period=period,
+                    defaults={
+                        "label": label,
+                        "unit": unit,
+                        "unit_price": price,
+                        "included_hours": 0,
+                        "is_active": True,
+                    },
+                )
+        rates = (
+            ("LED Wall", "WHOLE_DAY", "15000.00", PricingRule.Unit.FLAT, PricingRule.FeeType.EQUIPMENT),
+            ("LED Wall", "HALF_DAY", "7500.00", PricingRule.Unit.FLAT, PricingRule.FeeType.EQUIPMENT),
+            ("Sound System", "", "1000.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
+            ("Plastic Chairs", "", "5.00", PricingRule.Unit.UNIT, PricingRule.FeeType.EQUIPMENT),
+            ("LED Wall", "", "500.00", PricingRule.Unit.FLAT, PricingRule.FeeType.OPERATOR),
+            ("Sound System", "", "500.00", PricingRule.Unit.FLAT, PricingRule.FeeType.OPERATOR),
+        )
+        for name, period, price, unit, fee_type in rates:
+            category = EquipmentCategory.objects.get(name=name)
+            PricingRule.objects.update_or_create(
                 fee_type=fee_type,
+                facility_type="",
                 equipment_category=category,
-                defaults={"label": label, "unit": unit, "unit_price": price},
+                rental_period=period,
+                defaults={
+                    "label": f"{name} Operator" if fee_type == PricingRule.FeeType.OPERATOR else name,
+                    "unit": unit,
+                    "unit_price": price,
+                    "is_active": True,
+                },
             )
-            if created:
-                self.stdout.write(f"  + Pricing: {label} ₱{price}/{unit}")
+        PricingRule.objects.update_or_create(
+            fee_type=PricingRule.FeeType.ENVIRONMENTAL,
+            facility_type="",
+            equipment_category=None,
+            rental_period="",
+            defaults={
+                "label": "Environmental Fee",
+                "unit": PricingRule.Unit.FLAT,
+                "unit_price": "500.00",
+                "is_active": True,
+            },
+        )
 
     def seed_demo_reservations(self):
         """Clearly-labelled demo records for UI preview only."""
         requester = User.objects.get(username="requester")
         staff = User.objects.get(username="staff")
         gym = Facility.objects.get(name="Gymnasium")
-        cafeteria = Facility.objects.get(name="Cafeteria")
-        avr = Facility.objects.get(name="Audio-Visual Room")
-
-        folding_chairs = Equipment.objects.get(name="Folding Chair")
-        folding_tables = Equipment.objects.get(name="Folding Table (6 ft)")
-        wireless_mics = Equipment.objects.get(name="Wireless Microphone")
-        sound = Equipment.objects.get(name="Portable Sound System")
+        cafeteria = Facility.objects.get(name="Dorm Cafeteria")
+        plastic_chairs = Equipment.objects.get(name="Plastic Chairs")
+        led_wall = Equipment.objects.get(name="LED Wall")
+        sound = Equipment.objects.get(name="Sound System")
 
         today = date.today()
         # The first pending demo reservation is created for "today" so the
@@ -441,18 +355,18 @@ class Command(BaseCommand):
                 "end": time(12, 0),
                 "status": Reservation.Status.PENDING,
                 "event_type": Reservation.EventType.SPORTS,
-                "items": [(folding_chairs, 100), (folding_tables, 10), (wireless_mics, 2)],
+                "items": [(plastic_chairs, 100)],
                 "participants": 500,
             },
             {
                 "event_name": "[DEMO] Accreditation Workshop",
-                "facility": avr,
+                "facility": gym,
                 "date": today + timedelta(days=1),
                 "start": time(9, 0),
                 "end": time(17, 0),
                 "status": Reservation.Status.APPROVED,
                 "event_type": Reservation.EventType.ACADEMIC,
-                "items": [(wireless_mics, 4), (sound, 1)],
+                "items": [(led_wall, 1), (sound, 1)],
                 "participants": 80,
             },
             {
@@ -463,7 +377,7 @@ class Command(BaseCommand):
                 "end": time(20, 0),
                 "status": Reservation.Status.APPROVED,
                 "event_type": Reservation.EventType.CULTURAL,
-                "items": [(folding_tables, 15), (folding_chairs, 150)],
+                "items": [(plastic_chairs, 150)],
                 "participants": 300,
             },
         ]

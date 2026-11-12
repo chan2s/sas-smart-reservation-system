@@ -663,6 +663,7 @@ def recommend_resources_with_pricing(
         ],
         start_time=start_time,
         end_time=end_time,
+        target_date=target_date,
     )
 
     equipment_lines = {
@@ -677,9 +678,13 @@ def recommend_resources_with_pricing(
             f"{pricing.money(line['unit_price']):.2f}" if line else None
         )
         item["estimated_cost"] = (
+            f"{pricing.money(line['subtotal']):.2f}"
+            if line and quote["external"] else "0.00"
+        )
+        item["reference_cost"] = (
             f"{pricing.money(line['subtotal']):.2f}" if line else "0.00"
         )
-        item["fee_applies"] = line is not None
+        item["fee_applies"] = line is not None and quote["external"]
 
     return {
         "recommendations": recommendations,

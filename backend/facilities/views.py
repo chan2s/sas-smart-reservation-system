@@ -142,7 +142,9 @@ class FacilityViewSet(viewsets.ModelViewSet):
         """
         facility = self.get_object()
         queryset = (
-            FacilityResource.objects.filter(facility=facility, is_active=True)
+            FacilityResource.objects.filter(
+                facility=facility, is_active=True, equipment__is_active=True
+            )
             .select_related("equipment__category")
             .prefetch_related("equipment__equipment_images")
         )
