@@ -18,6 +18,12 @@ def approval_letter_upload_path(instance, filename):
     return f"approval_letters/requester/{uuid.uuid4().hex}{suffix}"
 
 
+def approval_document_upload_path(instance, filename):
+    """Store generated approval documents in the private media namespace."""
+    suffix = Path(filename).suffix.lower()
+    return f"approval_letters/generated/{instance.reservation_id}/{uuid.uuid4().hex}{suffix}"
+
+
 class RecommendationRule(models.Model):
     """A DB-editable override for the recommendation engine's built-in rules.
 
@@ -357,6 +363,11 @@ class Reservation(models.Model):
         FAILED = "FAILED", "Failed"
         NO_EMAIL = "NO_EMAIL", "No requester email"
 
+    class GeneratedApprovalStatus(models.TextChoices):
+        NOT_STARTED = "NOT_STARTED", "Not generated"
+        GENERATED = "GENERATED", "Generated"
+        FAILED = "FAILED", "Generation failed"
+
     class ApprovalDocumentStatus(models.TextChoices):
         NOT_REQUIRED = "NOT_REQUIRED", "Not required for this reservation"
         AWAITING = "AWAITING", "Awaiting Approval Letter"
@@ -530,6 +541,22 @@ class Reservation(models.Model):
         default=ApprovalEmailStatus.NOT_SENT,
         help_text="Delivery state of the approval notification email (staff diagnostic).",
     )
+    generated_approval_docx = models.FileField(
+        upload_to=approval_document_upload_path, blank=True
+    )
+    generated_approval_pdf = models.FileField(
+        upload_to=approval_document_upload_path, blank=True
+    )
+    generated_approval_status = models.CharField(
+        max_length=16,
+        choices=GeneratedApprovalStatus.choices,
+        default=GeneratedApprovalStatus.NOT_STARTED,
+        db_index=True,
+    )
+    generated_approval_error = models.CharField(max_length=80, blank=True)
+    approval_email_sent_at = models.DateTimeField(null=True, blank=True)
+    approval_email_last_error = models.CharField(max_length=80, blank=True)
+    approval_email_attempts = models.PositiveIntegerField(default=0)
 
     # Automatic three-days-before reminder. ``reminder_sent_at`` is the
     # reliable "already delivered" marker the scheduled task checks and claims

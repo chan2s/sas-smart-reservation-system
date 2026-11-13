@@ -885,6 +885,20 @@ export const endpoints = {
       approval_email_status: string
       approval_email_status_label: string
     }>(`/api/reservations/${id}/retry_approval_email/`, {}),
+  retryApprovalDocument: (id: number) =>
+    api.post<ReservationDetail>(`/api/reservations/${id}/retry_approval_document/`, {}),
+  resendApprovalEmail: (id: number) =>
+    api.post<{
+      detail: string
+      approval_email_status: string
+      approval_email_status_label: string
+      approval_email_sent_at: string | null
+      approval_email_attempts: number
+    }>(`/api/reservations/${id}/resend_approval_email/`, {}),
+  approvalDocument: (id: number, preview = false) =>
+    `/api/reservations/${id}/approval-document/${preview ? '?preview=1' : ''}`,
+  approvalDocumentDocx: (id: number) =>
+    `/api/reservations/${id}/approval-document-docx/`,
   reservationActionForm: (id: number, action: string, form: FormData) =>
     api.postForm<ReservationDetail>(`/api/reservations/${id}/${action}/`, form),
   reservationByCheckinCode: (code: string) =>

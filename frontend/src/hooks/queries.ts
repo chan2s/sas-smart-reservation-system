@@ -546,6 +546,28 @@ export function useRetryApprovalEmail(id: number | null) {
   })
 }
 
+export function useRetryApprovalDocument(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.retryApprovalDocument(id as number),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reservation', id] })
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+    },
+  })
+}
+
+export function useResendApprovalEmail(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => endpoints.resendApprovalEmail(id as number),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reservation', id] })
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+    },
+  })
+}
+
 export function useReservationAction(id: number | null) {
   const queryClient = useQueryClient()
   return useMutation({

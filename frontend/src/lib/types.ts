@@ -684,6 +684,14 @@ export interface ReservationSummary {
   /** Staff-only diagnostic: delivery state of the approval email. */
   approval_email_status: string
   approval_email_status_label: string
+  generated_approval_status: 'NOT_STARTED' | 'GENERATED' | 'FAILED'
+  generated_approval_status_label: string
+  generated_approval_error: string
+  approval_pdf_available: boolean
+  approval_docx_available: boolean
+  approval_email_sent_at: string | null
+  approval_email_attempts: number
+  approval_email_last_error: string
   approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
   approval_document_status_label: string
   created_at: string

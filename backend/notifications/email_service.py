@@ -445,6 +445,61 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
         return False, reason
 
 
+def send_external_reservation_approval(reservation) -> tuple[bool, Optional[str]]:
+    """Send the official external approval notice with its generated PDF."""
+    from reservations.models import Reservation
+
+    if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
+        return False, "not_external"
+    email = resolve_requester_email(reservation)
+    if not email:
+        return False, "no_email"
+    if not reservation.generated_approval_pdf:
+        return False, "pdf_unavailable"
+    try:
+        with reservation.generated_approval_pdf.open("rb") as attachment:
+            pdf = attachment.read()
+        if (
+            not pdf.startswith(b"%PDF-")
+            or len(pdf) < 100
+            or b"%%EOF" not in pdf[-1024:]
+        ):
+            return False, "invalid_pdf"
+        requester_name = (
+            reservation.requester.display_name if reservation.requester_id
+            else reservation.contact_person or reservation.organization or "Requester"
+        )
+        subject = f"Reservation Approved — {reservation.event_name} | SAS RESERVE"
+        body = (
+            f"Dear {requester_name},\n\n"
+            "We are pleased to inform you that your external facility reservation request has been approved by the SAS Office of Negros Oriental State University - Bayawan-Sta. Catalina Campus.\n\n"
+            "Please find your official reservation approval letter attached to this email.\n\n"
+            "The attached document contains your approved reservation details and the required signature sections.\n\n"
+            "Please download and print the document to obtain the necessary signatures.\n\n"
+            "You may also access and download your approval letter directly through your SAS RESERVE account.\n\n"
+            "Thank you for choosing NORSU-BSC.\n\n"
+            "Sincerely,\n\nNORSU-BSC SAS Office\nSAS RESERVE"
+        )
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"),
+            to=[email],
+        )
+        message.attach(
+            f"SAS-RESERVE-APPROVAL-{reservation.reservation_id}.pdf",
+            pdf,
+            "application/pdf",
+        )
+        sent, send_exc = _deliver(message)
+        if sent:
+            return True, None
+        return False, _classify_email_error(send_exc) if send_exc else "delivery_failed"
+    except Exception as exc:
+        logger.exception("External approval email failed for reservation %s.", reservation.reservation_id)
+        return False, _classify_email_error(exc)
+
+
 def send_reservation_revision_request(
     reservation,
     actor,

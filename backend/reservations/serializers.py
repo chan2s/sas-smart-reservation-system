@@ -247,6 +247,16 @@ class ReservationListSerializer(serializers.ModelSerializer):
     approval_email_status_label = serializers.CharField(
         source="get_approval_email_status_display", read_only=True
     )
+    generated_approval_status = serializers.CharField(read_only=True)
+    generated_approval_status_label = serializers.CharField(
+        source="get_generated_approval_status_display", read_only=True
+    )
+    generated_approval_error = serializers.SerializerMethodField()
+    approval_pdf_available = serializers.SerializerMethodField()
+    approval_docx_available = serializers.SerializerMethodField()
+    approval_email_sent_at = serializers.DateTimeField(read_only=True)
+    approval_email_attempts = serializers.IntegerField(read_only=True)
+    approval_email_last_error = serializers.CharField(read_only=True)
     approval_document_status = serializers.CharField(read_only=True)
     approval_document_status_label = serializers.CharField(
         source="get_approval_document_status_display", read_only=True
@@ -302,6 +312,14 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "fees",
             "approval_email_status",
             "approval_email_status_label",
+            "generated_approval_status",
+            "generated_approval_status_label",
+            "generated_approval_error",
+            "approval_pdf_available",
+            "approval_docx_available",
+            "approval_email_sent_at",
+            "approval_email_attempts",
+            "approval_email_last_error",
             "approval_document_status",
             "approval_document_status_label",
             "created_at",
@@ -319,6 +337,26 @@ class ReservationListSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         actor = request.user if request and request.user.is_authenticated else None
         return resolve_requester_email(obj, actor)
+
+    def get_generated_approval_error(self, obj):
+        request = self.context.get("request")
+        return obj.generated_approval_error if request and request.user.is_sas_staff else ""
+
+    def get_approval_pdf_available(self, obj):
+        return bool(
+            obj.generated_approval_status == Reservation.GeneratedApprovalStatus.GENERATED
+            and obj.generated_approval_pdf
+            and obj.generated_approval_pdf.storage.exists(obj.generated_approval_pdf.name)
+        )
+
+    def get_approval_docx_available(self, obj):
+        request = self.context.get("request")
+        return bool(
+            request and request.user.is_sas_staff
+            and obj.generated_approval_status == Reservation.GeneratedApprovalStatus.GENERATED
+            and obj.generated_approval_docx
+            and obj.generated_approval_docx.storage.exists(obj.generated_approval_docx.name)
+        )
 
     def get_created_by_name(self, obj):
         # "Who entered this?" is distinct from "who is it for?".
@@ -411,6 +449,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
         if not is_staff:
             data["approval_email_status"] = ""
             data["approval_email_status_label"] = ""
+            data["approval_email_sent_at"] = None
+            data["approval_email_attempts"] = 0
+            data["approval_email_last_error"] = ""
         return data
 
 

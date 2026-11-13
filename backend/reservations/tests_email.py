@@ -1,11 +1,12 @@
 """Tests for reservation approval email delivery and its staff-visible status."""
 
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.db import transaction
 from django.test import TestCase
+from django.utils import timezone
 
 from facilities.models import Facility, OperatingHour
 from reservations.models import Reservation
@@ -46,7 +47,7 @@ class ApprovalEmailFlowTests(TestCase):
             event_name="Guest Lecture",
             event_type=Reservation.EventType.ACADEMIC,
             facility=self.facility,
-            date=date(2026, 11, 2),
+            date=timezone.localdate() + timedelta(days=14),
             start_time=time(9, 0),
             end_time=time(11, 0),
             status=Reservation.Status.PENDING,
@@ -75,7 +76,10 @@ class ApprovalEmailFlowTests(TestCase):
         self.assertEqual(message.subject, "Reservation Approved - SAS RESERVE")
         self.assertIn(reservation.reservation_id, message.body)
         self.assertIn("Email Test AVR", message.body)
-        self.assertIn("November 2, 2026", message.body)
+        self.assertIn(
+            reservation.date.strftime("%B %d, %Y").replace(" 0", " "),
+            message.body,
+        )
         self.assertIn("9:00 AM", message.body)
         self.assertIn("11:00 AM", message.body)
         self.assertIn("Approved", message.body)
@@ -199,7 +203,9 @@ class ApprovalEmailFlowTests(TestCase):
         self.assertEqual(
             reservation.approval_email_status, Reservation.ApprovalEmailStatus.SENT
         )
-        self.assertEqual(len(mail.outbox), 2)
+        # One approval notice, the change request, and the fresh notice after
+        # the requester resubmits and staff approves again.
+        self.assertEqual(len(mail.outbox), 3)
 
     def test_already_approved_reservation_does_not_send_another_approval_email(self):
         reservation = self.make_reservation()

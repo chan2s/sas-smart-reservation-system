@@ -12,6 +12,7 @@ from accounts.models import AuditLog
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
 from notifications.email_service import (
+    send_external_reservation_approval,
     send_reservation_approved,
     send_reservation_cancelled,
     send_reservation_checkin_reminder,
@@ -122,6 +123,24 @@ def _send_approval_email_after_commit(reservation_id, actor, force=False):
         reservation = Reservation.objects.select_related(
             "requester", "facility", "created_by"
         ).get(pk=reservation_id)
+        if reservation.requester_type == Reservation.RequesterType.EXTERNAL:
+            from reservations.services.approval_documents import generate_approval_documents
+
+            if not resolve_requester_email(reservation, actor):
+                # Track recipient availability independently from document
+                # generation, so a missing contact does not look like a
+                # document-generation or transport failure.
+                resend_approval_email(reservation, actor, force=True)
+
+            try:
+                generate_approval_documents(reservation, force=force)
+            except Exception:
+                # The reservation remains approved. Staff can retry document
+                # generation from its details page; no email is sent yet.
+                return
+            reservation.refresh_from_db()
+            if not resolve_requester_email(reservation, actor):
+                return
         resend_approval_email(reservation, actor, force=force)
     except Exception as exc:  # Delivery bookkeeping must not undo an approval.
         logger.exception(
@@ -194,7 +213,12 @@ def resend_approval_email(reservation, actor, force=False) -> str:
             email = resolve_requester_email(locked, actor)
             if not email:
                 locked.approval_email_status = Reservation.ApprovalEmailStatus.NO_EMAIL
-                locked.save(update_fields=["approval_email_status", "updated_at"])
+                update_fields = ["approval_email_status", "updated_at"]
+                if locked.requester_type == Reservation.RequesterType.EXTERNAL:
+                    locked.approval_email_attempts += 1
+                    locked.approval_email_last_error = "no_email"
+                    update_fields.extend(["approval_email_attempts", "approval_email_last_error"])
+                locked.save(update_fields=update_fields)
                 logger.warning(
                     "Approval email skipped for reservation %s: requester has "
                     "no valid email address.",
@@ -202,6 +226,11 @@ def resend_approval_email(reservation, actor, force=False) -> str:
                 )
                 status = locked.approval_email_status
             else:
+                if (
+                    locked.requester_type == Reservation.RequesterType.EXTERNAL
+                    and not locked.generated_approval_pdf
+                ):
+                    raise ValueError("Generate the external approval PDF before sending its email.")
                 # Dispatch and record the delivery state. A failure must never
                 # undo the approval: the transition has already committed.
                 logger.info(
@@ -210,7 +239,10 @@ def resend_approval_email(reservation, actor, force=False) -> str:
                     _mask_email(email),
                 )
                 try:
-                    ok, reason = send_reservation_approved(locked, actor)
+                    if locked.requester_type == Reservation.RequesterType.EXTERNAL:
+                        ok, reason = send_external_reservation_approval(locked)
+                    else:
+                        ok, reason = send_reservation_approved(locked, actor)
                 except Exception as exc:  # noqa: BLE001 - never undo approval
                     ok, reason = False, type(exc).__name__
                     logger.exception(
@@ -223,7 +255,15 @@ def resend_approval_email(reservation, actor, force=False) -> str:
                     if ok
                     else Reservation.ApprovalEmailStatus.FAILED
                 )
-                locked.save(update_fields=["approval_email_status", "updated_at"])
+                update_fields = ["approval_email_status", "updated_at"]
+                if locked.requester_type == Reservation.RequesterType.EXTERNAL:
+                    locked.approval_email_attempts += 1
+                    locked.approval_email_last_error = "" if ok else (reason or "delivery_failed")
+                    update_fields.extend(["approval_email_attempts", "approval_email_last_error"])
+                    if ok:
+                        locked.approval_email_sent_at = timezone.now()
+                        update_fields.append("approval_email_sent_at")
+                locked.save(update_fields=update_fields)
                 status = locked.approval_email_status
                 if ok:
                     logger.info(
@@ -292,7 +332,12 @@ def auto_approve(reservation, actor, message=""):
         locked.status = Reservation.Status.APPROVED
         locked.approved_by = actor
         locked.approved_at = timezone.now()
-        locked.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        update_fields = ["status", "approved_by", "approved_at", "updated_at"]
+        if locked.requester_type == Reservation.RequesterType.EXTERNAL:
+            locked.approval_email_status = Reservation.ApprovalEmailStatus.NOT_SENT
+            locked.approval_email_last_error = ""
+            update_fields.extend(["approval_email_status", "approval_email_last_error"])
+        locked.save(update_fields=update_fields)
         approved_event = record_event(
             locked,
             ReservationEvent.EventType.APPROVED,
@@ -350,7 +395,12 @@ def approve_reservation(reservation, actor, comment=""):
         locked.status = Reservation.Status.APPROVED
         locked.approved_by = actor
         locked.approved_at = timezone.now()
-        locked.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        update_fields = ["status", "approved_by", "approved_at", "updated_at"]
+        if locked.requester_type == Reservation.RequesterType.EXTERNAL:
+            locked.approval_email_status = Reservation.ApprovalEmailStatus.NOT_SENT
+            locked.approval_email_last_error = ""
+            update_fields.extend(["approval_email_status", "approval_email_last_error"])
+        locked.save(update_fields=update_fields)
         logger.info(
             "Approval transition for reservation %s: %s -> %s (actor id %s).",
             locked.reservation_id,

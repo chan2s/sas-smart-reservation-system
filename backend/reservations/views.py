@@ -987,6 +987,118 @@ class ReservationViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    def retry_approval_document(self, request, pk=None):
+        """Retry external letter generation without changing reservation status."""
+        reservation = self.get_object()
+        if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
+            return Response({"detail": "Approval letters are only generated for external reservations."}, status=400)
+        if reservation.status != Reservation.Status.APPROVED:
+            return Response({"detail": "Only approved reservations can have an approval letter generated."}, status=409)
+        from reservations.services.approval_documents import generate_approval_documents
+        try:
+            generate_approval_documents(reservation, force=True)
+        except Exception:
+            reservation.refresh_from_db()
+            return Response({
+                "detail": "Approval document generation failed.",
+                "generated_approval_status": reservation.generated_approval_status,
+                "generated_approval_error": reservation.generated_approval_error,
+            }, status=500)
+        reservation.refresh_from_db()
+        # Complete the original workflow if generation had failed before the
+        # first email attempt. SENT remains idempotent unless staff explicitly
+        # use the resend action below.
+        if reservation.approval_email_status != Reservation.ApprovalEmailStatus.SENT:
+            workflow.resend_approval_email(reservation, request.user)
+            reservation.refresh_from_db()
+        return Response(ReservationDetailSerializer(reservation, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    def resend_approval_email(self, request, pk=None):
+        """Explicit staff resend; each intentional attempt is recorded."""
+        reservation = self.get_object()
+        if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
+            return Response({"detail": "This email resend action is for external reservations."}, status=400)
+        if reservation.status != Reservation.Status.APPROVED:
+            return Response({"detail": "Only approved reservations can receive this email."}, status=409)
+        from notifications.email_service import resolve_requester_email
+
+        attempt_event = workflow.record_event(
+            reservation,
+            ReservationEvent.EventType.COMMENT,
+            actor=request.user,
+            message="External approval email resend requested.",
+            recipient_email=resolve_requester_email(reservation, request.user),
+        )
+        try:
+            result = workflow.resend_approval_email(reservation, request.user, force=True)
+        except ValueError as exc:
+            attempt_event.message = f"External approval email resend could not run: {str(exc)[:160]}"
+            attempt_event.save(update_fields=["message"])
+            return Response({"detail": str(exc)}, status=409)
+        reservation.refresh_from_db()
+        attempt_event.message = f"External approval email resend completed; result: {result}."
+        attempt_event.save(update_fields=["message"])
+        return Response({
+            "detail": "Approval email sent." if result == Reservation.ApprovalEmailStatus.SENT else "Approval email delivery failed.",
+            "approval_email_status": result,
+            "approval_email_status_label": reservation.get_approval_email_status_display(),
+            "approval_email_sent_at": reservation.approval_email_sent_at,
+            "approval_email_attempts": reservation.approval_email_attempts,
+        })
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="approval-document",
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
+    )
+    def approval_document(self, request, pk=None):
+        """Secure PDF download/preview, scoped by reservation ownership or staff role."""
+        reservation = self.get_object()
+        if (
+            reservation.requester_type != Reservation.RequesterType.EXTERNAL
+            or reservation.status != Reservation.Status.APPROVED
+            or reservation.generated_approval_status != Reservation.GeneratedApprovalStatus.GENERATED
+            or not reservation.generated_approval_pdf
+        ):
+            return Response({"detail": "Approval document is unavailable."}, status=404)
+        filename = f"SAS-RESERVE-APPROVAL-{reservation.reservation_id}.pdf"
+        response = FileResponse(reservation.generated_approval_pdf.open("rb"), content_type="application/pdf")
+        disposition = "inline" if request.query_params.get("preview") == "1" and request.user.is_sas_staff else "attachment"
+        response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="approval-document-docx",
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
+    )
+    def approval_document_docx(self, request, pk=None):
+        reservation = self.get_object()
+        if not request.user.is_sas_staff:
+            return Response({"detail": "Only SAS staff can download the DOCX source."}, status=403)
+        if (
+            reservation.requester_type != Reservation.RequesterType.EXTERNAL
+            or reservation.status != Reservation.Status.APPROVED
+            or reservation.generated_approval_status != Reservation.GeneratedApprovalStatus.GENERATED
+            or not reservation.generated_approval_docx
+        ):
+            return Response({"detail": "Approval document is unavailable."}, status=404)
+        filename = f"SAS-RESERVE-APPROVAL-{reservation.reservation_id}.docx"
+        response = FileResponse(
+            reservation.generated_approval_docx.open("rb"),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def reject(self, request, pk=None):
         reservation = self.get_object()
         try:

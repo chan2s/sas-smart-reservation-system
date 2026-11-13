@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -6,8 +6,12 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock3,
+  Download,
+  Eye,
+  FileText,
   Mail,
   QrCode,
+  RotateCw,
   Upload,
   UserX,
   XCircle,
@@ -17,6 +21,8 @@ import {
   useReservation,
   useReservationAction,
   useRetryApprovalEmail,
+  useRetryApprovalDocument,
+  useResendApprovalEmail,
   useUploadApprovalLetterImage,
 } from '@/hooks/queries'
 import { api, ApiError, endpoints } from '@/lib/api'
@@ -42,6 +48,8 @@ export function ReservationDetailPage() {
   const { data: reservation, isLoading } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
   const retryEmail = useRetryApprovalEmail(reservationId)
+  const retryDocument = useRetryApprovalDocument(reservationId)
+  const resendExternalEmail = useResendApprovalEmail(reservationId)
   const uploadApprovalImage = useUploadApprovalLetterImage(reservationId)
 
   const [modal, setModal] = useState<
@@ -51,6 +59,11 @@ export function ReservationDetailPage() {
   const [revisionSubject, setRevisionSubject] = useState('')
   const [revisionMessage, setRevisionMessage] = useState('')
   const [approvalImageFile, setApprovalImageFile] = useState<File | null>(null)
+  const [approvalPreviewUrl, setApprovalPreviewUrl] = useState<string | null>(null)
+
+  useEffect(() => () => {
+    if (approvalPreviewUrl) URL.revokeObjectURL(approvalPreviewUrl)
+  }, [approvalPreviewUrl])
 
   if (isLoading || !reservation) {
     return (
@@ -192,6 +205,47 @@ export function ReservationDetailPage() {
           'error',
         )
       },
+    })
+  }
+
+  async function downloadApprovalDocument() {
+    const current = reservation
+    if (!current) return
+    try {
+      await api.downloadFile(
+        endpoints.approvalDocument(current.id),
+        `SAS-RESERVE-APPROVAL-${current.reservation_id}.pdf`,
+      )
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : 'Could not download the approval letter.', 'error')
+    }
+  }
+
+  async function toggleApprovalPreview() {
+    const current = reservation
+    if (!current) return
+    if (approvalPreviewUrl) {
+      setApprovalPreviewUrl(null)
+      return
+    }
+    try {
+      setApprovalPreviewUrl(await api.fileUrl(endpoints.approvalDocument(current.id, true)))
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : 'Could not preview the approval letter.', 'error')
+    }
+  }
+
+  function runRetryApprovalDocument() {
+    retryDocument.mutate(undefined, {
+      onSuccess: () => toast('Approval document generated.'),
+      onError: (error) => toast(error instanceof ApiError ? error.message : 'Could not generate the approval document.', 'error'),
+    })
+  }
+
+  function runResendExternalApprovalEmail() {
+    resendExternalEmail.mutate(undefined, {
+      onSuccess: (result) => toast(result.detail, result.approval_email_status === 'SENT' ? 'success' : 'error'),
+      onError: (error) => toast(error instanceof ApiError ? error.message : 'Could not resend the approval email.', 'error'),
     })
   }
 
@@ -760,6 +814,65 @@ export function ReservationDetailPage() {
                   value={`${reservation.approved_by_name} · ${formatDateTime(reservation.approved_at)}`}
                 />
               )}
+              {reservation.requester_type === 'EXTERNAL' && reservation.status === 'APPROVED' && (
+                <DetailItem
+                  label="Approval letter"
+                  wide
+                  value={reservation.approval_pdf_available ? (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isStaff && (
+                          <span className={cn(
+                            'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
+                            reservation.generated_approval_status === 'GENERATED'
+                              ? 'border-status-approved/20 bg-status-approved-bg text-status-approved'
+                              : reservation.generated_approval_status === 'FAILED'
+                                ? 'border-status-rejected/20 bg-status-rejected-bg text-status-rejected'
+                                : 'border-line bg-soft text-muted',
+                          )}>
+                            {reservation.generated_approval_status_label || reservation.generated_approval_status}
+                          </span>
+                        )}
+                        {(isOwner || isStaff) && (
+                          <Button variant="primary" size="sm" icon={<Download className="size-4" aria-hidden />} onClick={() => void downloadApprovalDocument()}>
+                            Download Approval Letter
+                          </Button>
+                        )}
+                        {isStaff && (
+                          <>
+                            <Button variant="outline" size="sm" icon={<Eye className="size-4" aria-hidden />} onClick={() => void toggleApprovalPreview()}>
+                              {approvalPreviewUrl ? 'Hide preview' : 'Preview PDF'}
+                            </Button>
+                            {reservation.approval_docx_available && (
+                              <Button variant="outline" size="sm" icon={<FileText className="size-4" aria-hidden />} onClick={() => void api.downloadFile(
+                                endpoints.approvalDocumentDocx(reservation.id),
+                                `SAS-RESERVE-APPROVAL-${reservation.reservation_id}.docx`,
+                              ).catch(() => toast('Could not download the DOCX file.', 'error'))}>
+                                Download DOCX
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      {approvalPreviewUrl && isStaff && (
+                        <iframe
+                          title={`Approval letter preview for ${reservation.reservation_id}`}
+                          src={approvalPreviewUrl}
+                          className="h-[34rem] w-full rounded-lg border border-line bg-white"
+                        />
+                      )}
+                    </div>
+                  ) : isStaff ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-muted">{reservation.generated_approval_status_label || 'Not generated'}</span>
+                      {reservation.generated_approval_error && <span className="text-status-rejected">{reservation.generated_approval_error}</span>}
+                      <Button variant="outline" size="sm" icon={<RotateCw className="size-4" aria-hidden />} loading={retryDocument.isPending} onClick={runRetryApprovalDocument}>
+                        Retry generation
+                      </Button>
+                    </div>
+                  ) : 'Your approval letter is being prepared.'}
+                />
+              )}
               {isStaff && reservation.status === 'APPROVED' && (
                 <DetailItem
                   label="Approval email"
@@ -776,9 +889,18 @@ export function ReservationDetailPage() {
                         {reservation.approval_email_status_label ||
                           reservation.approval_email_status}
                       </span>
-                      {['NOT_SENT', 'FAILED'].includes(
-                        reservation.approval_email_status,
-                      ) && (
+                      {reservation.requester_type === 'EXTERNAL' ? (
+                        <>
+                          {reservation.approval_email_sent_at && <span className="text-xs text-muted">Sent {formatDateTime(reservation.approval_email_sent_at)}</span>}
+                          <span className="text-xs text-muted">Attempts: {reservation.approval_email_attempts}</span>
+                          {reservation.approval_email_last_error && <span className="text-xs text-status-rejected">Last error: {reservation.approval_email_last_error}</span>}
+                          {reservation.approval_pdf_available && (
+                            <Button variant="outline" size="sm" icon={<Mail className="size-4" aria-hidden />} loading={resendExternalEmail.isPending} onClick={runResendExternalApprovalEmail}>
+                              Resend Approval Email
+                            </Button>
+                          )}
+                        </>
+                      ) : ['NOT_SENT', 'FAILED'].includes(reservation.approval_email_status) && (
                         <Button
                           variant="outline"
                           size="sm"

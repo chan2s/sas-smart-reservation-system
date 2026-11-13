@@ -38,6 +38,8 @@ vi.mock('@/hooks/queries', () => ({
     mutate: state.retryMutate,
     isPending: false,
   }),
+  useRetryApprovalDocument: () => ({ mutate: vi.fn(), isPending: false }),
+  useResendApprovalEmail: () => ({ mutate: vi.fn(), isPending: false }),
   useUploadApprovalLetterImage: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
@@ -123,6 +125,14 @@ function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDet
     fees: [],
     approval_email_status: '',
     approval_email_status_label: '',
+    generated_approval_status: 'NOT_STARTED',
+    generated_approval_status_label: 'Not generated',
+    generated_approval_error: '',
+    approval_pdf_available: false,
+    approval_docx_available: false,
+    approval_email_sent_at: null,
+    approval_email_attempts: 0,
+    approval_email_last_error: '',
     approval_document_status: 'NOT_REQUIRED',
     approval_document_status_label: 'Not required for this reservation',
     created_at: '2026-10-10T09:00:00+08:00',
@@ -231,6 +241,28 @@ describe('ReservationDetailPage approval email status', () => {
     renderPage()
 
     expect(screen.queryByRole('button', { name: /resend email/i })).toBeNull()
+  })
+})
+
+describe('ReservationDetailPage external approval letter', () => {
+  it('shows staff preview, PDF/DOCX downloads, generation state, and explicit resend', () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      generated_approval_status: 'GENERATED',
+      generated_approval_status_label: 'Generated',
+      approval_pdf_available: true,
+      approval_docx_available: true,
+      approval_email_attempts: 1,
+      approval_email_status: 'SENT',
+      approval_email_status_label: 'Sent',
+    })
+    renderPage()
+
+    expect(screen.getByRole('button', { name: 'Download Approval Letter' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Download DOCX' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Resend Approval Email' })).toBeTruthy()
+    expect(screen.getByText('Generated')).toBeTruthy()
   })
 })
 

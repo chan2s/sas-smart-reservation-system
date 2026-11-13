@@ -471,6 +471,12 @@ DEFAULT_FROM_EMAIL = _normalize_from_email(
 # Keep a hung SMTP connection from blocking the reminder sweep forever.
 EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))
 
+# Maximum time for a headless DOCX-to-PDF conversion. Each conversion gets an
+# isolated LibreOffice profile, so this timeout can safely cover parallel work.
+LIBREOFFICE_TIMEOUT_SECONDS = int(
+    os.environ.get("LIBREOFFICE_TIMEOUT_SECONDS", "90")
+)
+
 
 # ---------------------------------------------------------------------------
 # Automatic reservation reminder scheduler
@@ -613,3 +619,7 @@ else:
 # ---------------------------------------------------------------------------
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+
+LIBREOFFICE_TIMEOUT_SECONDS = int(
+    os.environ.get("LIBREOFFICE_TIMEOUT_SECONDS", "90")
+)
