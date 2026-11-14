@@ -23,6 +23,12 @@ from .views import (
     reservation_by_checkin_code,
     resources_recommendation,
 )
+from .approval_letter_settings import (
+    approval_letter_settings,
+    approval_letter_template_versions,
+    preview_approval_letter,
+    restore_approval_letter_template_version,
+)
 
 router = DefaultRouter()
 # See facilities/urls.py — the DRF API root at "/api/" is not published.
@@ -30,6 +36,26 @@ router.include_root_view = False
 router.register("reservations", ReservationViewSet, basename="reservation")
 
 urlpatterns = [
+    path(
+        "admin/settings/approval-letter/",
+        approval_letter_settings,
+        name="admin-approval-letter-settings",
+    ),
+    path(
+        "admin/settings/approval-letter/versions/",
+        approval_letter_template_versions,
+        name="admin-approval-letter-template-versions",
+    ),
+    path(
+        "admin/settings/approval-letter/versions/<int:version>/restore/",
+        restore_approval_letter_template_version,
+        name="admin-approval-letter-template-restore",
+    ),
+    path(
+        "admin/settings/approval-letter/preview/",
+        preview_approval_letter,
+        name="admin-approval-letter-preview",
+    ),
     # Reference/email tracking plus support for previously emailed signed links.
     path(
         "public/reservations/track/",

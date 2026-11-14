@@ -6,6 +6,7 @@ import {
   Building2,
   CalendarCheck,
   CalendarDays,
+  FilePenLine,
   History,
   LayoutDashboard,
   LifeBuoy,
@@ -69,6 +70,7 @@ export const staffNavigation: NavigationItem[] = [
  * (the same rule the backend APIs enforce); SAS staff never see them.
  */
 export const adminNavigation: NavigationItem[] = [
+  { to: '/admin/approval-letter', label: 'Approval Letter Management', icon: FilePenLine },
   { to: '/admin/users', label: 'User management', icon: Users },
   { to: '/admin/login-activity', label: 'Login activity', icon: Activity },
 ]

@@ -260,6 +260,15 @@ export const api = {
     const blob = await requestBlob(path)
     return URL.createObjectURL(blob)
   },
+  /** POST authenticated data and resolve the binary response as an object URL. */
+  postFileUrl: async (path: string, body: unknown): Promise<string> => {
+    const blob = await requestBlob(path, true, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return URL.createObjectURL(blob)
+  },
   /** Download a document as an attachment with the given filename. */
   downloadFile: async (path: string, filename: string): Promise<void> => {
     const blob = await requestBlob(path)
@@ -1043,14 +1052,14 @@ export const endpoints = {
  * resolves the raw body (used for letter PDF/DOCX downloads and previews —
  * an <embed>/<iframe> cannot attach an Authorization header itself).
  */
-async function requestBlob(path: string, retry = true): Promise<Blob> {
-  const headers = new Headers()
+async function requestBlob(path: string, retry = true, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers)
   const access = tokenStore.access
   if (access) headers.set('Authorization', `Bearer ${access}`)
-  const response = await fetch(path, { headers })
+  const response = await fetch(path, { ...init, headers })
   if (response.status === 401 && tokenStore.refresh && retry) {
     const refreshed = await refreshAccessToken()
-    if (refreshed) return requestBlob(path, false)
+    if (refreshed) return requestBlob(path, false, init)
   }
   if (!response.ok) {
     let message = `Request failed (${response.status})`

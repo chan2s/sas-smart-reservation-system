@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { User } from '@/lib/types'
+import { api } from '@/lib/api'
 
 const state = vi.hoisted(() => ({
   user: null as unknown as User,
   isViewOnly: false,
+  toast: vi.fn(),
 }))
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -17,11 +19,32 @@ vi.mock('@/hooks/useAuth', () => ({
 }))
 
 vi.mock('@/components/ui/Toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: state.toast }),
 }))
 
 vi.mock('@/lib/api', () => ({
-  api: { patch: vi.fn() },
+  api: {
+    patch: vi.fn(),
+    post: vi.fn(),
+    postFileUrl: vi.fn().mockResolvedValue('blob:approval-preview'),
+    get: vi.fn((path: string) => Promise.resolve(
+      path.includes('/versions/')
+        ? []
+        : {
+            authorized_signatory_name: 'Configured Signatory',
+            credentials: 'Ph.D.',
+            designation: 'Campus Director',
+            approval_label: 'Approved by:',
+            letter_title: 'RESERVATION APPROVAL LETTER',
+            approval_message: 'Approved for {{event_name}} at {{facility_name}}.',
+            introductory_paragraphs: '',
+            instructions_template: '',
+            additional_content: '',
+            footer_disclaimer: '',
+            version: 1,
+          },
+    )),
+  },
   endpoints: {
     pushSubscriptions: vi.fn().mockResolvedValue([]),
     pushPublicKey: vi.fn(),
@@ -60,6 +83,7 @@ function requester(): User {
 
 afterEach(() => {
   cleanup()
+  vi.clearAllMocks()
 })
 
 describe('SettingsPage', () => {
@@ -76,5 +100,16 @@ describe('SettingsPage', () => {
         'Install SAS RESERVE on your device for quicker access and an app-like experience.',
       ),
     ).toBeInTheDocument()
+  })
+
+  it('keeps approval letter configuration out of Account Settings', () => {
+    state.user = { ...requester(), role: 'ADMIN' }
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('heading', { name: /approval letter/i })).not.toBeInTheDocument()
+    expect(api.get).not.toHaveBeenCalledWith('/api/admin/settings/approval-letter/')
   })
 })

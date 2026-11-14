@@ -63,6 +63,7 @@ const privateRouteTitles: Array<[RegExp, string]> = [
   [/^\/audit-log$/, 'Audit Log | SAS RESERVE'],
   [/^\/organizations$/, 'Organizations | SAS RESERVE'],
   [/^\/admin\/users$/, 'User Administration | SAS RESERVE'],
+  [/^\/admin\/approval-letter$/, 'Approval Letter Management | SAS RESERVE'],
   [/^\/admin\/login-activity$/, 'Login Activity | SAS RESERVE'],
 ]
 

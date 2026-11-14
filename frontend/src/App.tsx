@@ -98,6 +98,11 @@ const LoginActivityPage = lazy(() =>
     default: module.LoginActivityPage,
   })),
 )
+const ApprovalLetterManagementPage = lazy(() =>
+  import('@/pages/admin/ApprovalLetterManagementPage').then((module) => ({
+    default: module.ApprovalLetterManagementPage,
+  })),
+)
 const FacilityResourcesPage = lazy(() =>
   import('@/pages/admin/FacilityResourcesPage').then((module) => ({
     default: module.FacilityResourcesPage,
@@ -326,6 +331,14 @@ export default function App() {
             }
           />
           {/* Administrator-only user management + login activity. */}
+          <Route
+            path="/admin/approval-letter"
+            element={
+              <RequireAdmin>
+                <ApprovalLetterManagementPage />
+              </RequireAdmin>
+            }
+          />
           <Route
             path="/admin/users"
             element={

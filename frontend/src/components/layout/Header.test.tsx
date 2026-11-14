@@ -17,7 +17,15 @@ vi.mock('react-router-dom', () => ({
   Link: ({ children, to, onClick }: { children: React.ReactNode; to: string; onClick?: () => void }) => (
     <a href={to} onClick={(event) => { event.preventDefault(); onClick?.() }}>{children}</a>
   ),
-  NavLink: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
+  NavLink: ({ children, to, className }: {
+    children: React.ReactNode | ((args: { isActive: boolean }) => React.ReactNode)
+    to: string
+    className?: string | ((args: { isActive: boolean }) => string)
+  }) => (
+    <a href={to} className={typeof className === 'function' ? className({ isActive: false }) : className}>
+      {typeof children === 'function' ? children({ isActive: false }) : children}
+    </a>
+  ),
   useNavigate: () => vi.fn(),
 }))
 
@@ -102,6 +110,22 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('Header notification center', () => {
+  it('shows approval letter management to administrators in the navigation drawer only', () => {
+    render(<Header />)
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }))
+    expect(screen.getByRole('link', { name: 'Approval Letter Management' })).toHaveAttribute(
+      'href',
+      '/admin/approval-letter',
+    )
+
+    state.role = 'REQUESTER'
+    state.isStaff = false
+    cleanup()
+    render(<Header />)
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }))
+    expect(screen.queryByRole('link', { name: 'Approval Letter Management' })).not.toBeInTheDocument()
+  })
+
   it('shows the persisted unread count and opens the complete notification feed directly', () => {
     render(<Header />)
     expect(screen.getByText('2')).toBeTruthy()

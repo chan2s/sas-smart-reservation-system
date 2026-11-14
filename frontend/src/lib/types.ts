@@ -168,6 +168,53 @@ export interface User {
   is_view_only: boolean
 }
 
+export interface ApprovalLetterSettings {
+  authorized_signatory_name: string
+  credentials: string
+  designation: string
+  approval_label: string
+  sas_staff_display_name: string
+  sas_staff_designation: string
+  letter_title: string
+  approval_message: string
+  introductory_paragraphs: string
+  instructions_template: string
+  additional_content: string
+  footer_disclaimer: string
+  body_content: ApprovalLetterDocument
+  version?: number
+}
+
+export interface ApprovalLetterDocumentNode {
+  type: string
+  attrs?: Record<string, string | number | null>
+  content?: ApprovalLetterDocumentNode[]
+  text?: string
+  marks?: Array<{ type: 'bold' | 'italic' }>
+}
+
+export interface ApprovalLetterDocument {
+  type: 'doc'
+  content: ApprovalLetterDocumentNode[]
+}
+
+export interface ApprovalLetterTemplateVersionPage {
+  results: ApprovalLetterTemplateVersion[]
+  count: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+export interface ApprovalLetterTemplateVersion {
+  id: number
+  version: number
+  configuration: ApprovalLetterSettings
+  modified_by_name: string
+  change_note: string
+  created_at: string
+}
+
 export type FacilityStatus = 'OPERATIONAL' | 'MAINTENANCE'
 export type FacilityType =
   | 'GYMNASIUM'

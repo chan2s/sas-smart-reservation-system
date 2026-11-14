@@ -12,6 +12,93 @@ from django.utils import timezone
 from facilities.models import Facility
 
 
+def default_approval_letter_body():
+    """Return a reusable placeholder-based body with protected data insertion points."""
+    return {
+        "type": "doc",
+        "content": [
+            {"type": "heading", "attrs": {"level": 1, "textAlign": "center", "spaceAfter": 4},
+             "content": [{"type": "text", "text": "RESERVATION APPROVAL LETTER"}]},
+            {"type": "documentMetadata"},
+            {"type": "paragraph", "attrs": {"spaceAfter": 2},
+             "content": [{"type": "text", "text": "{{requester_name}}"}]},
+            {"type": "paragraph", "attrs": {"spaceAfter": 2},
+             "content": [{"type": "text", "text": "{{organization_name}}"}]},
+            {"type": "paragraph", "attrs": {"spaceAfter": 4},
+             "content": [{"type": "text", "text": "{{requester_email}}"}]},
+            {"type": "paragraph", "attrs": {"spaceAfter": 4},
+             "content": [{"type": "text", "text": "{{contact_phone}}"}]},
+            {"type": "paragraph", "attrs": {"spaceAfter": 5},
+             "content": [{"type": "text", "text": "Dear {{requester_name}},"}]},
+            {"type": "paragraph", "attrs": {"spaceAfter": 4},
+             "content": [{"type": "text", "text": "This is to inform you that your request to use the {{facility_name}} for {{event_name}} has been approved, subject to the reservation details and conditions stated below."}]},
+            {"type": "reservationDetails"},
+            {"type": "heading", "attrs": {"level": 2, "textAlign": "left", "spaceAfter": 4},
+             "content": [{"type": "text", "text": "Reservation instructions"}]},
+            {"type": "reservationConditions"},
+        ],
+    }
+
+
+class ApprovalLetterSettings(models.Model):
+    """Singleton configuration for generated approval-letter wording and signatures."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    authorized_signatory_name = models.CharField(max_length=160, blank=True)
+    credentials = models.CharField(max_length=80, blank=True)
+    designation = models.CharField(max_length=180, blank=True)
+    approval_label = models.CharField(max_length=80, default="Approved by:")
+    sas_staff_display_name = models.CharField(max_length=160, blank=True)
+    sas_staff_designation = models.CharField(max_length=120, blank=True)
+    letter_title = models.CharField(max_length=140, default="RESERVATION APPROVAL LETTER")
+    approval_message = models.TextField(
+        default=(
+            "This is to inform you that your request to use the "
+            "{{facility_name}} for {{event_name}} has been approved, subject to "
+            "the reservation details and conditions stated below."
+        )
+    )
+    introductory_paragraphs = models.TextField(blank=True)
+    instructions_template = models.TextField(blank=True)
+    additional_content = models.TextField(blank=True)
+    footer_disclaimer = models.TextField(blank=True)
+    body_content = models.JSONField(default=default_approval_letter_body)
+
+    class Meta:
+        verbose_name = "approval letter settings"
+        verbose_name_plural = "approval letter settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        # The singleton is configuration, not a deletable business record.
+        return None
+
+
+class ApprovalLetterTemplateVersion(models.Model):
+    """Immutable configuration snapshots for preview, audit, and restore."""
+
+    version = models.PositiveIntegerField(unique=True)
+    configuration = models.JSONField()
+    modified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approval_letter_template_versions",
+    )
+    change_note = models.CharField(max_length=180, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-version"]
+
+    def __str__(self):
+        return f"Approval letter template v{self.version}"
+
+
 def approval_letter_upload_path(instance, filename):
     """Store requester documents under the private approval-letter namespace."""
     suffix = Path(filename).suffix.lower()

@@ -4,6 +4,7 @@ from datetime import date, time
 from decimal import Decimal
 from io import BytesIO
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
@@ -16,7 +17,7 @@ from rest_framework.test import APIClient
 
 from equipment.models import Equipment, EquipmentCategory
 from facilities.models import Facility, OperatingHour
-from reservations.models import Reservation, ReservationFee, ReservationItem
+from reservations.models import ApprovalLetterSettings, Reservation, ReservationFee, ReservationItem
 from reservations.services import workflow
 
 User = get_user_model()
@@ -32,6 +33,16 @@ def fake_pdf(docx_path, output_dir):
 class ExternalApprovalDocumentTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_user("letter-admin", password="pass12345", role=User.Role.ADMIN)
+        ApprovalLetterSettings.objects.update_or_create(
+            pk=1,
+            defaults={
+                "authorized_signatory_name": "Francis M. Galon",
+                "credentials": "Ph.D.",
+                "designation": "Assistant Campus Director for Administration and Finance",
+                "sas_staff_display_name": "SAS Administrator",
+                "sas_staff_designation": "UED Staff / SAS Staff",
+            },
+        )
         self.requester = User.objects.create_user(
             "external-requester", password="pass12345", role=User.Role.REQUESTER,
             first_name="Mara", last_name="Santos", email="mara@example.org",
@@ -106,15 +117,19 @@ class ExternalApprovalDocumentTests(TestCase):
         for expected in (
             "Mara Santos", "mara@example.org", "Bayawan Community Association",
             "09171234567", "Community Health Forum", "A public health information session.",
-            "Community Gym", "November 20, 2026", "120 × Plastic chair", "PHP 1,200.00",
-            "PHP 250.00", "PHP 7,250.00", "SHELLA MEA A. ESPAÑOLA", "FRANCIS M. GALON",
-            "NAME AND SIGNATURE OF THE RENTER",
+            "Community Gym", "November 20, 2026", "120 units of Plastic chair", "PHP 1,200.00",
+            "PHP 250.00", "PHP 7,250.00", "Francis M. Galon", "Ph.D.",
+            "Mara Santos", "RESERVATION APPROVAL LETTER",
         ):
             self.assertIn(expected, all_text)
-        signature_names = [doc.tables[-1].cell(2, col).text for col in range(3)]
-        self.assertIn("SHELLA MEA A. ESPAÑOLA", signature_names[0])
-        self.assertIn("FRANCIS M. GALON", signature_names[1])
-        self.assertIn("NAME AND SIGNATURE OF THE RENTER", signature_names[2])
+        signatures = doc.tables[-1]
+        self.assertEqual(len(signatures.columns), 2)
+        self.assertIn("Agreed by the Renter", signatures.cell(0, 0).text)
+        self.assertIn("Mara Santos", signatures.cell(3, 0).text)
+        self.assertIn("SAS Administrator", signatures.cell(3, 1).text)
+        self.assertIn("UED Staff / SAS Staff", signatures.cell(3, 1).text)
+        self.assertIn("Francis M. Galon", signatures.cell(4, 0).text)
+        self.assertIn("Assistant Campus Director", signatures.cell(4, 0).text)
         self.assertTrue(all("{{" not in value and "}}" not in value for value in all_text.splitlines()))
 
     def test_approval_trigger_generates_pdf_with_installed_libreoffice(self):
@@ -144,14 +159,91 @@ class ExternalApprovalDocumentTests(TestCase):
             document = Document(BytesIO(stream.read()))
         header = document.sections[0].header
         self.assertGreater(len(header._element.xpath(".//w:drawing")), 0)
-        self.assertEqual(len(document.tables[-1].columns), 3)
-        names = [document.tables[-1].cell(2, index).text for index in range(3)]
-        self.assertIn("SHELLA MEA A. ESPAÑOLA", names[0])
-        self.assertIn("FRANCIS M. GALON", names[1])
-        self.assertIn("NAME AND SIGNATURE OF THE RENTER", names[2])
+        header_text = " ".join(
+            [p.text for p in header.paragraphs]
+            + [cell.text for table in header.tables for row in table.rows for cell in row.cells]
+        )
+        self.assertIn("NEGROS ORIENTAL STATE UNIVERSITY", header_text)
+        self.assertIn("Bayawan-Sta. Catalina Campus", header_text)
+        self.assertIn("SAS RESERVE", header_text)
+        self.assertIn("STUDENT AFFAIRS AND SERVICES", header_text)
+        self.assertNotIn("VISION", header_text.upper())
+        self.assertNotIn("MISSION", header_text.upper())
+        header_table = header.tables[0]
+        self.assertEqual(len(header_table.rows[0].cells), 1)
+        self.assertTrue(all(paragraph.alignment == 1 for paragraph in header_table.cell(0, 0).paragraphs))
+        self.assertEqual(document.sections[0].footer.paragraphs[0].text, "")
+        self.assertEqual(len(document.tables[-1].columns), 2)
+        signatures = document.tables[-1]
+        self.assertIn("Mara Santos", signatures.cell(3, 0).text)
+        self.assertIn("SAS Administrator", signatures.cell(3, 1).text)
+        self.assertIn("UED Staff / SAS Staff", signatures.cell(3, 1).text)
+        self.assertIn("Francis M. Galon", signatures.cell(4, 0).text)
+        approver_paragraphs = signatures.cell(4, 0).paragraphs
+        self.assertGreaterEqual(approver_paragraphs[1].paragraph_format.space_before.pt, 18)
+        self.assertGreaterEqual(approver_paragraphs[1].paragraph_format.space_after.pt, 10)
         self.assertEqual(approved.approval_email_status, Reservation.ApprovalEmailStatus.SENT)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].attachments[0][1], pdf_bytes)
+
+    @mock.patch("reservations.services.approval_documents._convert_pdf", side_effect=fake_pdf)
+    def test_signatory_updates_apply_to_future_letters_without_rewriting_existing_files(self, convert):
+        from reservations.services.approval_documents import generate_approval_documents
+
+        generate_approval_documents(self.reservation)
+        old_docx = self.reservation.generated_approval_docx.read()
+        old_pdf = self.reservation.generated_approval_pdf.read()
+
+        settings = ApprovalLetterSettings.objects.get(pk=1)
+        settings.authorized_signatory_name = "Updated Signatory"
+        settings.credentials = "M.P.A."
+        settings.designation = "Updated Official Position"
+        settings.sas_staff_display_name = "Updated SAS Coordinator"
+        settings.sas_staff_designation = "Updated Staff Role"
+        settings.letter_title = "Updated Approval Heading"
+        settings.approval_message = "Approved for {{event_name}} at {{facility_name}}."
+        body = deepcopy(settings.body_content)
+        for block in body["content"]:
+            if block.get("type") == "heading" and block.get("attrs", {}).get("level") == 1:
+                block["content"] = [{"type": "text", "text": settings.letter_title}]
+            if block.get("type") == "paragraph" and "This is to inform you" in "".join(
+                child.get("text", "") for child in block.get("content", [])
+                if child.get("type") == "text"
+            ):
+                block["content"] = [{"type": "text", "text": settings.approval_message}]
+        settings.body_content = body
+        settings.save()
+
+        self.reservation.refresh_from_db()
+        generate_approval_documents(self.reservation, force=True)
+        self.assertEqual(self.reservation.generated_approval_docx.read(), old_docx)
+        self.assertEqual(self.reservation.generated_approval_pdf.read(), old_pdf)
+        self.assertEqual(convert.call_count, 1)
+
+        future = Reservation.objects.create(
+            requester=self.requester,
+            requester_type=Reservation.RequesterType.EXTERNAL,
+            organization="Bayawan Community Association",
+            contact_person="Mara Santos",
+            contact_email=self.requester.email,
+            event_name="Future Community Forum",
+            purpose="Community education",
+            facility=self.facility,
+            date=date(2026, 12, 1),
+            start_time=time(9),
+            end_time=time(11),
+        )
+        generate_approval_documents(future)
+        with future.generated_approval_docx.open("rb") as stream:
+            doc = Document(BytesIO(stream.read()))
+        self.assertIn("Updated Signatory", doc.tables[-1].cell(4, 0).text)
+        self.assertIn("M.P.A.", doc.tables[-1].cell(4, 0).text)
+        self.assertIn("Updated Official Position", doc.tables[-1].cell(4, 0).text)
+        self.assertIn("Updated SAS Coordinator", doc.tables[-1].cell(3, 1).text)
+        self.assertIn("Updated Staff Role", doc.tables[-1].cell(3, 1).text)
+        body_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("Updated Approval Heading", body_text)
+        self.assertIn("Approved for Future Community Forum at Community Gym", body_text)
 
     @mock.patch("reservations.services.approval_documents._convert_pdf", side_effect=fake_pdf)
     def test_owner_and_staff_can_repeat_download_but_other_requester_cannot(self, _convert):
