@@ -44,7 +44,7 @@ function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof Detail
     showAllErrors: false,
     approvalLetterFile: null,
     onApprovalLetterFile: vi.fn(),
-    allowApprovalLetterUpload: true,
+    approvalLetterRequired: true,
     ...overrides,
   }
   return { ...render(<DetailsStep {...props} />), props }
@@ -79,6 +79,30 @@ describe('DetailsStep reservation form presentation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ignore' }))
     expect(props.onToggleSuggestion).toHaveBeenCalledWith(21, 1, 2)
     expect(props.onIgnoreSuggestion).toHaveBeenCalledWith(21)
+  })
+
+  it('shows the event approval letter as a required internal-only field', () => {
+    renderDetailsStep({ approvalLetterRequired: true })
+
+    expect(screen.getByLabelText('Upload approval letter image')).toBeInTheDocument()
+    expect(screen.getByText(/Required for internal reservations/)).toBeInTheDocument()
+  })
+
+  it('shows missing-letter feedback after validation fails', () => {
+    renderDetailsStep({ approvalLetterRequired: true, showAllErrors: true })
+
+    expect(screen.getByText('Upload an Event Approval Letter for this internal reservation.')).toBeInTheDocument()
+  })
+
+  it('hides the event approval letter for external reservations and shows it again for internal ones', () => {
+    const { rerender, props } = renderDetailsStep({ approvalLetterRequired: false })
+
+    expect(screen.queryByLabelText('Upload approval letter image')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Required for internal reservations/)).not.toBeInTheDocument()
+
+    rerender(<DetailsStep {...props} approvalLetterRequired />)
+
+    expect(screen.getByLabelText('Upload approval letter image')).toBeInTheDocument()
   })
 
   it('shows the uploaded-file preview and removes it through the existing callback', () => {

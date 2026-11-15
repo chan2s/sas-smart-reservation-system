@@ -409,6 +409,11 @@ def public_reservation_upload_approval_letter(request):
         )
     if reservation.status != Reservation.Status.PENDING:
         return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
+    if not reservation.is_internal:
+        return Response(
+            {"detail": "External reservations do not require an event approval letter."},
+            status=409,
+        )
     if reservation.has_approval_letter_document:
         return Response({"detail": "An event approval letter has already been submitted."}, status=409)
 
@@ -783,7 +788,15 @@ class ReservationViewSet(viewsets.ModelViewSet):
         # auto-approved even for an administrator — recreating an expired
         # reservation must go through the normal review (Requirement: the new
         # reservation always starts PENDING).
-        if request.user.is_admin and not is_rebook and not reservation.approval_letter_required:
+        if (
+            request.user.is_admin
+            and not is_rebook
+            # External reservations keep their existing staff review (and
+            # generated approval letter) workflow; only an internal request
+            # without the letter requirement is auto-approved.
+            and reservation.is_internal
+            and not reservation.requires_event_approval_letter
+        ):
             workflow.auto_approve(reservation, request.user)
         else:
             notify_staff(
@@ -932,6 +945,11 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You cannot update this reservation."}, status=403)
         if reservation.status != Reservation.Status.PENDING:
             return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
+        if not reservation.is_internal:
+            return Response(
+                {"detail": "External reservations do not require an event approval letter."},
+                status=409,
+            )
         if reservation.has_approval_letter_document:
             return Response({"detail": "An event approval letter has already been submitted."}, status=409)
         serializer = PublicApprovalLetterUploadSerializer(

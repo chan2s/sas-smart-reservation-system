@@ -881,7 +881,10 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
     context["is_approved"] = status == ReservationModel.Status.APPROVED
     context["is_pending"] = status == ReservationModel.Status.PENDING
     context["check_in_instructions"] = CHECK_IN_INSTRUCTIONS
-    context["approval_letter_missing"] = not bool(reservation.approval_letter_image)
+    context["approval_letter_missing"] = (
+        reservation.requires_event_approval_letter
+        and not reservation.has_approval_letter_document
+    )
     if context["approval_letter_missing"] and status == ReservationModel.Status.PENDING:
         context["next_action"] = (
             "Your reservation is awaiting the required event approval letter. "

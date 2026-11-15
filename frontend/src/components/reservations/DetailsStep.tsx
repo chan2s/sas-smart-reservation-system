@@ -37,10 +37,6 @@ const reservationInvalidControlClass =
  * twice (facility/date/time stay in steps 1–2 and reappear only as a read-only
  * summary on Review).
  *
- * TODO(conditional-fields): when Facility gains a `requires_approval_letter`
- * flag and an upload endpoint exists, render that upload here and only here —
- * i.e. gate it on `facility.requires_approval_letter`. Nothing in this
- * component reads facility metadata today.
  */
 export function DetailsStep({
   details,
@@ -66,7 +62,7 @@ export function DetailsStep({
   showAllErrors,
   approvalLetterFile,
   onApprovalLetterFile,
-  allowApprovalLetterUpload,
+  approvalLetterRequired,
 }: {
   details: EventDetailsDraft
   onDetailsChange: (next: EventDetailsDraft) => void
@@ -95,7 +91,12 @@ export function DetailsStep({
   showAllErrors: boolean
   approvalLetterFile: File | null
   onApprovalLetterFile: (file: File | null) => void
-  allowApprovalLetterUpload: boolean
+  /**
+   * True only for internal reservations. The event approval letter is an
+   * INTERNAL-only supporting document, so external reservations never see the
+   * field or any of its validation.
+   */
+  approvalLetterRequired: boolean
 }) {
   const errors = useMemo(
     () => reservationFieldErrors({ details, contact, capacity, facilityName }),
@@ -118,6 +119,11 @@ export function DetailsStep({
     setTouched((current) => (current[key] ? current : { ...current, [key]: true }))
   const visibleError = (key: ReservationFieldKey) =>
     touched[key] || showAllErrors ? errors[key] : undefined
+  const visibleApprovalLetterError =
+    approvalLetterError ||
+    (showAllErrors && approvalLetterRequired && !approvalLetterFile
+      ? 'Upload an Event Approval Letter for this internal reservation.'
+      : '')
 
   // Autofocus the first field on mount (but never steal focus from a draft the
   // requester already filled in).
@@ -131,6 +137,12 @@ export function DetailsStep({
   useEffect(() => {
     if (!contactTouched.current && contact.phone.trim()) setEditingContact(false)
   }, [contact.phone])
+
+  // Switching to an external reservation hides the field; drop any stale
+  // upload error so it cannot reappear when the field is shown again.
+  useEffect(() => {
+    if (!approvalLetterRequired) setApprovalLetterError('')
+  }, [approvalLetterRequired])
 
   // "Enter" in a single-line field moves on instead of submitting the wizard.
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -419,13 +431,14 @@ export function DetailsStep({
               placeholder="Special setup, accessibility needs, or anything else we should know."
             />
           </Field>
-          {allowApprovalLetterUpload && (
+          {approvalLetterRequired && (
             <Field
               label="Event Approval Letter"
               htmlFor="event-approval-letter"
               className="sm:col-span-2"
-              hint="Optional when submitting. The signed letter is required before approval. JPG, JPEG, PNG, or WEBP; maximum 5 MB."
-              error={approvalLetterError || undefined}
+              required
+              hint="Required for internal reservations. Upload the signed letter before submitting. JPG, JPEG, PNG, or WEBP; maximum 5 MB."
+              error={visibleApprovalLetterError || undefined}
             >
               <ApprovalLetterCapture
                 inputId="event-approval-letter"

@@ -56,6 +56,27 @@ def validate_approval_letter_file(upload):
         upload.seek(0)
     return upload
 
+
+def validate_event_approval_letter_requirement(attrs, requester_type):
+    if (
+        requester_type != Reservation.RequesterType.EXTERNAL
+        and not attrs.get("approval_letter_image")
+    ):
+        raise serializers.ValidationError(
+            {"approval_letter_image": "An event approval letter is required for internal reservations."}
+        )
+
+
+def event_approval_document_status(reservation):
+    if not reservation.is_internal:
+        return Reservation.ApprovalDocumentStatus.NOT_REQUIRED
+    return reservation.approval_document_status
+
+
+def event_approval_document_status_label(reservation):
+    status = event_approval_document_status(reservation)
+    return dict(Reservation.ApprovalDocumentStatus.choices)[status]
+
 # Public label map for organization types (also used by the public serializers
 # module without importing account/user machinery).
 ORGANIZATION_TYPE_LABELS = dict(Reservation.OrganizationType.choices)
@@ -257,10 +278,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
     approval_email_sent_at = serializers.DateTimeField(read_only=True)
     approval_email_attempts = serializers.IntegerField(read_only=True)
     approval_email_last_error = serializers.CharField(read_only=True)
-    approval_document_status = serializers.CharField(read_only=True)
-    approval_document_status_label = serializers.CharField(
-        source="get_approval_document_status_display", read_only=True
-    )
+    approval_document_status = serializers.SerializerMethodField()
+    approval_document_status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -341,6 +360,12 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_generated_approval_error(self, obj):
         request = self.context.get("request")
         return obj.generated_approval_error if request and request.user.is_sas_staff else ""
+
+    def get_approval_document_status(self, obj):
+        return event_approval_document_status(obj)
+
+    def get_approval_document_status_label(self, obj):
+        return event_approval_document_status_label(obj)
 
     def get_approval_pdf_available(self, obj):
         return bool(
@@ -865,8 +890,12 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             if requester_type == Reservation.RequesterType.EXTERNAL:
                 if not attrs.get("organization_type"):
                     raise serializers.ValidationError({"organization_type": "Organization type is required."})
+                # The event approval letter is internal-only: ignore any upload
+                # sent with an external submission.
+                attrs.pop("approval_letter_image", None)
             else:
                 attrs["organization_type"] = ""
+            validate_event_approval_letter_requirement(attrs, requester_type)
             return attrs
 
         # Admins may create directly for a registered organization. Resolve
@@ -980,8 +1009,14 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             )
         attrs["requester_type"] = requester_type
 
+        validate_event_approval_letter_requirement(attrs, requester_type)
+
         if requester_type == Reservation.RequesterType.EXTERNAL:
             attrs.pop("requester_id", None)
+            # The event approval letter is an internal-only supporting
+            # document. Ignore any upload sent with an external submission so
+            # it is never stored as an internal requirement.
+            attrs.pop("approval_letter_image", None)
             if is_staff:
                 # Reservation on behalf of an organization without an account
                 # — unchanged behavior for SAS staff. ``contact_email`` is no
@@ -1139,7 +1174,11 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             organization_ref=organization_ref,
             rebooked_from=rebooked_from,
             created_by=(user if authenticated and not self.context.get("public_submission") else None),
-            approval_letter_required=True,
+            # Only internal reservations follow the event approval letter
+            # requirement; external reservations never submit one.
+            approval_letter_required=(
+                requester_type != Reservation.RequesterType.EXTERNAL
+            ),
         )
         for item in items:
             ReservationItem.objects.create(
@@ -1254,10 +1293,8 @@ class PublicTrackSerializer(serializers.Serializer):
     reservation_id = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
-    approval_document_status = serializers.CharField(read_only=True)
-    approval_document_status_label = serializers.CharField(
-        source="get_approval_document_status_display", read_only=True
-    )
+    approval_document_status = serializers.SerializerMethodField()
+    approval_document_status_label = serializers.SerializerMethodField()
     event_name = serializers.CharField(read_only=True)
     organization = serializers.CharField(read_only=True)
     facility = serializers.CharField(source="facility.name", read_only=True)
@@ -1266,6 +1303,12 @@ class PublicTrackSerializer(serializers.Serializer):
     end_time = serializers.TimeField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     can_edit = serializers.SerializerMethodField()
+
+    def get_approval_document_status(self, obj):
+        return event_approval_document_status(obj)
+
+    def get_approval_document_status_label(self, obj):
+        return event_approval_document_status_label(obj)
 
     def get_can_edit(self, obj):
         return bool(

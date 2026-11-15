@@ -752,7 +752,7 @@ class Reservation(models.Model):
         super().clean()
         if (
             self.status == self.Status.APPROVED
-            and self.approval_letter_required
+            and self.requires_event_approval_letter
             and not self.approval_letter_image
         ):
             raise ValidationError(
@@ -769,9 +769,38 @@ class Reservation(models.Model):
         image = self.approval_letter_image
         return bool(image and image.storage.exists(image.name))
 
+    @property
+    def is_internal(self) -> bool:
+        """True for campus/internal requesters, never for external organizations."""
+        return self.requester_type != self.RequesterType.EXTERNAL
+
+    @property
+    def requires_event_approval_letter(self) -> bool:
+        """Whether the requester-submitted event approval letter is required.
+
+        The letter is an INTERNAL-only supporting document. Reservations stored
+        before the requirement existed keep ``approval_letter_required`` False
+        so they remain approvable without a letter; external reservations are
+        never subject to it, whatever their stored flag says.
+        """
+        return self.is_internal and self.approval_letter_required
+
     def save(self, *args, **kwargs):
         if not self.reservation_id:
             self.reservation_id = self._next_reservation_id()
+        # The event approval letter requirement is internal-only. Clear the flag
+        # on external reservations (including rows saved before this rule) so
+        # they can never be blocked by a document they do not submit. Any
+        # uploaded file is preserved untouched.
+        if not self.is_internal and self.approval_letter_required:
+            self.approval_letter_required = False
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = {
+                    *update_fields,
+                    "approval_letter_required",
+                    "approval_document_status",
+                }
         if self.approval_letter_image:
             self.approval_document_status = self.ApprovalDocumentStatus.SUBMITTED
         elif self.approval_letter_required:

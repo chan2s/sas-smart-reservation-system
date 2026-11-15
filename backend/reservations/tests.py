@@ -1850,35 +1850,53 @@ class RequesterTypeApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_admin_external_reservation_pending_document_review(self):
+    def test_admin_external_reservation_needs_no_event_approval_letter(self):
         self.client.force_authenticate(self.admin)
         response = self.client.post(
             "/api/reservations/", self._external_payload(), format="json"
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
+        # External reservations never submit an event approval letter, so they
+        # stay in the normal staff review queue instead of waiting on a document.
         self.assertEqual(body["status"], "PENDING")
-        self.assertEqual(body["approval_document_status"], "AWAITING")
+        self.assertEqual(body["approval_document_status"], "NOT_REQUIRED")
         self.assertEqual(body["requester_type"], "EXTERNAL")
         self.assertEqual(body["requester"], "ABC National High School")
         self.assertEqual(body["contact_email"], "juan@example.com")
         reservation = Reservation.objects.get(pk=body["id"])
+        self.assertFalse(reservation.approval_letter_required)
         self.assertIsNone(reservation.requester)
         self.assertEqual(reservation.created_by, self.admin)
 
     def test_admin_creates_for_selected_internal_organization(self):
         organization = Organization.objects.get(acronym="CAS")
         self.client.force_authenticate(self.admin)
+        payload = self._external_payload(
+            requester_type="CAMPUS",
+            organization_id=organization.id,
+            organization="Forged organization name",
+            organization_type="OTHER",
+            contact_person="CAS Event Contact",
+        )
+        payload.pop("items", None)
+        missing_letter = self.client.post(
+            "/api/reservations/", payload, format="json"
+        )
+        self.assertEqual(missing_letter.status_code, 400, missing_letter.content)
+        self.assertIn("approval_letter_image", missing_letter.json())
+
+        image_buffer = BytesIO()
+        Image.new("RGB", (8, 8), color="navy").save(image_buffer, format="PNG")
         response = self.client.post(
             "/api/reservations/",
-            self._external_payload(
-                requester_type="CAMPUS",
-                organization_id=organization.id,
-                organization="Forged organization name",
-                organization_type="OTHER",
-                contact_person="CAS Event Contact",
-            ),
-            format="json",
+            {
+                **payload,
+                "approval_letter_image": SimpleUploadedFile(
+                    "event-approval.png", image_buffer.getvalue(), content_type="image/png"
+                ),
+            },
+            format="multipart",
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
