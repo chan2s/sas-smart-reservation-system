@@ -63,26 +63,35 @@ class Command(BaseCommand):
                     unit=PricingRule.Unit.FLAT,
                     price=Decimal(price),
                 )
-            for name, price in (("Sound System", "1000.00"), ("Plastic Chairs", "5.00")):
-                self._save_rule(
-                    fee_type=PricingRule.FeeType.EQUIPMENT,
-                    facility_type="",
-                    equipment_category=categories[name],
-                    rental_period="",
-                    label=name,
-                    unit=PricingRule.Unit.UNIT,
-                    price=Decimal(price),
-                )
-            for name in ("LED Wall", "Sound System"):
-                self._save_rule(
-                    fee_type=PricingRule.FeeType.OPERATOR,
-                    facility_type="",
-                    equipment_category=categories[name],
-                    rental_period="",
-                    label=f"{name} Operator",
-                    unit=PricingRule.Unit.FLAT,
-                    price=Decimal("500.00"),
-                )
+            # Plastic Chairs are priced per unit
+            self._save_rule(
+                fee_type=PricingRule.FeeType.EQUIPMENT,
+                facility_type="",
+                equipment_category=categories["Plastic Chairs"],
+                rental_period="",
+                label="Plastic Chairs",
+                unit=PricingRule.Unit.UNIT,
+                price=Decimal("5.00"),
+            )
+            # LED Wall and Sound System operator fees
+            self._save_rule(
+                fee_type=PricingRule.FeeType.OPERATOR,
+                facility_type="",
+                equipment_category=categories["LED Wall"],
+                rental_period="",
+                label="LED Wall Operator Fee",
+                unit=PricingRule.Unit.FLAT,
+                price=Decimal("500.00"),
+            )
+            self._save_rule(
+                fee_type=PricingRule.FeeType.OPERATOR,
+                facility_type="",
+                equipment_category=categories["Sound System"],
+                rental_period="",
+                label="Sound System Operator Fee",
+                unit=PricingRule.Unit.FLAT,
+                price=Decimal("1000.00"),
+            )
             self._save_rule(
                 fee_type=PricingRule.FeeType.ENVIRONMENTAL,
                 facility_type="",
@@ -113,5 +122,5 @@ class Command(BaseCommand):
         for name in ("Gymnasium", "Dorm Cafeteria"):
             for period, rate in (("Whole day", "5,000.00"), ("Half day", "2,500.00"), ("Per hour", "650.00")):
                 self.stdout.write(f"  {name} — {period}: PHP {rate}")
-        for name, rate in (("LED Wall whole day", "15,000.00"), ("LED Wall half day", "7,500.00"), ("Sound System", "1,000.00"), ("Plastic Chairs per piece", "5.00"), ("Environmental and applicable operator fee", "500.00 each")):
+        for name, rate in (("LED Wall whole day", "15,000.00"), ("LED Wall half day", "7,500.00"), ("Plastic Chairs per piece", "5.00"), ("LED Wall Operator Fee", "500.00"), ("Sound System Operator Fee", "1,000.00"), ("Environmental Fee", "500.00")):
             self.stdout.write(f"  {name}: PHP {rate}")

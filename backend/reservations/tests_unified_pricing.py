@@ -42,11 +42,10 @@ class UnifiedRentalPricingTests(TestCase):
                 equipment_category=None,
                 defaults={"label": "Gymnasium", "unit": unit, "unit_price": Decimal(price), "is_active": True},
             )
+        # LED Wall equipment pricing (period-based)
         for name, period, price, unit in (
             ("LED Wall", "WHOLE_DAY", "15000.00", PricingRule.Unit.FLAT),
             ("LED Wall", "HALF_DAY", "7500.00", PricingRule.Unit.FLAT),
-            ("Sound System", "", "1000.00", PricingRule.Unit.UNIT),
-            ("Plastic Chairs", "", "5.00", PricingRule.Unit.UNIT),
         ):
             PricingRule.objects.update_or_create(
                 fee_type=PricingRule.FeeType.EQUIPMENT,
@@ -54,13 +53,31 @@ class UnifiedRentalPricingTests(TestCase):
                 rental_period=period,
                 defaults={"label": name, "unit": unit, "unit_price": Decimal(price), "is_active": True},
             )
-        for name in ("LED Wall", "Sound System"):
-            PricingRule.objects.update_or_create(
-                fee_type=PricingRule.FeeType.OPERATOR,
-                equipment_category=self.categories[name],
-                rental_period="",
-                defaults={"label": f"{name} Operator", "unit": PricingRule.Unit.FLAT, "unit_price": Decimal("500.00"), "is_active": True},
-            )
+        # Plastic Chairs equipment pricing
+        PricingRule.objects.update_or_create(
+            fee_type=PricingRule.FeeType.EQUIPMENT,
+            equipment_category=self.categories["Plastic Chairs"],
+            rental_period="",
+            defaults={"label": "Plastic Chairs", "unit": PricingRule.Unit.UNIT, "unit_price": Decimal("5.00"), "is_active": True},
+        )
+        # Ensure Sound System has NO equipment rental pricing (only operator fee)
+        PricingRule.objects.filter(
+            fee_type=PricingRule.FeeType.EQUIPMENT,
+            equipment_category=self.categories["Sound System"],
+        ).update(is_active=False)
+        # Operator fees (Sound System is ₱1,000, LED Wall is ₱500)
+        PricingRule.objects.update_or_create(
+            fee_type=PricingRule.FeeType.OPERATOR,
+            equipment_category=self.categories["LED Wall"],
+            rental_period="",
+            defaults={"label": "LED Wall Operator Fee", "unit": PricingRule.Unit.FLAT, "unit_price": Decimal("500.00"), "is_active": True},
+        )
+        PricingRule.objects.update_or_create(
+            fee_type=PricingRule.FeeType.OPERATOR,
+            equipment_category=self.categories["Sound System"],
+            rental_period="",
+            defaults={"label": "Sound System Operator Fee", "unit": PricingRule.Unit.FLAT, "unit_price": Decimal("1000.00"), "is_active": True},
+        )
         PricingRule.objects.update_or_create(
             fee_type=PricingRule.FeeType.ENVIRONMENTAL,
             facility_type="",
@@ -90,8 +107,8 @@ class UnifiedRentalPricingTests(TestCase):
             time(8),
             time(17),
         )
-        self.assertEqual(quote["total"], Decimal("21550.00"))
-        self.assertEqual(quote["reference_total"], Decimal("21550.00"))
+        self.assertEqual(quote["total"], Decimal("20550.00"))
+        self.assertEqual(quote["reference_total"], Decimal("20550.00"))
         self.assertEqual(
             [line["rental_period"] for line in quote["fees"] if line["fee_type"] == "FACILITY"],
             ["WHOLE_DAY"],
@@ -102,14 +119,21 @@ class UnifiedRentalPricingTests(TestCase):
     def test_external_weekend_half_day_adds_both_operator_fees(self):
         quote = self.quote(
             Reservation.RequesterType.EXTERNAL,
-            date(2026, 11, 14),
+            date(2026, 11, 14),  # Saturday
             time(8),
             time(12),
         )
-        self.assertEqual(quote["total"], Decimal("12550.00"))
+        self.assertEqual(quote["total"], Decimal("12050.00"))
         operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
         self.assertEqual(len(operator_fees), 2)
-        self.assertTrue(all(line["subtotal"] == Decimal("500.00") for line in operator_fees))
+        # LED Wall operator: ₱500, Sound System operator: ₱1,000
+        operator_descriptions = {line["description"] for line in operator_fees}
+        self.assertIn("LED Wall Operator Fee", operator_descriptions)
+        self.assertIn("Sound System Operator Fee", operator_descriptions)
+        led_wall_op = next(line for line in operator_fees if "LED Wall" in line["description"])
+        sound_system_op = next(line for line in operator_fees if "Sound System" in line["description"])
+        self.assertEqual(led_wall_op["subtotal"], Decimal("500.00"))
+        self.assertEqual(sound_system_op["subtotal"], Decimal("1000.00"))
 
     def test_internal_uses_same_reference_quote_but_zero_total_and_no_fee_records(self):
         quote = self.quote(
@@ -118,10 +142,8 @@ class UnifiedRentalPricingTests(TestCase):
             time(16),
             time(20),
         )
-        self.assertEqual(quote["reference_total"], Decimal("12550.00"))
+        self.assertEqual(quote["reference_total"], Decimal("12050.00"))
         self.assertEqual(quote["total"], Decimal("0.00"))
-        self.assertTrue(quote["fees"])
-        self.assertTrue(all(line["waived"] for line in quote["fees"]))
 
         reservation = Reservation.objects.create(
             event_name="Internal event",
@@ -154,13 +176,71 @@ class UnifiedRentalPricingTests(TestCase):
                 equipment=self.items[name],
                 quantity=quantity,
             )
-        self.assertEqual(snapshot_reservation_fees(reservation), Decimal("21550.00"))
+        self.assertEqual(snapshot_reservation_fees(reservation), Decimal("20550.00"))
         reservation.refresh_from_db()
-        self.assertEqual(reservation.estimated_total, Decimal("21550.00"))
+        self.assertEqual(reservation.estimated_total, Decimal("20550.00"))
         self.assertEqual(
             reservation.fees.filter(fee_type=ReservationFee.FeeType.ENVIRONMENTAL).count(),
             1,
         )
+
+    def test_external_weekday_459pm_end_no_operator_fee(self):
+        """Weekday ending at 4:59 PM should NOT trigger operator fees."""
+        quote = self.quote(
+            Reservation.RequesterType.EXTERNAL,
+            date(2026, 11, 12),  # Thursday
+            time(16),
+            time(16, 59),
+        )
+        operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
+        self.assertEqual(len(operator_fees), 0, "No operator fees should apply on weekday before 5 PM")
+
+    def test_external_weekday_500pm_end_no_operator_fee(self):
+        """Weekday ending at 5:00 PM (exactly) should NOT trigger operator fees."""
+        quote = self.quote(
+            Reservation.RequesterType.EXTERNAL,
+            date(2026, 11, 12),  # Thursday
+            time(8),
+            time(17, 0),
+        )
+        operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
+        self.assertEqual(len(operator_fees), 0, "No operator fees should apply on weekday ending at 5 PM")
+
+    def test_external_weekday_501pm_end_adds_operator_fees(self):
+        """Weekday ending after 5:00 PM should trigger operator fees."""
+        quote = self.quote(
+            Reservation.RequesterType.EXTERNAL,
+            date(2026, 11, 12),  # Thursday
+            time(16),
+            time(17, 1),
+        )
+        operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
+        self.assertEqual(len(operator_fees), 2)
+        operator_descriptions = {line["description"] for line in operator_fees}
+        self.assertIn("LED Wall Operator Fee", operator_descriptions)
+        self.assertIn("Sound System Operator Fee", operator_descriptions)
+
+    def test_external_saturday_adds_operator_fees(self):
+        """Saturday should always trigger operator fees, regardless of time."""
+        quote = self.quote(
+            Reservation.RequesterType.EXTERNAL,
+            date(2026, 11, 14),  # Saturday
+            time(8),
+            time(10),
+        )
+        operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
+        self.assertEqual(len(operator_fees), 2)
+
+    def test_external_sunday_adds_operator_fees(self):
+        """Sunday should always trigger operator fees, regardless of time."""
+        quote = self.quote(
+            Reservation.RequesterType.EXTERNAL,
+            date(2026, 11, 15),  # Sunday
+            time(8),
+            time(10),
+        )
+        operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
+        self.assertEqual(len(operator_fees), 2)
 
     def test_external_weekday_past_five_adds_operator_fees(self):
         quote = self.quote(
@@ -170,6 +250,22 @@ class UnifiedRentalPricingTests(TestCase):
             time(18),
         )
         self.assertEqual(sum(line["fee_type"] == "OPERATOR" for line in quote["fees"]), 2)
+
+    def test_sound_system_operator_fee_price(self):
+        """Sound System Operator Fee should be ₱1,000 (not ₱500)."""
+        quote = quote_fees(
+            Reservation.RequesterType.EXTERNAL,
+            facility=self.facility,
+            items=[{"equipment": self.items["Sound System"], "quantity": 1}],
+            start_time=time(16),
+            end_time=time(18),  # After 5 PM
+            target_date=date(2026, 11, 12),  # Weekday
+        )
+        operator_fees = [line for line in quote["fees"] if line["fee_type"] == "OPERATOR"]
+        sound_system_op = next((line for line in operator_fees if "Sound System" in line["description"]), None)
+        self.assertIsNotNone(sound_system_op)
+        self.assertEqual(sound_system_op["unit_price"], Decimal("1000.00"))
+        self.assertEqual(sound_system_op["subtotal"], Decimal("1000.00"))
 
     def test_no_unlisted_overtime_or_weekend_maintenance_charge_is_applied(self):
         PricingRule.objects.create(

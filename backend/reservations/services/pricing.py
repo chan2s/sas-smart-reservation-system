@@ -271,7 +271,8 @@ def quote_fees(
     for equipment, quantity, operator_requested in _resolve_items(items):
         category_id = equipment.category_id
         normalized_name = equipment.name.strip().casefold()
-        if normalized_name in {"led wall", "sound system", "plastic chairs"}:
+        # LED Wall and Plastic Chairs have special equipment pricing rules
+        if normalized_name in {"led wall", "plastic chairs"}:
             if normalized_name == "led wall":
                 equipment_period = "WHOLE_DAY" if duration >= Decimal("8") else "HALF_DAY"
                 official_rule = PricingRule.objects.filter(
@@ -295,6 +296,10 @@ def quote_fees(
                 "equipment_category_id": category_id,
                 "equipment_unit": equipment.unit,
             })
+            # LED Wall has an operator fee that is time-triggered
+            if normalized_name == "led wall":
+                if category_id in operator_rules and operator_requested is not False:
+                    operator_triggers.setdefault(category_id, operator_rules[category_id])
             continue
         resource = facility_resources.get(equipment.id)
         rule = equipment_rules.get(category_id)
@@ -399,7 +404,7 @@ def quote_fees(
         target_date
         and (target_date.weekday() >= 5 or (end_time and end_time > time_cls(17, 0)))
     )
-    for category_id, rule in (operator_triggers.items() if external and operator_time_applies else []):
+    for category_id, rule in (operator_triggers.items() if operator_time_applies else []):
         unit_price = money(rule.unit_price)
         charge_per_hour = (rule.unit or PricingRule.Unit.UNIT) == PricingRule.Unit.HOUR
         if charge_per_hour:
@@ -434,22 +439,6 @@ def quote_fees(
         "unit_price": environmental_price,
         "subtotal": environmental_price,
     })
-    if operator_time_applies:
-        operator_rules_by_category = _rules_by_category(PricingRule.FeeType.OPERATOR)
-        selected_equipment = _resolve_items(items)
-        for equipment_name, label in (("led wall", "LED Wall Operator"), ("sound system", "Sound System Operator")):
-            matching = next((equipment for equipment, _, _ in selected_equipment if equipment.name.strip().casefold() == equipment_name), None)
-            operator_rule = operator_rules_by_category.get(matching.category_id) if matching else None
-            if matching and operator_rule:
-                operator_price = money(operator_rule.unit_price)
-                fees.append({
-                    "fee_type": PricingRule.FeeType.OPERATOR,
-                    "description": label,
-                    "quantity": Decimal("1.00"),
-                    "unit": PricingRule.Unit.FLAT,
-                    "unit_price": operator_price,
-                    "subtotal": operator_price,
-                })
     if not external:
         for line in fees:
             line["waived"] = True
