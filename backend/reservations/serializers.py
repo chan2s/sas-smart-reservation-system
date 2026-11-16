@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 from pathlib import Path
 
 from PIL import Image
@@ -22,6 +23,7 @@ from .models import (
 )
 from .services.availability import EARLIEST_START_TIME, check_availability
 from .services.pricing import snapshot_reservation_fees
+from .services import payments as payment_service
 from .services import workflow
 
 User = get_user_model()
@@ -121,6 +123,40 @@ class ReservationFeeSerializer(serializers.ModelSerializer):
             "subtotal",
             "created_at",
         )
+
+
+class ReservationPaymentUpdateSerializer(serializers.Serializer):
+    """Validated input for administrative payment tracking.
+
+    The backend derives the payment status and remaining balance, so only the
+    two amounts and the payment type are accepted from the client.
+    """
+
+    payment_type = serializers.ChoiceField(choices=Reservation.PaymentType.choices)
+    payment_required_amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        max_value=Decimal("9999999999.99"),
+    )
+    amount_paid = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        max_value=Decimal("9999999999.99"),
+        default=Decimal("0.00"),
+    )
+
+    def validate(self, attrs):
+        if attrs["amount_paid"] > attrs["payment_required_amount"]:
+            raise serializers.ValidationError(
+                {
+                    "amount_paid": (
+                        "The amount paid cannot exceed the required payment amount."
+                    )
+                }
+            )
+        return attrs
 
 
 class ReservationEventSerializer(serializers.ModelSerializer):
@@ -237,6 +273,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     status_reason = serializers.SerializerMethodField()
     # Rebook / "request new schedule" traceability (see Reservation.rebooked_from).
     rebooked_from = serializers.PrimaryKeyRelatedField(read_only=True)
+    # Administrative payment position (staff-only, external reservations only).
+    # Payment status is derived here from the two amounts, never stored, so it
+    # stays independent of the reservation status.
+    payment = serializers.SerializerMethodField()
     rebooked_from_reference = serializers.SerializerMethodField()
     event_type_label = serializers.CharField(source="get_event_type_display", read_only=True)
     resources = serializers.SerializerMethodField()
@@ -329,6 +369,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "resources",
             "estimated_total",
             "fees",
+            "payment",
             "approval_email_status",
             "approval_email_status_label",
             "generated_approval_status",
@@ -356,6 +397,39 @@ class ReservationListSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         actor = request.user if request and request.user.is_authenticated else None
         return resolve_requester_email(obj, actor)
+
+    def get_payment(self, obj):
+        """Payment amounts and derived state — visible to SAS staff only.
+
+        Internal/campus reservations never carry a payment obligation, so they
+        always return ``None``; the feature cannot leak into them through the
+        API. Public/requester responses drop this object entirely.
+        """
+        request = self.context.get("request")
+        if not (
+            request
+            and request.user.is_authenticated
+            and request.user.is_sas_staff
+            and obj.requester_type == Reservation.RequesterType.EXTERNAL
+        ):
+            return None
+        summary = payment_service.payment_summary(obj)
+        return {
+            "payment_type": summary["payment_type"],
+            "payment_type_label": summary["payment_type_label"],
+            "required_amount": (
+                f"{summary['required_amount']:.2f}"
+                if summary["required_amount"] is not None
+                else None
+            ),
+            "amount_paid": f"{summary['amount_paid']:.2f}",
+            "remaining_balance": f"{summary['remaining_balance']:.2f}",
+            "status": summary["status"],
+            "status_label": summary["status_label"],
+            "is_configured": summary["is_configured"],
+            "is_outstanding": summary["is_outstanding"],
+            "approval_warning": payment_service.approval_warning(obj),
+        }
 
     def get_generated_approval_error(self, obj):
         request = self.context.get("request")
@@ -472,6 +546,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
         # Approval-email delivery state is a staff diagnostic: never shown to
         # requesters or unauthenticated viewers.
         if not is_staff:
+            # Payment amounts and balances are financial records: staff-only.
+            data["payment"] = None
             data["approval_email_status"] = ""
             data["approval_email_status_label"] = ""
             data["approval_email_sent_at"] = None

@@ -44,6 +44,7 @@ import type {
   RequesterType,
   RequesterBreakdown,
   ReservationDetail,
+  ReservationPaymentInfo,
   ReservationStatus,
   ReservationSummary,
   Role,
@@ -879,6 +880,19 @@ export const endpoints = {
       verification_session,
       otp,
     }),
+  /** Staff-only: save the required amount, payment type, and amount received. */
+  updateReservationPayment: (
+    id: number,
+    payload: {
+      payment_type: 'DOWN_PAYMENT' | 'FULL_PAYMENT'
+      payment_required_amount: string
+      amount_paid: string
+    },
+  ) =>
+    api.post<{ detail: string; payment: ReservationPaymentInfo }>(
+      `/api/reservations/${id}/payments/`,
+      payload,
+    ),
   reservationAction: (id: number, action: string, body: Record<string, unknown> = {}) =>
     api.post<
       ReservationDetail & {

@@ -632,6 +632,7 @@ export interface ReservationEvent {
     | 'COMMENT'
     | 'EXPIRED'
     | 'REBOOKED'
+    | 'PAYMENT_RECORDED'
     | 'NEW_SCHEDULE_REQUESTED'
   event_type_label: string
   actor: number | null
@@ -654,6 +655,20 @@ export interface InspectionReport {
   photo: string | null
   reported_by_name: string
   created_at: string
+}
+
+export interface ReservationPaymentInfo {
+  payment_type: '' | 'DOWN_PAYMENT' | 'FULL_PAYMENT'
+  payment_type_label: string
+  required_amount: string | null
+  amount_paid: string
+  remaining_balance: string
+  status: 'UNPAID' | 'PARTIALLY_PAID' | 'FULLY_PAID'
+  status_label: string
+  is_configured: boolean
+  is_outstanding: boolean
+  /** Message the admin must acknowledge before approving, when outstanding. */
+  approval_warning: string | null
 }
 
 export interface ReservationSummary {
@@ -728,6 +743,8 @@ export interface ReservationSummary {
   estimated_total: string
   /** Priced fee breakdown (external org only); empty for campus users. */
   fees: ReservationFee[]
+  /** Staff-only payment tracking for external reservations. */
+  payment?: ReservationPaymentInfo | null
   /** Staff-only diagnostic: delivery state of the approval email. */
   approval_email_status: string
   approval_email_status_label: string

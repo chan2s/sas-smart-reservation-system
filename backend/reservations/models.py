@@ -460,6 +460,22 @@ class Reservation(models.Model):
         AWAITING = "AWAITING", "Awaiting Approval Letter"
         SUBMITTED = "SUBMITTED", "Document Submitted · Ready for Review"
 
+    class PaymentType(models.TextChoices):
+        """What the admin-entered required amount represents.
+
+        ``DOWN_PAYMENT`` is the initial amount expected before the event;
+        ``FULL_PAYMENT`` is the entire amount due. Neither waives the remaining
+        balance: both are tracked against the amount actually received.
+        """
+
+        DOWN_PAYMENT = "DOWN_PAYMENT", "Down Payment"
+        FULL_PAYMENT = "FULL_PAYMENT", "Full Payment"
+
+    class PaymentStatus(models.TextChoices):
+        UNPAID = "UNPAID", "Unpaid"
+        PARTIALLY_PAID = "PARTIALLY_PAID", "Partially Paid"
+        FULLY_PAID = "FULLY_PAID", "Fully Paid"
+
     class EventType(models.TextChoices):
         SEMINAR = "SEMINAR", "Seminar"
         MEETING = "MEETING", "Meeting"
@@ -578,6 +594,31 @@ class Reservation(models.Model):
     # client. The per-line breakdown lives in ``ReservationFee``.
     estimated_total = models.DecimalField(
         max_digits=12, decimal_places=2, default=Decimal("0.00")
+    )
+
+    # Administrative payment tracking for external-organization reservations
+    # only. Internal reservations never carry a payment obligation, so these
+    # stay blank/zero for them and the feature is refused by the API. Payment
+    # status is derived from these amounts (never stored), which keeps it
+    # independent of the reservation's own workflow status.
+    payment_type = models.CharField(
+        max_length=16,
+        choices=PaymentType.choices,
+        blank=True,
+        help_text="External only: down payment or full payment.",
+    )
+    payment_required_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="External only: amount the organization is required to pay.",
+    )
+    amount_paid = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="External only: total amount already received.",
     )
 
     status = models.CharField(
@@ -746,6 +787,17 @@ class Reservation(models.Model):
                 ),
                 name="approved_reservation_has_required_letter",
             ),
+            models.CheckConstraint(
+                condition=models.Q(amount_paid__gte=0),
+                name="reservation_amount_paid_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(payment_required_amount__isnull=True)
+                    | models.Q(payment_required_amount__gte=0)
+                ),
+                name="reservation_required_amount_non_negative",
+            ),
         ]
 
     def clean(self):
@@ -763,6 +815,36 @@ class Reservation(models.Model):
                     )
                 }
             )
+        # Payment fields are external-only. Validate them whenever they are
+        # configured so neither the admin site nor any other caller can store
+        # a negative amount or an amount received above the required amount.
+        if self.payment_required_amount is not None:
+            amount_paid = self.amount_paid if self.amount_paid is not None else Decimal("0.00")
+            if self.payment_required_amount < 0:
+                raise ValidationError(
+                    {"payment_required_amount": "The required amount cannot be negative."}
+                )
+            if amount_paid < 0:
+                raise ValidationError(
+                    {"amount_paid": "The amount paid cannot be negative."}
+                )
+            if amount_paid > self.payment_required_amount:
+                raise ValidationError(
+                    {
+                        "amount_paid": (
+                            "The amount paid cannot exceed the required payment amount."
+                        )
+                    }
+                )
+            if self.requester_type == self.RequesterType.CAMPUS:
+                raise ValidationError(
+                    {
+                        "payment_required_amount": (
+                            "Payment tracking applies only to external "
+                            "organization reservations."
+                        )
+                    }
+                )
 
     @property
     def has_approval_letter_document(self):
@@ -843,6 +925,51 @@ class Reservation(models.Model):
         if self.requester_type == self.RequesterType.EXTERNAL:
             return self.organization or self.contact_person or "External Requester"
         return "—"
+
+    @property
+    def remaining_balance(self) -> Decimal:
+        """Unpaid balance from the admin-entered required amount.
+
+        Floored at zero; a reservation with no configured payment obligation
+        has no balance. Down payments are NOT waived: the balance is simply
+        what remains of the required amount.
+        """
+        if self.payment_required_amount is None:
+            return Decimal("0.00")
+        balance = self.payment_required_amount - self.amount_paid
+        return balance if balance > 0 else Decimal("0.00")
+
+    @property
+    def payment_is_configured(self) -> bool:
+        """True once an administrator has set a required amount and type."""
+        return bool(
+            self.requester_type == self.RequesterType.EXTERNAL
+            and self.payment_type
+            and self.payment_required_amount is not None
+        )
+
+    @property
+    def payment_status(self) -> str:
+        """Derived payment state — independent of the reservation status.
+
+        This is intentionally computed rather than stored, so it can never
+        drift from the recorded amounts and an approved reservation can still
+        read Unpaid/Partially Paid.
+        """
+        if not self.payment_is_configured or self.amount_paid <= 0:
+            return self.PaymentStatus.UNPAID
+        if self.amount_paid < self.payment_required_amount:
+            return self.PaymentStatus.PARTIALLY_PAID
+        return self.PaymentStatus.FULLY_PAID
+
+    @property
+    def payment_status_label(self) -> str:
+        return self.PaymentStatus(self.payment_status).label
+
+    @property
+    def payment_outstanding(self) -> bool:
+        """True when a configured payment still has an unpaid balance."""
+        return self.payment_is_configured and self.remaining_balance > 0
 
     @property
     def requester_type_label(self) -> str:
@@ -1017,6 +1144,9 @@ class ReservationEvent(models.Model):
         # A new reservation was created from an expired one, by an
         # administrator (rebook) or by the requester (request new schedule).
         REBOOKED = "REBOOKED", "Rebooked"
+        # An administrator updated the payment information (required amount,
+        # payment type, or amount received) for an external reservation.
+        PAYMENT_RECORDED = "PAYMENT_RECORDED", "Payment recorded"
         NEW_SCHEDULE_REQUESTED = (
             "NEW_SCHEDULE_REQUESTED",
             "New schedule requested",

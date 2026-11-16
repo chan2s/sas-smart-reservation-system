@@ -23,6 +23,7 @@ import {
   useRetryApprovalEmail,
   useRetryApprovalDocument,
   useResendApprovalEmail,
+  useUpdateReservationPayment,
   useUploadApprovalLetterImage,
 } from '@/hooks/queries'
 import { api, ApiError, endpoints } from '@/lib/api'
@@ -33,7 +34,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { StatusBadge, Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { Field, Input, Textarea } from '@/components/ui/Form'
+import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { draftForReservationEdit, draftFromReservation, saveDraft } from '@/lib/reservationDraft'
 import { Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
@@ -51,11 +52,23 @@ export function ReservationDetailPage() {
   const retryDocument = useRetryApprovalDocument(reservationId)
   const resendExternalEmail = useResendApprovalEmail(reservationId)
   const uploadApprovalImage = useUploadApprovalLetterImage(reservationId)
+  const updatePayment = useUpdateReservationPayment(reservationId)
 
   const [modal, setModal] = useState<
-    null | 'reject' | 'changes' | 'cancel' | 'checkin-override' | 'no-show'
+    | null
+    | 'reject'
+    | 'changes'
+    | 'cancel'
+    | 'checkin-override'
+    | 'no-show'
+    | 'payment-warning'
   >(null)
   const [reason, setReason] = useState('')
+  const [paymentEditing, setPaymentEditing] = useState(false)
+  const [paymentType, setPaymentType] = useState<'DOWN_PAYMENT' | 'FULL_PAYMENT'>('FULL_PAYMENT')
+  const [requiredAmount, setRequiredAmount] = useState('')
+  const [amountPaidInput, setAmountPaidInput] = useState('')
+  const [paymentError, setPaymentError] = useState('')
   const [revisionSubject, setRevisionSubject] = useState('')
   const [revisionMessage, setRevisionMessage] = useState('')
   const [approvalImageFile, setApprovalImageFile] = useState<File | null>(null)
@@ -93,18 +106,21 @@ export function ReservationDetailPage() {
   async function runAction(
     actionName: 'approve' | 'reject' | 'request_changes' | 'cancel',
     message: string,
+    extraBody: Record<string, unknown> = {},
   ) {
     try {
       await action.mutateAsync({
         action: actionName,
-        body:
-          actionName === 'reject'
+        body: {
+          ...(actionName === 'reject'
             ? { reason: message }
             : actionName === 'request_changes'
               ? { message }
               : actionName === 'cancel'
                 ? { reason: message }
-                : { comment: message },
+                : { comment: message }),
+          ...extraBody,
+        },
       })
       toast(
         actionName === 'approve'
@@ -118,6 +134,17 @@ export function ReservationDetailPage() {
       setModal(null)
       setReason('')
     } catch (error) {
+      // The backend refuses an unacknowledged outstanding-payment approval.
+      // Open the same confirmation dialog so the admin can explicitly proceed.
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        (error.data as { code?: string } | undefined)?.code === 'PAYMENT_WARNING'
+      ) {
+        setModal('payment-warning')
+        toast(error.message, 'error')
+        return
+      }
       toast(
         error instanceof ApiError && error.message
           ? error.message
@@ -125,6 +152,62 @@ export function ReservationDetailPage() {
         'error',
       )
     }
+  }
+
+  function startPaymentEdit() {
+    const payment = reservation?.payment
+    setPaymentType(payment?.payment_type === 'DOWN_PAYMENT' ? 'DOWN_PAYMENT' : 'FULL_PAYMENT')
+    setRequiredAmount(payment?.required_amount ?? reservation?.estimated_total ?? '')
+    setAmountPaidInput(payment?.amount_paid ?? '0.00')
+    setPaymentError('')
+    setPaymentEditing(true)
+  }
+
+  async function savePayment() {
+    const current = reservation
+    if (!current) return
+    const required = Number.parseFloat(requiredAmount || '0')
+    const paid = Number.parseFloat(amountPaidInput || '0')
+    if (!Number.isFinite(required) || required <= 0) {
+      setPaymentError('Enter a required payment amount greater than zero.')
+      return
+    }
+    if (!Number.isFinite(paid) || paid < 0) {
+      setPaymentError('The amount paid cannot be negative.')
+      return
+    }
+    if (paid > required) {
+      setPaymentError('The amount paid cannot exceed the required payment amount.')
+      return
+    }
+    setPaymentError('')
+    try {
+      await updatePayment.mutateAsync({
+        payment_type: paymentType,
+        payment_required_amount: required.toFixed(2),
+        amount_paid: paid.toFixed(2),
+      })
+      toast('Payment information saved.')
+      setPaymentEditing(false)
+    } catch (error) {
+      setPaymentError(
+        error instanceof ApiError && error.message
+          ? error.message
+          : 'Could not save the payment information.',
+      )
+    }
+  }
+
+  function requestApproval() {
+    if (reservation?.payment?.is_outstanding) {
+      setModal('payment-warning')
+      return
+    }
+    void runAction('approve', '')
+  }
+
+  function approveAnyway() {
+    void runAction('approve', '', { acknowledge_payment_warning: true })
   }
 
   function defaultRevisionSubject() {
@@ -400,7 +483,7 @@ export function ReservationDetailPage() {
           {canApprove && (
             <Button
               icon={<CheckCircle2 className="size-4" />}
-              onClick={() => runAction('approve', '')}
+              onClick={requestApproval}
               loading={action.isPending}
             >
               Approve
@@ -511,6 +594,29 @@ export function ReservationDetailPage() {
         </div>
       )}
 
+      {/* Outstanding payment stays visible after approval — payment status is
+          independent of the reservation status. */}
+      {reservation.requester_type === 'EXTERNAL' &&
+        reservation.payment?.is_outstanding &&
+        ['PENDING', 'APPROVED', 'ACTIVE'].includes(reservation.status) && (
+          <div className="mt-5 flex items-start gap-2.5 rounded-xl border border-status-maintenance/25 bg-status-maintenance-bg px-4 py-3.5 text-sm">
+            <AlertTriangle
+              className="mt-0.5 size-4.5 shrink-0 text-status-maintenance"
+              aria-hidden
+            />
+            <div>
+              <p className="font-semibold text-status-maintenance">
+                {reservation.payment.status_label} —{' '}
+                {formatCurrency(reservation.payment.remaining_balance)} outstanding
+              </p>
+              <p className="mt-0.5 leading-relaxed text-status-maintenance">
+                This reservation is {reservation.status_label.toLowerCase()} while
+                the external organization still has an unpaid balance.
+              </p>
+            </div>
+          </div>
+        )}
+
       {/* Body */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -578,6 +684,7 @@ export function ReservationDetailPage() {
 
           {/* Estimated cost — snapshotted external-organization fees. */}
           {reservation.requester_type === 'EXTERNAL' ? (
+            <>
             <Card>
               <CardHeader
                 title="Estimated cost"
@@ -620,6 +727,145 @@ export function ReservationDetailPage() {
                 </div>
               )}
             </Card>
+
+            {/* Administrative payment tracking — external reservations only. */}
+            {isStaff && (
+              <Card>
+                <CardHeader
+                  title="Payment"
+                  description="Required payment and amount received from this external organization"
+                />
+                {reservation.payment?.is_configured ? (
+                  <>
+                    <div className="mt-4">
+                      <Badge tone={paymentStatusTone(reservation.payment.status)}>
+                        {reservation.payment.status_label}
+                      </Badge>
+                    </div>
+                    <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                      <DetailItem
+                        label="Payment type"
+                        value={reservation.payment.payment_type_label}
+                      />
+                      <DetailItem
+                        label="Required amount"
+                        value={formatCurrency(reservation.payment.required_amount ?? '0')}
+                      />
+                      <DetailItem
+                        label="Amount paid"
+                        value={formatCurrency(reservation.payment.amount_paid)}
+                      />
+                      <DetailItem
+                        label="Remaining balance"
+                        value={
+                          <span
+                            className={cn(
+                              'font-semibold tabular-nums',
+                              reservation.payment.is_outstanding
+                                ? 'text-status-maintenance'
+                                : 'text-status-available',
+                            )}
+                          >
+                            {formatCurrency(reservation.payment.remaining_balance)}
+                          </span>
+                        }
+                      />
+                    </dl>
+                  </>
+                ) : (
+                  <p className="mt-4 text-sm text-muted">
+                    No payment amount has been set for this reservation.
+                  </p>
+                )}
+
+                {!isViewOnly && !paymentEditing && (
+                  <Button
+                    className="mt-4"
+                    variant={reservation.payment?.is_configured ? 'ghost' : 'secondary'}
+                    size="sm"
+                    onClick={startPaymentEdit}
+                  >
+                    {reservation.payment?.is_configured
+                      ? 'Update payment information'
+                      : 'Set up payment'}
+                  </Button>
+                )}
+
+                {!isViewOnly && paymentEditing && (
+                  <div className="mt-4 space-y-4 rounded-xl border border-line bg-soft/60 p-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Payment type" htmlFor="payment-type">
+                        <Select
+                          id="payment-type"
+                          value={paymentType}
+                          onChange={(event) =>
+                            setPaymentType(event.target.value as 'DOWN_PAYMENT' | 'FULL_PAYMENT')
+                          }
+                        >
+                          <option value="FULL_PAYMENT">Full Payment</option>
+                          <option value="DOWN_PAYMENT">Down Payment</option>
+                        </Select>
+                      </Field>
+                      <Field label="Required amount (₱)" htmlFor="payment-required">
+                        <Input
+                          id="payment-required"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={requiredAmount}
+                          onChange={(event) => setRequiredAmount(event.target.value)}
+                        />
+                      </Field>
+                      <Field label="Amount paid (₱)" htmlFor="payment-paid">
+                        <Input
+                          id="payment-paid"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={amountPaidInput}
+                          onChange={(event) => setAmountPaidInput(event.target.value)}
+                        />
+                      </Field>
+                      <div>
+                        <p className="text-[13px] font-medium text-ink">Remaining balance</p>
+                        <p className="mt-2 text-sm font-semibold tabular-nums text-ink">
+                          {formatCurrency(previewRemaining(requiredAmount, amountPaidInput))}
+                        </p>
+                      </div>
+                    </div>
+                    {paymentError && (
+                      <p role="alert" className="text-xs text-status-rejected">
+                        {paymentError}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted">
+                      A down payment does not waive the remaining balance — it stays tracked
+                      against the amount received.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPaymentEditing(false)}
+                        disabled={updatePayment.isPending}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => void savePayment()}
+                        loading={updatePayment.isPending}
+                      >
+                        Save payment
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            )}
+            </>
           ) : (
             <Card>
               <CardHeader
@@ -1084,6 +1330,65 @@ export function ReservationDetailPage() {
         </Field> */}
       </Modal>
 
+      {/* Approval with an outstanding payment requires explicit confirmation.
+          Payment never blocks approval — it only has to be acknowledged. */}
+      <Modal
+        open={modal === 'payment-warning'}
+        onClose={() => setModal(null)}
+        title="Payment outstanding"
+        description="This external organization has not fully paid for the reservation."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModal(null)} disabled={action.isPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setModal(null)
+                approveAnyway()
+              }}
+              loading={action.isPending}
+            >
+              Approve Anyway
+            </Button>
+          </>
+        }
+      >
+        <div className="rounded-xl border border-status-maintenance/25 bg-status-maintenance-bg p-4">
+          <p className="flex items-start gap-2 text-sm font-semibold text-status-maintenance">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            {reservation.payment?.approval_warning ??
+              'Payment has not been received for this reservation. Are you sure you want to approve it without payment?'}
+          </p>
+          {reservation.payment?.is_configured && (
+            <dl className="mt-3 space-y-2 text-sm">
+              <div className="flex items-start justify-between gap-4">
+                <dt className="shrink-0 text-body">Required amount</dt>
+                <dd className="text-right font-medium tabular-nums text-ink">
+                  {formatCurrency(reservation.payment.required_amount ?? '0')}
+                </dd>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <dt className="shrink-0 text-body">Amount paid</dt>
+                <dd className="text-right font-medium tabular-nums text-ink">
+                  {formatCurrency(reservation.payment.amount_paid)}
+                </dd>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <dt className="shrink-0 text-body">Remaining balance</dt>
+                <dd className="text-right font-semibold tabular-nums text-status-maintenance">
+                  {formatCurrency(reservation.payment.remaining_balance)}
+                </dd>
+              </div>
+            </dl>
+          )}
+        </div>
+        <p className="mt-4 text-sm leading-relaxed text-body">
+          The reservation can still be approved. Selecting <strong>Approve Anyway</strong>{' '}
+          keeps the current payment status and records the approval.
+        </p>
+      </Modal>
+
       {/* No-show: staff-only, explicit confirmation, backend revalidates. */}
       <ConfirmDialog
         open={modal === 'no-show'}
@@ -1196,6 +1501,22 @@ function AvatarInitials({ name }: { name: string }) {
   )
 }
 
+function paymentStatusTone(
+  status: 'UNPAID' | 'PARTIALLY_PAID' | 'FULLY_PAID',
+): 'rose' | 'orange' | 'emerald' {
+  if (status === 'FULLY_PAID') return 'emerald'
+  if (status === 'PARTIALLY_PAID') return 'orange'
+  return 'rose'
+}
+
+/** Display-only preview; the backend always recalculates the saved balance. */
+function previewRemaining(required: string, paid: string): string {
+  const requiredValue = Number.parseFloat(required || '0')
+  const paidValue = Number.parseFloat(paid || '0')
+  if (!Number.isFinite(requiredValue) || !Number.isFinite(paidValue)) return '0'
+  return String(Math.max(requiredValue - paidValue, 0))
+}
+
 function feeSummary(fee: ReservationFee): string {
   if (fee.unit === 'flat') return 'Flat fee'
   if (fee.unit === 'hour') {
@@ -1257,7 +1578,7 @@ function Timeline({ events }: { events: ReservationEvent[] }) {
               event.event_type === 'NO_SHOW' && 'bg-status-no-show',
               event.event_type === 'REMINDER_SENT' && 'bg-status-approved',
               event.event_type === 'EXPIRED' && 'bg-status-expired',
-              ['REBOOKED', 'NEW_SCHEDULE_REQUESTED'].includes(event.event_type) && 'bg-brand',
+              ['REBOOKED', 'NEW_SCHEDULE_REQUESTED', 'PAYMENT_RECORDED'].includes(event.event_type) && 'bg-brand',
               ['CREATED', 'CHANGES_REQUESTED'].includes(event.event_type) && 'bg-status-pending',
               ['COMMENT'].includes(event.event_type) && 'bg-muted',
             )}

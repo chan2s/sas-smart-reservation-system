@@ -597,6 +597,22 @@ export function useReservationAction(id: number | null) {
   })
 }
 
+export function useUpdateReservationPayment(id: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: {
+      payment_type: 'DOWN_PAYMENT' | 'FULL_PAYMENT'
+      payment_required_amount: string
+      amount_paid: string
+    }) => endpoints.updateReservationPayment(id as number, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reservation', id] })
+      void queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      void queryClient.invalidateQueries({ queryKey: ['summary'] })
+    },
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Availability & recommendations
 // ---------------------------------------------------------------------------

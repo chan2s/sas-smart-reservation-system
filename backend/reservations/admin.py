@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib import admin
+from django.utils.html import format_html
 
 from facilities.models import Facility
 
@@ -275,9 +276,10 @@ class ReservationAdmin(admin.ModelAdmin):
         "requester",
         "affiliation_admin",
         "organization_admin",
+        "payment_status_admin",
         "approval_email",
     )
-    list_filter = ("status", "event_type", "requester_type", "date")
+    list_filter = ("status", "event_type", "requester_type", "date", "payment_type")
     search_fields = (
         "reservation_id",
         "event_name",
@@ -290,6 +292,8 @@ class ReservationAdmin(admin.ModelAdmin):
     readonly_fields = (
         "approval_email_status",
         "estimated_total",
+        "payment_status_admin",
+        "remaining_balance_admin",
         "checkin_code",
         "reminder_sent_at",
         "reminder_email_sent_at",
@@ -332,6 +336,23 @@ class ReservationAdmin(admin.ModelAdmin):
         ),
         ("Schedule", {"fields": ("facility", "date", "start_time", "end_time")}),
         (
+            "Payment (external organizations only)",
+            {
+                "fields": (
+                    "payment_type",
+                    "payment_required_amount",
+                    "amount_paid",
+                    "payment_status_admin",
+                    "remaining_balance_admin",
+                ),
+                "description": (
+                    "Required amount is what the external organization must "
+                    "pay; a down payment does not waive the remaining "
+                    "balance. Payment status is calculated from these amounts."
+                ),
+            },
+        ),
+        (
             "Status",
             {
                 "fields": (
@@ -369,6 +390,42 @@ class ReservationAdmin(admin.ModelAdmin):
         ),
     )
     actions = ["retry_approval_email", "recalculate_fees"]
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        if obj is not None and obj.requester_type != Reservation.RequesterType.EXTERNAL:
+            return tuple(
+                (title, options)
+                for title, options in fieldsets
+                if not title.startswith("Payment")
+            )
+        return fieldsets
+
+    @admin.display(description="Payment status")
+    def payment_status_admin(self, obj):
+        if obj.requester_type != Reservation.RequesterType.EXTERNAL:
+            return "—"
+        if not obj.payment_is_configured:
+            return "Not configured"
+        colors = {
+            Reservation.PaymentStatus.UNPAID: "#b91c1c",
+            Reservation.PaymentStatus.PARTIALLY_PAID: "#c2410c",
+            Reservation.PaymentStatus.FULLY_PAID: "#15803d",
+        }
+        return format_html(
+            '<strong style="color:{};">{}</strong>',
+            colors[obj.payment_status],
+            obj.payment_status_label,
+        )
+
+    @admin.display(description="Remaining balance")
+    def remaining_balance_admin(self, obj):
+        if (
+            obj.requester_type != Reservation.RequesterType.EXTERNAL
+            or obj.payment_required_amount is None
+        ):
+            return "—"
+        return f"PHP {obj.remaining_balance:,.2f}"
 
     @admin.display(description="Affiliation", ordering="requester__affiliation")
     def affiliation_admin(self, obj):

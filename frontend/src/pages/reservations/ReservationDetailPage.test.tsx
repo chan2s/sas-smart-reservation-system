@@ -40,6 +40,7 @@ vi.mock('@/hooks/queries', () => ({
   }),
   useRetryApprovalDocument: () => ({ mutate: vi.fn(), isPending: false }),
   useResendApprovalEmail: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateReservationPayment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUploadApprovalLetterImage: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 

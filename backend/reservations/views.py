@@ -31,11 +31,12 @@ from .serializers import (
     ReservationCreateSerializer,
     ReservationDetailSerializer,
     ReservationListSerializer,
+    ReservationPaymentUpdateSerializer,
     ReservationResubmitSerializer,
     PublicTrackSerializer,
     PublicApprovalLetterUploadSerializer,
 )
-from .services import confirmations, expiration, workflow
+from .services import confirmations, expiration, payments as payment_service, workflow
 from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
 from .services.public_tracking import reservation_for_tracking_token
@@ -920,6 +921,19 @@ class ReservationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def approve(self, request, pk=None):
         reservation = self.get_object()
+        # Payment never blocks approval, but an outstanding balance must be
+        # explicitly acknowledged. This makes the confirmation authoritative
+        # even for non-UI clients instead of relying on the dialog alone.
+        warning = payment_service.approval_warning(reservation)
+        if warning and request.data.get("acknowledge_payment_warning") is not True:
+            return Response(
+                {
+                    "detail": warning,
+                    "code": "PAYMENT_WARNING",
+                    "payment": self._payment_payload(reservation),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         try:
             workflow.approve_reservation(
                 reservation, request.user, request.data.get("comment", "")
@@ -1115,6 +1129,74 @@ class ReservationViewSet(viewsets.ModelViewSet):
         response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "private, no-store"
         return response
+
+    @action(
+        detail=True,
+        methods=["get", "post", "patch"],
+        url_path="payments",
+        permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly],
+    )
+    def payments(self, request, pk=None):
+        """Administrative payment tracking for an external reservation.
+
+        GET returns the derived payment position. POST/PATCH saves the required
+        amount, payment type, and amount received. Internal/campus reservations
+        are rejected outright: this feature never introduces a payment
+        obligation for them.
+        """
+        reservation = self.get_object()
+        if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
+            return Response(
+                {
+                    "detail": (
+                        "Payment management applies only to external "
+                        "organization reservations. Internal reservations "
+                        "require no payment."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if request.method == "GET":
+            return Response({"payment": self._payment_payload(reservation)})
+
+        serializer = ReservationPaymentUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            payment_service.update_payment(
+                reservation, request.user, **serializer.validated_data
+            )
+        except payment_service.PaymentError as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        reservation.refresh_from_db()
+        return Response(
+            {
+                "detail": "Payment information saved.",
+                "payment": self._payment_payload(reservation),
+            }
+        )
+
+    def _payment_payload(self, reservation):
+        summary = payment_service.payment_summary(reservation)
+        return {
+            "payment_type": summary["payment_type"],
+            "payment_type_label": summary["payment_type_label"],
+            "required_amount": (
+                f"{summary['required_amount']:.2f}"
+                if summary["required_amount"] is not None
+                else None
+            ),
+            "amount_paid": f"{summary['amount_paid']:.2f}",
+            "remaining_balance": f"{summary['remaining_balance']:.2f}",
+            "status": summary["status"],
+            "status_label": summary["status_label"],
+            "is_configured": summary["is_configured"],
+            "is_outstanding": summary["is_outstanding"],
+            "approval_warning": payment_service.approval_warning(reservation),
+        }
 
     @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
     def reject(self, request, pk=None):
