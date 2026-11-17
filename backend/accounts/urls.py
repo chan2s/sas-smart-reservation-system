@@ -112,9 +112,24 @@ urlpatterns = [
         name="organization-list",
     ),
     path(
+        "organizations/duplicates/",
+        organization_views.OrganizationDuplicateGroupsView.as_view(),
+        name="organization-duplicates",
+    ),
+    path(
         "organizations/<int:pk>/",
         organization_views.OrganizationDetailView.as_view(),
         name="organization-detail",
+    ),
+    path(
+        "organizations/<int:pk>/reservations/",
+        organization_views.OrganizationReservationHistoryView.as_view(),
+        name="organization-reservations",
+    ),
+    path(
+        "organizations/<int:pk>/edit/",
+        organization_views.OrganizationUpdateView.as_view(),
+        name="organization-edit",
     ),
     path(
         "organizations/<int:pk>/verify/",

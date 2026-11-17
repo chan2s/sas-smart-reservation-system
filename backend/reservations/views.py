@@ -1,5 +1,6 @@
 import datetime
 import json
+import logging
 import mimetypes
 from pathlib import Path
 
@@ -13,15 +14,18 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.organization_registry import link_reservation_organization
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
     IsSasStaff,
 )
 from accounts.throttling import (
+    BookerLookupThrottle,
     PublicReservationEditOTPThrottle,
     PublicReservationThrottle,
     ReservationEditOTPThrottle,
 )
+from config.client_ip import get_client_ip
 from facilities.models import Facility
 from equipment.services import unassigned_equipment_for_facility
 from notifications.models import Notification
@@ -37,6 +41,7 @@ from .serializers import (
     PublicApprovalLetterUploadSerializer,
 )
 from .services import confirmations, expiration, payments as payment_service, workflow
+from .services import booker_lookup as booker_service
 from .services.availability import check_availability, find_alternatives
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
 from .services.public_tracking import reservation_for_tracking_token
@@ -50,6 +55,8 @@ from .services.edit_verification import (
     hash_session_token,
     verify_otp,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _record_rebook_lineage(request, reservation):
@@ -123,6 +130,40 @@ def _masked_email(email):
     if not separator:
         return ""
     return f"{local[:1]}{'*' * min(max(len(local) - 1, 2), 6)}@{domain}"
+
+
+def _record_submission_metadata(request, reservation):
+    """Link the organization and store supplementary submission metadata.
+
+    Runs only after a reservation has been saved successfully, so an invalid
+    or abandoned submission can never create an organization record. The IP is
+    resolved from the trusted proxy chain and is not used for identity.
+    """
+    link_reservation_organization(reservation, create=True)
+    ip = get_client_ip(request)
+    if ip and reservation.submission_ip != ip:
+        reservation.submission_ip = ip
+        reservation.save(update_fields=["submission_ip"])
+
+
+def _apply_booker_lookup(reservation, request):
+    """Apply a verified returning-booker token after a successful save."""
+    token = ""
+    if hasattr(request, "data") and hasattr(request.data, "get"):
+        token = str(request.data.get("booker_session") or "")
+    if not token:
+        return
+    try:
+        booker_service.apply_booker_updates(reservation, token)
+    except Exception:  # noqa: BLE001 — metadata refresh must never fail a booking
+        logger.exception("Returning-booker record refresh failed")
+
+
+def _masked_phone(phone):
+    digits = "".join(char for char in (phone or "") if char.isdigit())
+    if len(digits) < 4:
+        return ""
+    return f"•••• {digits[-4:]}"
 
 
 @api_view(["POST"])
@@ -624,6 +665,12 @@ def public_reservation_submit(request):
             }, status=status.HTTP_409_CONFLICT)
         raise
     reservation = serializer.save()
+    # Only a successfully saved reservation reaches these: abandoned or
+    # invalid submissions create neither an organization record nor IP
+    # metadata. The returning-booker token is single-use and applied here, not
+    # during validation.
+    _record_submission_metadata(request, reservation)
+    _apply_booker_lookup(reservation, request)
     workflow.record_event(
         reservation, ReservationEvent.EventType.CREATED, actor=None,
         message="Public reservation submitted for approval.",
@@ -650,6 +697,104 @@ def public_reservation_submit(request):
         "approval_document_status": reservation.approval_document_status,
         "approval_document_status_label": reservation.get_approval_document_status_display(),
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([BookerLookupThrottle])
+def public_booker_lookup(request):
+    """POST /api/public/reservations/booker-lookup/ — start a phone lookup.
+
+    The phone only identifies a previous successful reservation; saved details
+    are withheld until the email on file confirms an OTP.
+    """
+    data = request.data if hasattr(request.data, "get") else {}
+    phone = str(data.get("phone") or "").strip()
+    try:
+        verification, otp, email, session_token = booker_service.start_lookup(phone)
+    except booker_service.BookerLookupError as exc:
+        return Response({"detail": exc.message}, status=exc.status_code)
+
+    from notifications.email_service import send_booker_lookup_otp
+
+    if not send_booker_lookup_otp(email, otp, _masked_phone(verification.phone)):
+        verification.delete()
+        return Response(
+            {"detail": "The verification email could not be sent. Please try again."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return Response(
+        {
+            "verification_session": session_token,
+            "expires_at": verification.expires_at,
+            "resend_available_at": verification.resend_available_at,
+            "email_hint": _masked_email(email),
+            "phone_hint": _masked_phone(verification.phone),
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([BookerLookupThrottle])
+def public_booker_resend(request):
+    """POST /api/public/reservations/booker-resend/ — new lookup code."""
+    data = request.data if hasattr(request.data, "get") else {}
+    try:
+        verification, otp = booker_service.resend_lookup_otp(
+            str(data.get("verification_session") or "")
+        )
+    except booker_service.BookerLookupError as exc:
+        return Response({"detail": exc.message}, status=exc.status_code)
+
+    from notifications.email_service import send_booker_lookup_otp
+
+    if not send_booker_lookup_otp(
+        verification.contact_email, otp, _masked_phone(verification.phone)
+    ):
+        return Response(
+            {"detail": "The verification email could not be sent. Please try again."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return Response(
+        {
+            "expires_at": verification.expires_at,
+            "resend_available_at": verification.resend_available_at,
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([BookerLookupThrottle])
+def public_booker_verify(request):
+    """POST /api/public/reservations/booker-verify/ — verify and return details."""
+    data = request.data if hasattr(request.data, "get") else {}
+    try:
+        verification, booker_token = booker_service.verify_lookup(
+            str(data.get("verification_session") or ""),
+            str(data.get("otp") or ""),
+        )
+    except booker_service.BookerLookupError as exc:
+        return Response({"detail": exc.message}, status=exc.status_code)
+
+    details = booker_service.details_for(verification)
+    details["organization_type"] = Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
+        details.get("organization_type", ""),
+        Reservation.OrganizationType.OTHER,
+    )
+    return Response(
+        {
+            "booker_session": booker_token,
+            "expires_at": verification.expires_at,
+            "details": details,
+        }
+    )
 
 
 class ReservationViewSet(viewsets.ModelViewSet):
@@ -764,6 +909,8 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 )
             raise
         reservation = serializer.save()
+        _record_submission_metadata(request, reservation)
+        _apply_booker_lookup(reservation, request)
         is_rebook = reservation.rebooked_from_id is not None
         workflow.record_event(
             reservation,

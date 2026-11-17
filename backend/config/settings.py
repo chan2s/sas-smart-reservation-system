@@ -117,6 +117,16 @@ ALLOWED_HOSTS = [
 # Caddy terminates public TLS; the backend is not host-published.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# Reverse proxies whose forwarded client-IP headers may be trusted. Empty by
+# default: anything outside this list is treated as a direct-peer address and
+# ``X-Forwarded-For`` is ignored. Populate with the ingress/proxy addresses
+# (exact IPs or CIDRs) only when such a proxy actually fronts Django.
+TRUSTED_PROXY_IPS = [
+    value.strip()
+    for value in os.environ.get("TRUSTED_PROXY_IPS", "").split(",")
+    if value.strip()
+]
+
 SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
 SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = _env_bool("CSRF_COOKIE_SECURE", not DEBUG)
@@ -323,6 +333,7 @@ REST_FRAMEWORK = {
         "public_reservation": "5/min",
         "public_reservation_edit_otp": "5/min",
         "reservation_edit_otp": "10/min",
+        "booker_lookup": "5/min",
         # Chatbot Q&A — modest per-user limit; visitors are IP-limited
         # because the endpoint also serves the public landing/login pages.
         "chatbot": "30/min",

@@ -83,6 +83,10 @@ export interface Organization {
   contact_email?: string
   contact_number?: string
   member_count?: number
+  /** Number of reservations linked to this registry record. */
+  total_reservations?: number
+  /** Date of the most recent linked reservation (YYYY-MM-DD). */
+  last_reservation_date?: string | null
   created_by_name?: string
   created_at?: string
   // Detail-only fields.
@@ -93,6 +97,58 @@ export interface Organization {
   reviewed_at?: string | null
   updated_at?: string
   members?: OrganizationMember[]
+  reservation_history?: OrganizationReservationHistoryRow[]
+}
+
+export interface OrganizationReservationHistoryRow {
+  id: number
+  reservation_id: string
+  event_name: string
+  date: string
+  status: string
+  status_label: string
+  facility: string
+}
+
+export interface OrganizationDuplicateGroup {
+  normalized_name: string
+  organizations: Organization[]
+}
+
+/** Saved details released only after a returning-booker OTP verification. */
+export interface BookerLookupDetails {
+  organization_id: number | null
+  organization_name: string
+  organization_type: string
+  contact_person: string
+  contact_email: string
+  contact_phone: string
+  reservation_summary?: {
+    total: number
+    pending: number
+    approved: number
+    completed: number
+    rejected: number
+  }
+  recent_reservations?: Array<{
+    id: number
+    reservation_id: string
+    event_name: string
+    purpose: string
+    date: string
+    created_at: string
+    status: ReservationStatus
+    facility__name: string
+  }>
+  pending_reservations?: Array<{
+    id: number
+    reservation_id: string
+    event_name: string
+    date: string
+    created_at: string
+    status: ReservationStatus
+    facility__name: string
+  }>
 }
 
 /**

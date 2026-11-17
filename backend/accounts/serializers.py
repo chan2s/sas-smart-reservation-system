@@ -9,6 +9,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .login_activity import record_password_login
 from .models import AuditLog, LoginActivity, Organization
+from .organization_registry import find_organization, normalize_organization_name
 
 User = get_user_model()
 
@@ -73,12 +74,13 @@ class OrganizationMemberSerializer(serializers.ModelSerializer):
 
 
 class OrganizationListSerializer(OrganizationBriefSerializer):
-    """Row shape for the staff verification queue."""
+    """Row shape for the staff organization registry."""
 
     member_count = serializers.IntegerField(read_only=True)
     created_by_name = serializers.CharField(
         source="created_by.display_name", read_only=True, default=""
     )
+    total_reservations = serializers.SerializerMethodField()
 
     class Meta(OrganizationBriefSerializer.Meta):
         fields = OrganizationBriefSerializer.Meta.fields + (
@@ -86,9 +88,19 @@ class OrganizationListSerializer(OrganizationBriefSerializer):
             "contact_email",
             "contact_number",
             "member_count",
-            "created_by_name",
+            "total_reservations",
+            "last_reservation_date",
             "created_at",
+            "created_by_name",
         )
+
+    def get_total_reservations(self, obj) -> int:
+        # ``stats_total_reservations`` is supplied by the list view's
+        # annotation; the detail/other callers fall back to a direct count.
+        annotated = getattr(obj, "stats_total_reservations", None)
+        if annotated is not None:
+            return annotated
+        return obj.organization_reservations.count()
 
 
 class OrganizationSerializer(OrganizationListSerializer):
@@ -98,6 +110,7 @@ class OrganizationSerializer(OrganizationListSerializer):
         source="reviewed_by.display_name", read_only=True, default=""
     )
     members = OrganizationMemberSerializer(many=True, read_only=True)
+    reservation_history = serializers.SerializerMethodField()
 
     class Meta(OrganizationListSerializer.Meta):
         fields = OrganizationListSerializer.Meta.fields + (
@@ -107,8 +120,58 @@ class OrganizationSerializer(OrganizationListSerializer):
             "reviewed_by_name",
             "reviewed_at",
             "members",
+            "reservation_history",
             "updated_at",
         )
+
+    def get_reservation_history(self, obj) -> list:
+        """The ten most recent reservations for the registry detail panel."""
+        rows = obj.organization_reservations.order_by("-date", "-id")[:10]
+        return [
+            {
+                "id": reservation.id,
+                "reservation_id": reservation.reservation_id,
+                "event_name": reservation.event_name,
+                "date": reservation.date,
+                "status": reservation.status,
+                "status_label": reservation.get_status_display(),
+                "facility": reservation.facility.name,
+            }
+            for reservation in rows
+        ]
+
+
+class OrganizationAdminUpdateSerializer(serializers.ModelSerializer):
+    """Staff-editable organization details.
+
+    The organization code and creation audit fields are never editable. A
+    name/type change is checked against the same normalized identity used by
+    the database constraint so the API returns a clear error instead of a
+    server error.
+    """
+
+    class Meta:
+        model = Organization
+        fields = (
+            "organization_name",
+            "organization_type",
+            "contact_person",
+            "contact_email",
+            "contact_number",
+            "address",
+            "purpose",
+            "is_active",
+        )
+
+    def validate(self, attrs):
+        name = attrs.get("organization_name", self.instance.organization_name)
+        organization_type = attrs.get(
+            "organization_type", self.instance.organization_type
+        )
+        ensure_unique_organization(
+            name, organization_type, exclude_id=self.instance.pk
+        )
+        return attrs
 
 
 class OrganizationRegistrationSerializer(serializers.ModelSerializer):
@@ -132,6 +195,29 @@ class OrganizationRegistrationSerializer(serializers.ModelSerializer):
 # may, and vice versa. Internal organizations are represented by an authorized
 # faculty/staff member, so NORSU_OFFICE is no longer a selectable affiliation.
 INTERNAL_AFFILIATIONS = (User.Affiliation.NORSU_FACULTY_STAFF,)
+
+
+def ensure_unique_organization(name, organization_type, *, exclude_id=None):
+    """Reject a registration that would duplicate an existing registry record.
+
+    The organization name is matched through the same normalized identity the
+    database constraint uses. Registration deliberately does NOT attach the
+    new user to someone else's existing record — that would let a visitor
+    claim another organization's history — so the duplicate is reported and
+    the SAS Office performs the linking.
+    """
+    existing = find_organization(name, organization_type)
+    if existing is not None and existing.pk != exclude_id:
+        raise serializers.ValidationError(
+            {
+                "organization_name": (
+                    "An organization with this name and type is already "
+                    "registered. Contact the SAS Office to be linked to the "
+                    "existing record."
+                )
+            }
+        )
+    return normalize_organization_name(name)
 
 
 def resolve_internal_organization(value):
@@ -222,6 +308,11 @@ class AffiliationUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"organization_type": "Organization type is required."}
             )
+        ensure_unique_organization(
+            attrs.get("organization_name", ""),
+            attrs["organization_type"],
+            exclude_id=getattr(user, "organization_ref_id", None),
+        )
         return attrs
 
 
@@ -390,6 +481,9 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"organization_type": "Organization type is required."}
             )
+        ensure_unique_organization(
+            attrs.get("organization_name", ""), attrs["organization_type"]
+        )
         return attrs
 
     _ORGANIZATION_FIELDS = (

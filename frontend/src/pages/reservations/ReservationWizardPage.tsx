@@ -29,6 +29,7 @@ import { Field, Input, Select } from '@/components/ui/Form'
 import { Badge } from '@/components/ui/Badge'
 import { Stepper } from '@/components/reservations/Stepper'
 import { DetailsStep } from '@/components/reservations/DetailsStep'
+import { ReservationOverview } from '@/components/reservations/ReservationOverview'
 import type { OperatorConfig } from '@/components/reservations/OtherEquipmentPicker'
 import {
   EARLIEST_START_TIME,
@@ -61,6 +62,7 @@ import { manilaCalendarDate } from '@/components/reservations/wizard-steps'
 import type {
   AlternativeSlot,
   AvailabilityCheck as AvailabilityCheckResult,
+  BookerLookupDetails,
   ReservationDetail,
   ReservableResource,
   InternalOrganization,
@@ -317,6 +319,10 @@ export function ReservationWizardPage() {
   // Internal (account-free) requests pick from the registered, active campus
   // organizations; the id is submitted so the reservation links the real record.
   const [internalOrganizationId, setInternalOrganizationId] = useState('')
+  // Single-use token issued only after a returning booker verifies the email
+  // code. Sent with the reservation so the backend can refresh the saved
+  // organization/representative records after a successful submission.
+  const [bookerSession, setBookerSession] = useState('')
   // The event approval letter is an INTERNAL-only supporting document. Staff
   // and public requesters choose the requester type explicitly; a signed-in
   // external organization member books for their own organization, which the
@@ -947,6 +953,9 @@ export function ReservationWizardPage() {
 
     const isExternalRequester = (isAdmin || publicFlow) && requesterType === 'EXTERNAL'
     const payload = {
+      ...(bookerSession && requesterType === 'EXTERNAL'
+        ? { booker_session: bookerSession }
+        : {}),
       ...toCreateReservationPayload(draft, {
         items: itemsList,
         // The backend resolves the same value from the authenticated user;
@@ -1313,6 +1322,22 @@ export function ReservationWizardPage() {
             organizationType={external.organization_type}
             email={external.contact_email}
             onChange={(key, value) => setExternal((current) => ({ ...current, [key]: value }))}
+            bookerPhone={contact.phone}
+            onReturningDetails={(details, token) => {
+              setBookerSession(token)
+              setExternal((current) => ({
+                ...current,
+                organization: details.organization_name || current.organization,
+                organization_type: details.organization_type || current.organization_type,
+                contact_person: details.contact_person || current.contact_person,
+                contact_email: details.contact_email || current.contact_email,
+              }))
+              setContact((current) => ({
+                ...current,
+                name: details.contact_person || current.name,
+                phone: details.contact_phone || current.phone,
+              }))
+            }}
             showErrors={stepError != null}
           />
         )}
@@ -1591,6 +1616,8 @@ function PublicOrganizationStep({
   organizationType,
   email,
   onChange,
+  bookerPhone,
+  onReturningDetails,
   showErrors,
 }: {
   requesterType: 'CAMPUS' | 'EXTERNAL'
@@ -1600,6 +1627,8 @@ function PublicOrganizationStep({
   organizationType: string
   email: string
   onChange: (key: 'organization' | 'organization_type' | 'contact_email', value: string) => void
+  bookerPhone: string
+  onReturningDetails: (details: BookerLookupDetails, bookerSession: string) => void
   showErrors: boolean
 }) {
   return (
@@ -1610,6 +1639,12 @@ function PublicOrganizationStep({
       <p className="mt-1 text-sm text-body">
         Add the organization and contact email for this reservation request.
       </p>
+      {requesterType === 'EXTERNAL' && (
+        <ReturningBookerLookup
+          defaultPhone={bookerPhone}
+          onApply={onReturningDetails}
+        />
+      )}
       <Card className="mt-5 !rounded-xl !border-slate-200 !shadow-none grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
         {requesterType === 'EXTERNAL' ? (
           <Field label="Organization name" htmlFor="public-organization">
@@ -1665,6 +1700,194 @@ function PublicOrganizationStep({
         </Field>
       </Card>
     </section>
+  )
+}
+
+/**
+ * Returning-booker lookup.
+ *
+ * The phone number only identifies a previous successful reservation; saved
+ * details are withheld until the email on file confirms the one-time code.
+ * The first-time workflow stays available: the requester can simply skip this
+ * panel or keep editing the autofilled fields.
+ */
+function ReturningBookerLookup({
+  defaultPhone,
+  onApply,
+}: {
+  defaultPhone: string
+  onApply: (details: BookerLookupDetails, bookerSession: string) => void
+}) {
+  const [phone, setPhone] = useState(defaultPhone)
+  const [session, setSession] = useState<{
+    session: string
+    emailHint: string
+    expiresAt: string
+    resendAvailableAt: string
+  } | null>(null)
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [applied, setApplied] = useState(false)
+  const [busy, setBusy] = useState<'lookup' | 'verify' | 'resend' | null>(null)
+  const [verifiedDetails, setVerifiedDetails] = useState<BookerLookupDetails | null>(null)
+
+  useEffect(() => {
+    // Prefill from the contact row once the requester fills it in elsewhere.
+    setPhone((current) => current || defaultPhone)
+  }, [defaultPhone])
+
+  async function startLookup() {
+    setError('')
+    setNotice('')
+    setApplied(false)
+    setBusy('lookup')
+    try {
+      const response = await api.bookerLookup(phone.trim())
+      setSession({
+        session: response.verification_session,
+        emailHint: response.email_hint,
+        expiresAt: response.expires_at,
+        resendAvailableAt: response.resend_available_at,
+      })
+      setCode('')
+      setNotice(`Verification code sent to ${response.email_hint}.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to start the lookup.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function verify() {
+    if (!session) return
+    setError('')
+    setBusy('verify')
+    try {
+      const response = await api.bookerVerify(session.session, code.trim())
+      setVerifiedDetails(response.details)
+      onApply(response.details, response.booker_session)
+      setApplied(true)
+      setSession(null)
+      setCode('')
+      setNotice('Saved details filled in. You can edit any field below.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to verify the code.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function resend() {
+    if (!session) return
+    setError('')
+    setBusy('resend')
+    try {
+      const response = await api.bookerResend(session.session)
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              expiresAt: response.expires_at,
+              resendAvailableAt: response.resend_available_at,
+            }
+          : current,
+      )
+      setNotice(`A new code was sent to ${session.emailHint}.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to resend the code.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      <Card className="mt-5 !rounded-xl !border-slate-200 !shadow-none p-5 sm:p-6">
+        <h3 className="text-sm font-semibold text-ink">Returning booker?</h3>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          Enter the mobile number from a previous reservation. We will email a
+          verification code to the address on file before showing your saved
+          organization and representative details.
+        </p>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <Input
+            aria-label="Mobile number for returning booker lookup"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            placeholder="09XX XXX XXXX"
+            inputMode="tel"
+            autoComplete="tel"
+            className={cn(reservationControlClass, 'sm:max-w-xs')}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            loading={busy === 'lookup'}
+            disabled={busy !== null || !phone.trim()}
+            onClick={startLookup}
+          >
+            Find my details
+          </Button>
+        </div>
+
+        {session && (
+          <div className="mt-3 rounded-lg border border-line p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                aria-label="Returning booker verification code"
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                placeholder="6-digit code"
+                inputMode="numeric"
+                maxLength={6}
+                autoComplete="one-time-code"
+                className={cn(reservationControlClass, 'sm:max-w-40')}
+              />
+              <Button
+                type="button"
+                loading={busy === 'verify'}
+                disabled={busy !== null || code.trim().length !== 6}
+                onClick={verify}
+              >
+                Verify
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                loading={busy === 'resend'}
+                disabled={busy !== null}
+                onClick={resend}
+              >
+                Resend
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              Code sent to {session.emailHint}. Do not share it with anyone.
+            </p>
+          </div>
+        )}
+
+        {notice && (
+          <p role="status" className="mt-3 text-xs text-status-approved">
+            {notice}
+          </p>
+        )}
+        {applied && (
+          <p className="mt-1 text-xs text-muted">
+            The populated organization and representative fields below remain
+            editable. Any changes are saved when the reservation is submitted.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-status-rejected">
+            {error}
+          </p>
+        )}
+      </Card>
+
+      {verifiedDetails && <ReservationOverview details={verifiedDetails} />}
+    </>
   )
 }
 

@@ -12,13 +12,16 @@ Design rules (see the task's Security section):
 """
 
 from django.db import transaction
+from django.db.models import Count
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 
 from accounts.models import AuditLog, Organization, User
+from accounts.organization_registry import duplicate_groups
 from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
 from accounts.serializers import (
     AffiliationUpdateSerializer,
+    OrganizationAdminUpdateSerializer,
     OrganizationBriefSerializer,
     OrganizationListSerializer,
     OrganizationSerializer,
@@ -245,29 +248,42 @@ class OrganizationListView(generics.ListAPIView):
     def get_queryset(self):
         from django.db.models import Q
 
-        qs = Organization.objects.select_related("created_by", "reviewed_by")
+        qs = (
+            Organization.objects.select_related("created_by", "reviewed_by")
+            .annotate(
+                stats_total_reservations=Count(
+                    "organization_reservations", distinct=True
+                )
+            )
+        )
         type_filter = self.request.query_params.get("type")
         if type_filter:
             qs = qs.filter(organization_type=type_filter)
         else:
-            # Default view is the external-organization verification queue:
-            # managed INTERNAL organizations are only listed when explicitly
-            # requested with ?type=INTERNAL (or ?type=).
+            # Default view is the external-organization registry: managed
+            # INTERNAL organizations are only listed when explicitly requested
+            # with ?type=INTERNAL (or ?type=).
             qs = qs.exclude(
                 organization_type=Organization.OrganizationType.INTERNAL
             )
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(verification_status=status_filter)
+        is_active = self.request.query_params.get("is_active")
+        if is_active in ("true", "false"):
+            qs = qs.filter(is_active=is_active == "true")
         search = (self.request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(
                 Q(organization_code__icontains=search)
                 | Q(organization_name__icontains=search)
+                | Q(normalized_name__icontains=search.lower())
+                | Q(acronym__icontains=search)
                 | Q(contact_person__icontains=search)
                 | Q(contact_email__icontains=search)
+                | Q(contact_number__icontains=search)
             )
-        return qs
+        return qs.order_by("-last_reservation_date", "organization_name")
 
 
 class OrganizationDetailView(generics.RetrieveAPIView):
@@ -282,6 +298,88 @@ class OrganizationDetailView(generics.RetrieveAPIView):
     queryset = Organization.objects.select_related(
         "created_by", "reviewed_by"
     ).prefetch_related("members")
+
+
+class OrganizationUpdateView(generics.UpdateAPIView):
+    """PATCH /api/auth/organizations/<pk>/ — edit registry details (staff only).
+
+    Only the descriptive fields are editable; codes, verification status, and
+    audit provenance stay under their dedicated workflows. The change is
+    recorded in the audit log.
+    """
+
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsSasStaff,
+        IsAccountApprovedOrReadOnly,
+    ]
+    serializer_class = OrganizationAdminUpdateSerializer
+    queryset = Organization.objects.all()
+
+    def perform_update(self, serializer):
+        organization = serializer.save()
+        AuditLog.record(
+            self.request.user,
+            AuditLog.Action.ORGANIZATION_UPDATED,
+            object_type="organization",
+            object_id=organization.pk,
+            object_repr=str(organization),
+            detail="Organization details edited by SAS staff",
+            request=self.request,
+        )
+
+
+class OrganizationReservationHistoryView(generics.ListAPIView):
+    """GET /api/auth/organizations/<pk>/reservations/ — full history.
+
+    Staff-only and paginated; each row is the same reservation summary the
+    reservation list uses, so the history can link straight to the record.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+
+    def get_serializer_class(self):
+        from reservations.serializers import ReservationListSerializer
+
+        return ReservationListSerializer
+
+    def get_queryset(self):
+        from reservations.models import Reservation
+
+        return (
+            Reservation.objects.filter(organization_ref_id=self.kwargs["pk"])
+            .select_related("facility", "requester", "organization_ref")
+            .prefetch_related("items__equipment__category", "events")
+            .order_by("-date", "-id")
+        )
+
+
+class OrganizationDuplicateGroupsView(generics.GenericAPIView):
+    """GET /api/auth/organizations/duplicates/ — same name, different types.
+
+    Exact duplicates (same normalized name and type) cannot exist: the database
+    constraint prevents them. This surfaces the remaining ambiguity for staff
+    review instead of merging records automatically, because every merge would
+    move historical reservations between organizations.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+
+    def get(self, request):
+        groups = []
+        for group in duplicate_groups():
+            organizations = Organization.objects.filter(
+                normalized_name=group["normalized_name"]
+            ).order_by("id")
+            groups.append(
+                {
+                    "normalized_name": group["normalized_name"],
+                    "organizations": OrganizationListSerializer(
+                        organizations, many=True
+                    ).data,
+                }
+            )
+        return Response({"count": len(groups), "groups": groups})
 
 
 class OrganizationVerifyView(generics.GenericAPIView):

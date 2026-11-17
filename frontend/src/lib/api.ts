@@ -8,6 +8,7 @@ import type {
   Affiliation,
   AvailabilityCheck,
   BookedDateEvent,
+  BookerLookupDetails,
   CalendarEvent,
   CampusUserOption,
   ChatbotResponse,
@@ -34,6 +35,8 @@ import type {
   NoShowAlertsResponse,
   Notification,
   Organization,
+  OrganizationDuplicateGroup,
+  OrganizationReservationHistoryRow,
   Paginated,
   PricingQuote,
   PushDevice,
@@ -401,14 +404,38 @@ export const api = {
     if (params.status) qs.set('status', params.status)
     if (params.type) qs.set('type', params.type)
     if (params.search) qs.set('search', params.search)
+    if (params.is_active) qs.set('is_active', params.is_active)
+    if (params.page) qs.set('page', String(params.page))
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return api.get<Paginated<Organization> | Organization[]>(
       `/api/auth/organizations/${suffix}`,
     )
   },
   organization: (id: number) => api.get<Organization>(`/api/auth/organizations/${id}/`),
+  updateOrganization: (id: number, payload: Partial<Organization>) =>
+    api.patch<Organization>(`/api/auth/organizations/${id}/edit/`, payload),
+  organizationReservations: (id: number, page = 1) =>
+    api.get<Paginated<OrganizationReservationHistoryRow>>(
+      `/api/auth/organizations/${id}/reservations/?page=${page}`,
+    ),
+  organizationDuplicates: () =>
+    api.get<{ count: number; groups: OrganizationDuplicateGroup[] }>(
+      '/api/auth/organizations/duplicates/',
+    ),
   verifyOrganization: (id: number, action: OrganizationVerificationAction, notes = '') =>
     api.post<Organization>(`/api/auth/organizations/${id}/verify/`, { action, notes }),
+  /** Returning-booker phone lookup (OTP-gated; no details before verify). */
+  bookerLookup: (phone: string) =>
+    api.post<BookerLookupResponse>('/api/public/reservations/booker-lookup/', { phone }),
+  bookerResend: (verification_session: string) =>
+    api.post<BookerLookupResponse>('/api/public/reservations/booker-resend/', {
+      verification_session,
+    }),
+  bookerVerify: (verification_session: string, otp: string) =>
+    api.post<BookerVerifyResponse>('/api/public/reservations/booker-verify/', {
+      verification_session,
+      otp,
+    }),
   /** Seeded campus organizations for the register/affiliation pickers. */
   internalOrganizations: () =>
     api.get<InternalOrganization[]>('/api/auth/internal-organizations/'),
@@ -424,6 +451,22 @@ export interface OrganizationFilters {
   status?: VerificationStatus
   type?: string
   search?: string
+  is_active?: 'true' | 'false'
+  page?: number
+}
+
+export interface BookerLookupResponse {
+  verification_session: string
+  expires_at: string
+  resend_available_at: string
+  email_hint: string
+  phone_hint?: string
+}
+
+export interface BookerVerifyResponse {
+  booker_session: string
+  expires_at: string
+  details: BookerLookupDetails
 }
 
 /** Payload for POST /api/auth/affiliation/ — external registration included. */
@@ -539,6 +582,8 @@ export interface CreateReservationPayload {
   organization: string
   /** Selected registered organization for public internal or staff reservations. */
   organization_id?: number
+  /** Single-use token from a verified returning-booker lookup. */
+  booker_session?: string
   organization_type?: string
   purpose: string
   description: string

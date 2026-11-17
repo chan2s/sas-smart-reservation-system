@@ -88,3 +88,9 @@ class PublicReservationEditOTPThrottle(AnonRateThrottle):
     scope = "public_reservation_edit_otp"
 
 
+class BookerLookupThrottle(AnonRateThrottle):
+    """Per-IP limit for returning-booker phone lookup and OTP attempts."""
+
+    scope = "booker_lookup"
+
+

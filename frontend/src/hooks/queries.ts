@@ -986,6 +986,41 @@ export function useOrganization(id: number | null) {
   })
 }
 
+export function useOrganizationReservations(id: number | null, page = 1) {
+  return useQuery({
+    queryKey: ['organization-reservations', id, page],
+    queryFn: () => api.organizationReservations(id as number, page),
+    enabled: id != null,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useOrganizationDuplicates(enabled = true) {
+  return useQuery({
+    queryKey: ['organization-duplicates'],
+    queryFn: () => api.organizationDuplicates(),
+    enabled,
+  })
+}
+
+export function useUpdateOrganization() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number
+      payload: Parameters<typeof api.updateOrganization>[1]
+    }) => api.updateOrganization(id, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['organizations'] })
+      void queryClient.invalidateQueries({ queryKey: ['organization'] })
+      void queryClient.invalidateQueries({ queryKey: ['organization-duplicates'] })
+    },
+  })
+}
+
 export function useVerifyOrganization() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -1001,7 +1036,57 @@ export function useVerifyOrganization() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['organizations'] })
       void queryClient.invalidateQueries({ queryKey: ['organization'] })
+      void queryClient.invalidateQueries({ queryKey: ['organization-duplicates'] })
       void queryClient.invalidateQueries({ queryKey: ['affiliation'] })
     },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Returning Booker Autofill (Phase 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a returning-booker lookup via phone number.
+ *
+ * Returns a verification session ID and sends an OTP to the email on file.
+ * Raises BookerLookupError if no saved reservation with that phone is found
+ * (without revealing whether the phone exists in the system).
+ */
+export function useStartBookerLookup() {
+  return useMutation({
+    mutationFn: (phone: string) => api.bookerLookup(phone),
+  })
+}
+
+/**
+ * Resend the OTP for an in-progress booker lookup.
+ *
+ * Available only within the TTL window and subject to a cooldown between
+ * requests. Raises BookerLookupError if the session has expired or is invalid.
+ */
+export function useResendBookerOtp() {
+  return useMutation({
+    mutationFn: (verification_session: string) => api.bookerResend(verification_session),
+  })
+}
+
+/**
+ * Verify the OTP and retrieve saved organization/representative details.
+ *
+ * Returns a single-use booker_session token (consumed after the next
+ * reservation submission) and the saved details eligible for autofill.
+ * Raises BookerLookupError on incorrect OTP, expired session, or exceeded
+ * attempts.
+ */
+export function useVerifyBookerOtp() {
+  return useMutation({
+    mutationFn: ({
+      verification_session,
+      otp,
+    }: {
+      verification_session: string
+      otp: string
+    }) => api.bookerVerify(verification_session, otp),
   })
 }

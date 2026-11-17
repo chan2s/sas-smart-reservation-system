@@ -85,6 +85,26 @@ class Organization(models.Model):
         max_length=16, unique=True, editable=False, db_index=True
     )
     organization_name = models.CharField(max_length=160)
+    # Canonical identity used for de-duplication. Maintained by save() from
+    # organization_name so every write path (registration, reservation import,
+    # admin) uses the same normalization; never set from a client payload.
+    normalized_name = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        editable=False,
+        db_index=True,
+        help_text="Normalized organization name used to prevent duplicates.",
+    )
+    # Date of the most recent successful reservation linked to this
+    # organization. Maintained from reservation submissions; older imported
+    # history only ever moves it forward.
+    last_reservation_date = models.DateField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Date of the latest reservation linked to this organization.",
+    )
     # Short code used by internal NORSU organizations (e.g. CAS). Unique when
     # set; external organizations leave it blank and rely on the generated
     # organization_code instead.
@@ -153,6 +173,13 @@ class Organization(models.Model):
                 condition=~models.Q(acronym=""),
                 name="unique_organization_acronym",
             ),
+            # One registry record per (normalized name, type). A duplicate is
+            # prevented at the database level, not only in a form validation.
+            models.UniqueConstraint(
+                fields=["normalized_name", "organization_type"],
+                condition=~models.Q(normalized_name=""),
+                name="unique_organization_normalized_name_type",
+            ),
         ]
         verbose_name = "organization"
         verbose_name_plural = "organizations"
@@ -179,6 +206,17 @@ class Organization(models.Model):
         return f"{cls.CODE_PREFIX}{sequence:04d}"
 
     def save(self, *args, **kwargs):
+        # Always keep the de-duplication key in sync with the display name,
+        # including partial saves that only touch the name.
+        from .organization_registry import normalize_organization_name
+
+        normalized = normalize_organization_name(self.organization_name)
+        if self.normalized_name != normalized:
+            self.normalized_name = normalized
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = {*update_fields, "normalized_name"}
+
         if self.organization_code:
             return super().save(*args, **kwargs)
         # Generate on first save. The unique constraint is the real guard, so

@@ -1,18 +1,31 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
+  AlertTriangle,
   Building2,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  History,
   Mail,
   MapPin,
+  Pencil,
   Phone,
   RotateCcw,
+  Save,
   Search,
   ShieldOff,
   Users,
   X,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { useOrganization, useOrganizations, useVerifyOrganization } from '@/hooks/queries'
+import {
+  useOrganization,
+  useOrganizationDuplicates,
+  useOrganizationReservations,
+  useOrganizations,
+  useUpdateOrganization,
+  useVerifyOrganization,
+} from '@/hooks/queries'
 import { useAuth } from '@/hooks/useAuth'
 import type { OrganizationVerificationAction, OrganizationFilters } from '@/lib/api'
 import type { Organization, VerificationStatus } from '@/lib/types'
@@ -67,6 +80,8 @@ export function OrganizationsPage() {
   const [status, setStatus] = useState<VerificationStatus | ''>('PENDING')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [activeFilter, setActiveFilter] = useState<'' | 'true' | 'false'>('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
   // Verification decision awaiting confirmation (reject / suspend). Approve
@@ -81,12 +96,20 @@ export function OrganizationsPage() {
     // requested, so the tab must ask for them by type.
     type: isInternalScope ? 'INTERNAL' : undefined,
     search: query || undefined,
+    is_active: activeFilter || undefined,
+    page,
   }
   const list = useOrganizations(filters)
   const detail = useOrganization(selectedId)
   const verify = useVerifyOrganization()
+  const update = useUpdateOrganization()
+  const duplicates = useOrganizationDuplicates()
 
   const organizations = rows(list.data)
+  const pageCount = Array.isArray(list.data) ? 1 : list.data?.num_pages ?? 1
+  const totalCount = Array.isArray(list.data)
+    ? list.data.length
+    : list.data?.count ?? organizations.length
 
   function select(organization: Organization) {
     setSelectedId(organization.id)
@@ -117,6 +140,49 @@ export function OrganizationsPage() {
   }
 
   const organization = detail.data ?? null
+  const [historyPage, setHistoryPage] = useState(1)
+  const history = useOrganizationReservations(selectedId, historyPage)
+  useEffect(() => {
+    setHistoryPage(1)
+    setEditOpen(false)
+  }, [selectedId])
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [form, setForm] = useState({
+    organization_name: '',
+    organization_type: '',
+    contact_person: '',
+    contact_email: '',
+    contact_number: '',
+    address: '',
+    is_active: true,
+  })
+  useEffect(() => {
+    if (!organization) return
+    setForm({
+      organization_name: organization.organization_name ?? '',
+      organization_type: organization.organization_type ?? '',
+      contact_person: organization.contact_person ?? '',
+      contact_email: organization.contact_email ?? '',
+      contact_number: organization.contact_number ?? '',
+      address: organization.address ?? '',
+      is_active: organization.is_active !== false,
+    })
+  }, [organization?.id, organization?.updated_at])
+
+  async function saveEdit() {
+    if (selectedId == null) return
+    try {
+      await update.mutateAsync({ id: selectedId, payload: form })
+      toast('Organization details saved.')
+      setEditOpen(false)
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : 'Unable to save the organization.',
+        'error',
+      )
+    }
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -144,6 +210,7 @@ export function OrganizationsPage() {
             onClick={() => {
               setScope(value)
               setSelectedId(null)
+              setPage(1)
             }}
             className={cn(
               'rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors duration-150',
@@ -168,6 +235,7 @@ export function OrganizationsPage() {
                 onClick={() => {
                   setStatus(option.value)
                   setSelectedId(null)
+                  setPage(1)
                 }}
                 className={cn(
                   'rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-150',
@@ -185,6 +253,7 @@ export function OrganizationsPage() {
           onSubmit={(event) => {
             event.preventDefault()
             setQuery(search.trim())
+            setPage(1)
           }}
         >
           <Search
@@ -198,7 +267,35 @@ export function OrganizationsPage() {
             className="pl-9"
           />
         </form>
+        <select
+          aria-label="Active status filter"
+          value={activeFilter}
+          onChange={(event) => {
+            setActiveFilter(event.target.value as '' | 'true' | 'false')
+            setPage(1)
+          }}
+          className="h-10 rounded-md border border-line bg-surface px-3 text-sm text-body"
+        >
+          <option value="">Any status</option>
+          <option value="true">Active only</option>
+          <option value="false">Inactive only</option>
+        </select>
       </div>
+
+      {(duplicates.data?.count ?? 0) > 0 && (
+        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-status-pending/25 bg-status-pending-bg px-4 py-3 text-sm text-status-pending">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <div>
+            <p className="font-semibold">Possible duplicate organization names</p>
+            <p className="mt-0.5 text-xs leading-relaxed">
+              {duplicates.data?.count} normalized name
+              {(duplicates.data?.count ?? 0) === 1 ? '' : 's'} registered under
+              different organization types. Review the records before creating a
+              new organization with the same name.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
         {/* Queue */}
@@ -263,6 +360,33 @@ export function OrganizationsPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between border-t border-line pt-3 text-xs text-muted">
+              <span>
+                Page {page} of {pageCount} · {totalCount} records
+              </span>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page <= 1 || list.isFetching}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= pageCount || list.isFetching}
+                  onClick={() => setPage((current) => current + 1)}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
           )}
         </Card>
 
@@ -332,7 +456,134 @@ export function OrganizationsPage() {
                   <Detail icon={MapPin} label="Address">
                     {organization.address || '—'}
                   </Detail>
+                  <Detail icon={History} label="Total reservations">
+                    {organization.total_reservations ?? 0}
+                  </Detail>
+                  <Detail icon={History} label="Last reservation">
+                    {organization.last_reservation_date
+                      ? format(
+                          new Date(`${organization.last_reservation_date}T00:00:00`),
+                          'MMM d, yyyy',
+                        )
+                      : '—'}
+                  </Detail>
                 </dl>
+
+                {!isViewOnly && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setEditOpen((open) => !open)}
+                      icon={<Pencil className="size-4" />}
+                    >
+                      {editOpen ? 'Close editor' : 'Edit details'}
+                    </Button>
+                  </div>
+                )}
+
+                {editOpen && (
+                  <div className="mt-4 rounded-xl border border-line p-3.5">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-[13px] font-medium text-ink">
+                        Organization name
+                        <Input
+                          className="mt-1"
+                          value={form.organization_name}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              organization_name: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-[13px] font-medium text-ink">
+                        Representative
+                        <Input
+                          className="mt-1"
+                          value={form.contact_person}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              contact_person: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-[13px] font-medium text-ink">
+                        Phone number
+                        <Input
+                          className="mt-1"
+                          value={form.contact_number}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              contact_number: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-[13px] font-medium text-ink">
+                        Email address
+                        <Input
+                          className="mt-1"
+                          type="email"
+                          value={form.contact_email}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              contact_email: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-[13px] font-medium text-ink sm:col-span-2">
+                        Address
+                        <Input
+                          className="mt-1"
+                          value={form.address}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              address: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 text-[13px] font-medium text-ink">
+                        <input
+                          type="checkbox"
+                          checked={form.is_active}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              is_active: event.target.checked,
+                            }))
+                          }
+                        />
+                        Active (can be selected for new reservations)
+                      </label>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                      <Button
+                        size="sm"
+                        loading={update.isPending}
+                        onClick={saveEdit}
+                        icon={<Save className="size-4" />}
+                      >
+                        Save details
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {organization.purpose && (
                   <div className="mt-5 rounded-xl border border-line p-3.5">
@@ -395,6 +646,78 @@ export function OrganizationsPage() {
                       </li>
                     ))}
                   </ul>
+                )}
+              </Card>
+
+              {/* Reservation history */}
+              <Card className="mt-6">
+                <CardHeader
+                  title="Reservation history"
+                  description="Every reservation linked to this organization record."
+                />
+                {history.isLoading ? (
+                  <Skeleton className="mt-3 h-24" />
+                ) : (history.data?.results ?? []).length === 0 ? (
+                  <p className="mt-3 text-sm text-muted">No reservations yet.</p>
+                ) : (
+                  <>
+                    <ul className="mt-3 divide-y divide-line">
+                      {(history.data?.results ?? []).map((reservation) => (
+                        <li
+                          key={reservation.id}
+                          className="flex flex-wrap items-center justify-between gap-2 py-2.5 first:pt-0 last:pb-0"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-ink">
+                              {reservation.event_name}
+                            </p>
+                            <p className="truncate text-xs text-muted">
+                              {reservation.reservation_id} · {reservation.facility}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted">
+                            <span>
+                              {format(
+                                new Date(`${reservation.date}T00:00:00`),
+                                'MMM d, yyyy',
+                              )}
+                            </span>
+                            <Badge tone="neutral">{reservation.status_label}</Badge>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {(history.data?.num_pages ?? 1) > 1 && (
+                      <div className="mt-3 flex items-center justify-between text-xs text-muted">
+                        <span>
+                          Page {historyPage} of {history.data?.num_pages}
+                        </span>
+                        <div className="flex gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={historyPage <= 1 || history.isFetching}
+                            onClick={() => setHistoryPage((current) => Math.max(1, current - 1))}
+                            aria-label="Previous reservation page"
+                          >
+                            <ChevronLeft className="size-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              historyPage >= (history.data?.num_pages ?? 1) ||
+                              history.isFetching
+                            }
+                            onClick={() => setHistoryPage((current) => current + 1)}
+                            aria-label="Next reservation page"
+                          >
+                            <ChevronRight className="size-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </Card>
 

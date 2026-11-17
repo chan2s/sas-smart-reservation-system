@@ -554,6 +554,9 @@ class ReservationDetailSerializer(ReservationListSerializer):
     no_show_marked_at = serializers.DateTimeField(read_only=True)
     reminder_sent_at = serializers.DateTimeField(read_only=True)
     availability = serializers.SerializerMethodField()
+    # Supplementary submission metadata. Staff-only: public and requester
+    # payloads always receive an empty string.
+    submission_ip = serializers.SerializerMethodField()
     # The reservation a rebook / new-schedule request created, if any. Lets an
     # expired reservation link forward to its replacement.
     rescheduled_to = serializers.SerializerMethodField()
@@ -577,8 +580,19 @@ class ReservationDetailSerializer(ReservationListSerializer):
             "events",
             "inspection",
             "availability",
+            "submission_ip",
             "rescheduled_to",
         )
+
+    def get_submission_ip(self, obj):
+        request = self.context.get("request")
+        if not (
+            request
+            and request.user.is_authenticated
+            and request.user.is_sas_staff
+        ):
+            return ""
+        return str(obj.submission_ip or "")
 
     def get_approved_by_name(self, obj):
         return obj.approved_by.display_name if obj.approved_by else ""

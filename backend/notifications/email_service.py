@@ -193,6 +193,21 @@ def send_reservation_edit_otp(reservation, recipient_email: str, otp: str) -> bo
     )
 
 
+def send_booker_lookup_otp(recipient_email: str, otp: str, phone_hint: str = "") -> bool:
+    """Send the code that authorises a returning-booker detail lookup."""
+    return send_reservation_email(
+        recipient_email,
+        "Verify your returning booker details - SAS RESERVE",
+        "booker_lookup_otp",
+        {
+            "site_name": SAS_RESERVE_SITE_NAME,
+            "otp": otp,
+            "expires_minutes": 10,
+            "phone_hint": phone_hint,
+        },
+    )
+
+
 def send_reservation_modified(reservation, recipient_email: str) -> bool:
     """Confirm an OTP-verified reservation edit using the configured mailer."""
     return send_reservation_email(

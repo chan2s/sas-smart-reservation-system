@@ -579,6 +579,16 @@ class Reservation(models.Model):
     # validated by the UI). Nullable because every reservation created before
     # this field existed has no number — the UI must tolerate a null value.
     contact_phone = models.CharField(max_length=20, null=True, blank=True)
+    # Supplementary submission metadata. Captured once, from the trusted client
+    # address resolution (see config.client_ip), and never exposed through any
+    # public/requester API. It is not an identity key and never drives
+    # organization matching.
+    submission_ip = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Client IP at successful submission; staff-only metadata.",
+    )
     special_requirements = models.TextField(blank=True)
 
     facility = models.ForeignKey(
@@ -1239,6 +1249,44 @@ class ReservationEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.reservation.reservation_id} — {self.event_type}"
+
+
+class BookerLookupVerification(models.Model):
+    """OTP challenge for a returning booker's phone-number lookup.
+
+    The phone only finds the candidate saved details; nothing is returned to
+    the client until the code sent to the email on file is verified. Only
+    hashes of the OTP and the two tokens are stored, and the row is consumed
+    after use, so a leaked database row cannot be replayed.
+    """
+
+    phone = models.CharField(max_length=20, db_index=True)
+    organization = models.ForeignKey(
+        "accounts.Organization",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="booker_lookup_verifications",
+    )
+    contact_person = models.CharField(max_length=120, blank=True)
+    contact_email = models.EmailField(blank=True)
+    otp_hash = models.CharField(max_length=256)
+    session_token_hash = models.CharField(max_length=64, unique=True)
+    # Issued only after a correct OTP; authorises refreshing the saved records
+    # once (and only once) a reservation is successfully submitted.
+    booker_token_hash = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
+    expires_at = models.DateTimeField(db_index=True)
+    resend_available_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["phone", "consumed_at"])]
 
 
 class ReservationEditVerification(models.Model):
