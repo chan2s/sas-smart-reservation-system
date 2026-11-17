@@ -15,8 +15,10 @@ Covers the new dual interpretation of ``built_ins``:
 """
 
 from datetime import date, time
+from importlib import import_module
 from unittest.mock import patch
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -24,6 +26,7 @@ from rest_framework.test import APIClient
 from equipment.models import Equipment, EquipmentCategory, FacilityResource
 from equipment.services import configured_builtin_tokens_for_facility, configured_builtin_tokens_for_facility_cached
 from facilities.models import Facility, OperatingHour
+from reservations.models import Reservation, ReservationItem
 from reservations.services.availability import check_availability
 
 User = get_user_model()
@@ -433,3 +436,144 @@ class BuiltInAmenityReservationFlowTests(TestCase):
         self.assertTrue(
             any(problem["type"] == "equipment" for problem in report["problems"])
         )
+
+
+class RentablePlasticChairsAvailabilityTests(TestCase):
+    """Plastic Chairs are rentable inventory, not a built-in amenity.
+
+    The facility still declares its built-in ``"tables"`` amenity and keeps
+    its ``built_in_seats``; only the ``"chairs"`` token is absent because
+    Plastic Chairs are independently rentable equipment.
+    """
+
+    def setUp(self):
+        self.requester = User.objects.create_user(
+            username="requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.category = EquipmentCategory.objects.create(name="Furniture")
+        self.chairs = Equipment.objects.create(
+            name="Plastic Chairs", category=self.category, total_quantity=300
+        )
+        self.cafeteria = Facility.objects.create(
+            name="Dorm Cafeteria",
+            facility_type=Facility.FacilityType.CAFETERIA,
+            capacity=500,
+            built_in_seats=300,
+            built_ins=["tables"],
+        )
+        OperatingHour.objects.create(
+            facility=self.cafeteria,
+            day_of_week=EVENT_DATE.weekday(),
+            open_time=time(6, 0),
+            close_time=time(22, 0),
+        )
+        # quantity=0 inherits the full 300-piece inventory.
+        FacilityResource.objects.create(
+            facility=self.cafeteria, equipment=self.chairs
+        )
+
+    def _approved_reservation(self, start, end, quantity=20):
+        reservation = Reservation.objects.create(
+            requester=self.requester,
+            event_name="Chair rental",
+            facility=self.cafeteria,
+            date=EVENT_DATE,
+            start_time=start,
+            end_time=end,
+            status=Reservation.Status.APPROVED,
+        )
+        ReservationItem.objects.create(
+            reservation=reservation, equipment=self.chairs, quantity=quantity
+        )
+        return reservation
+
+    def _chairs_item(self, start, end, quantity=20):
+        report = check_availability(
+            self.cafeteria.id,
+            EVENT_DATE,
+            start,
+            end,
+            [{"equipment_id": self.chairs.id, "quantity": quantity}],
+        )
+        return report, report["items"][0]
+
+    def test_plastic_chairs_are_not_a_configured_built_in(self):
+        self.assertEqual(
+            configured_builtin_tokens_for_facility(self.cafeteria.id), set()
+        )
+        report, item = self._chairs_item(time(9, 0), time(11, 0))
+        self.assertEqual(item["name"], "Plastic Chairs")
+        self.assertEqual(item["requested"], 20)
+        self.assertEqual(item["available"], 300)
+        self.assertEqual(item["status"], "AVAILABLE")
+        self.assertTrue(report["overall"]["ok"])
+
+    def test_sequential_reservations_release_plastic_chairs(self):
+        self._approved_reservation(time(9, 0), time(10, 0))
+
+        # During the other organization's slot the 20 pieces are committed.
+        _, during = self._chairs_item(time(9, 0), time(10, 0))
+        self.assertEqual(during["available"], 280)
+
+        # A later, non-overlapping booking sees the full inventory again.
+        report, after = self._chairs_item(time(10, 0), time(11, 0))
+        self.assertEqual(after["available"], 300)
+        self.assertEqual(after["status"], "AVAILABLE")
+        self.assertTrue(report["overall"]["ok"])
+
+    def test_overlapping_reservations_share_plastic_chair_inventory(self):
+        self._approved_reservation(time(9, 0), time(10, 0))
+        _, item = self._chairs_item(time(9, 30), time(10, 30), quantity=290)
+        self.assertEqual(item["available"], 280)
+        self.assertEqual(item["status"], "PARTIAL")
+
+
+class RentableChairsBuiltInMigrationTests(TestCase):
+    """The configuration migration is targeted, preserving other amenities."""
+
+    MIGRATION = "facilities.migrations.0007_remove_rentable_plastic_chairs_built_in"
+
+    def setUp(self):
+        self.category = EquipmentCategory.objects.create(name="Furniture")
+        self.chairs = Equipment.objects.create(
+            name="Plastic Chairs", category=self.category, total_quantity=300
+        )
+        self.rentable = Facility.objects.create(
+            name="Dorm Cafeteria",
+            facility_type=Facility.FacilityType.CAFETERIA,
+            capacity=500,
+            built_in_seats=300,
+            built_ins=["tables", "chairs"],
+        )
+        FacilityResource.objects.create(
+            facility=self.rentable, equipment=self.chairs
+        )
+        # Same token, but no Plastic Chairs resource: chairs are not rentable
+        # here, so the token must stay untouched.
+        self.other = Facility.objects.create(
+            name="Gymnasium",
+            facility_type=Facility.FacilityType.GYMNASIUM,
+            capacity=2000,
+            built_ins=["chairs"],
+        )
+
+    def _run(self, operation):
+        getattr(import_module(self.MIGRATION), operation)(django_apps, None)
+
+    def test_forward_removes_chairs_only_where_rentable(self):
+        self._run("remove_chairs_token")
+
+        self.rentable.refresh_from_db()
+        self.assertEqual(self.rentable.built_ins, ["tables"])
+        self.assertEqual(self.rentable.built_in_seats, 300)
+
+        self.other.refresh_from_db()
+        self.assertEqual(self.other.built_ins, ["chairs"])
+
+    def test_reverse_restores_the_chairs_token(self):
+        self._run("remove_chairs_token")
+        self._run("restore_chairs_token")
+
+        self.rentable.refresh_from_db()
+        self.assertEqual(self.rentable.built_ins, ["tables", "chairs"])
+        self.assertEqual(self.rentable.built_in_seats, 300)

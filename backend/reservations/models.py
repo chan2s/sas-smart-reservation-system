@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -605,14 +605,24 @@ class Reservation(models.Model):
         max_length=16,
         choices=PaymentType.choices,
         blank=True,
-        help_text="External only: down payment or full payment.",
+        default=PaymentType.DOWN_PAYMENT,
+        help_text=(
+            "External only: down payment (50% of the rental total) or full "
+            "payment (100%)."
+        ),
     )
+    # Automatically maintained from estimated_total + payment_type. Kept as a
+    # column so existing queries/admin history remain valid, but calculations
+    # always use required_payment_amount below, never a client-supplied value.
     payment_required_amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="External only: amount the organization is required to pay.",
+        help_text=(
+            "External only: automatically calculated amount required before "
+            "approval (50% down payment or 100% full payment)."
+        ),
     )
     amount_paid = models.DecimalField(
         max_digits=12,
@@ -817,10 +827,16 @@ class Reservation(models.Model):
             )
         # Payment fields are external-only. Validate them whenever they are
         # configured so neither the admin site nor any other caller can store
-        # a negative amount or an amount received above the required amount.
-        if self.payment_required_amount is not None:
+        # a negative amount or an amount received above the rental total.
+        if (
+            self.payment_required_amount is not None
+            or self.requester_type == self.RequesterType.EXTERNAL
+        ):
             amount_paid = self.amount_paid if self.amount_paid is not None else Decimal("0.00")
-            if self.payment_required_amount < 0:
+            if (
+                self.payment_required_amount is not None
+                and self.payment_required_amount < 0
+            ):
                 raise ValidationError(
                     {"payment_required_amount": "The required amount cannot be negative."}
                 )
@@ -828,11 +844,12 @@ class Reservation(models.Model):
                 raise ValidationError(
                     {"amount_paid": "The amount paid cannot be negative."}
                 )
-            if amount_paid > self.payment_required_amount:
+            total = self.estimated_total or Decimal("0.00")
+            if self.requester_type == self.RequesterType.EXTERNAL and amount_paid > total:
                 raise ValidationError(
                     {
                         "amount_paid": (
-                            "The amount paid cannot exceed the required payment amount."
+                            "The amount paid cannot exceed the total reservation price."
                         )
                     }
                 )
@@ -870,6 +887,22 @@ class Reservation(models.Model):
     def save(self, *args, **kwargs):
         if not self.reservation_id:
             self.reservation_id = self._next_reservation_id()
+        update_fields = kwargs.get("update_fields")
+        payment_updates: set[str] = set()
+        if self.requester_type == self.RequesterType.EXTERNAL:
+            if not self.payment_type:
+                self.payment_type = self.PaymentType.DOWN_PAYMENT
+                payment_updates.add("payment_type")
+            required = (
+                self.required_payment_amount
+                if (self.estimated_total or Decimal("0.00")) > 0
+                else None
+            )
+            if self.payment_required_amount != required:
+                self.payment_required_amount = required
+                payment_updates.add("payment_required_amount")
+        if update_fields is not None and payment_updates:
+            kwargs["update_fields"] = {*update_fields, *payment_updates}
         # The event approval letter requirement is internal-only. Clear the flag
         # on external reservations (including rows saved before this rule) so
         # they can never be blocked by a document they do not submit. Any
@@ -927,25 +960,50 @@ class Reservation(models.Model):
         return "—"
 
     @property
-    def remaining_balance(self) -> Decimal:
-        """Unpaid balance from the admin-entered required amount.
+    def required_payment_amount(self) -> Decimal:
+        """Authoritative amount due before approval, derived from the rental total.
 
-        Floored at zero; a reservation with no configured payment obligation
-        has no balance. Down payments are NOT waived: the balance is simply
-        what remains of the required amount.
+        External down payments default to exactly 50% of the snapshotted
+        official total; full payment is 100%. Internal reservations and
+        external reservations with no chargeable fees have no requirement.
         """
-        if self.payment_required_amount is None:
+        if self.requester_type != self.RequesterType.EXTERNAL:
             return Decimal("0.00")
-        balance = self.payment_required_amount - self.amount_paid
+        total = self.estimated_total or Decimal("0.00")
+        if total <= 0:
+            return Decimal("0.00")
+        if self.payment_type == self.PaymentType.FULL_PAYMENT:
+            amount = total
+        else:
+            amount = total * Decimal("0.50")
+        return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    @property
+    def max_payment_amount(self) -> Decimal:
+        """Largest amount that can be recorded as received: the rental total."""
+        if self.requester_type != self.RequesterType.EXTERNAL:
+            return Decimal("0.00")
+        return (self.estimated_total or Decimal("0.00")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+    @property
+    def remaining_balance(self) -> Decimal:
+        """Unpaid portion of the current required down payment/full payment.
+
+        Floored at zero. Payments above the required amount are allowed (they
+        can approach the full rental total) and never produce a negative
+        balance. The recorded amount paid is never altered by recalculation.
+        """
+        balance = self.required_payment_amount - self.amount_paid
         return balance if balance > 0 else Decimal("0.00")
 
     @property
     def payment_is_configured(self) -> bool:
-        """True once an administrator has set a required amount and type."""
+        """True when the external reservation has a chargeable rental total."""
         return bool(
             self.requester_type == self.RequesterType.EXTERNAL
-            and self.payment_type
-            and self.payment_required_amount is not None
+            and self.required_payment_amount > 0
         )
 
     @property
@@ -958,7 +1016,7 @@ class Reservation(models.Model):
         """
         if not self.payment_is_configured or self.amount_paid <= 0:
             return self.PaymentStatus.UNPAID
-        if self.amount_paid < self.payment_required_amount:
+        if self.amount_paid < self.required_payment_amount:
             return self.PaymentStatus.PARTIALLY_PAID
         return self.PaymentStatus.FULLY_PAID
 

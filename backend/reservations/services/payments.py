@@ -23,13 +23,13 @@ ZERO = Decimal("0.00")
 #: Fixed wording for the approval warning. The frontend displays it, and the
 #: approve endpoint returns it as the reason it requires an acknowledgement.
 UNPAID_WARNING = (
-    "Payment has not been received for this reservation. "
-    "Are you sure you want to approve it without payment?"
+    "This external reservation has not received any payment yet. "
+    "The required downpayment is 50% of the total reservation price."
 )
 
 OUTSTANDING_WARNING = (
-    "The required payment has not been fully received for this reservation. "
-    "Are you sure you want to approve it with an outstanding balance?"
+    "This external reservation has only been partially paid. "
+    "The required downpayment has not been completed."
 )
 
 
@@ -39,16 +39,19 @@ class PaymentError(ValueError):
 
 def payment_summary(reservation) -> dict:
     """Derived payment position of one external reservation."""
-    required = reservation.payment_required_amount
+    total = money(reservation.estimated_total)
+    down_payment = money(total * Decimal("0.50"))
+    required = money(reservation.required_payment_amount)
     paid = money(reservation.amount_paid)
     remaining = money(reservation.remaining_balance)
     status = reservation.payment_status
+    payment_type = reservation.payment_type or Reservation.PaymentType.DOWN_PAYMENT
     return {
-        "payment_type": reservation.payment_type,
-        "payment_type_label": reservation.get_payment_type_display()
-        if reservation.payment_type
-        else "",
-        "required_amount": money(required) if required is not None else None,
+        "payment_type": payment_type,
+        "payment_type_label": dict(Reservation.PaymentType.choices)[payment_type],
+        "total_amount": total,
+        "down_payment_amount": down_payment,
+        "required_amount": required,
         "amount_paid": paid,
         "remaining_balance": remaining,
         "status": status,
@@ -66,9 +69,25 @@ def approval_warning(reservation) -> str | None:
     the explicit "no payment received" wording; a partial payment gets the
     outstanding-balance wording.
     """
-    if not reservation.payment_is_configured or not reservation.payment_outstanding:
+    if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
         return None
-    if money(reservation.amount_paid) <= ZERO:
+    required = money(reservation.required_payment_amount)
+    if required <= ZERO:
+        return None
+    paid = money(reservation.amount_paid)
+    if paid >= required:
+        return None
+    if reservation.payment_type == Reservation.PaymentType.FULL_PAYMENT:
+        if paid <= ZERO:
+            return (
+                "This external reservation has not received any payment yet. "
+                "The full reservation price is required before approval."
+            )
+        return (
+            "This external reservation has only been partially paid. "
+            "The full reservation price has not been received."
+        )
+    if paid <= ZERO:
         return UNPAID_WARNING
     return OUTSTANDING_WARNING
 
@@ -87,20 +106,17 @@ def _coerce_amount(value, field_label: str, *, allow_zero: bool) -> Decimal:
     return amount
 
 
-def update_payment(reservation, actor, *, payment_type, payment_required_amount, amount_paid):
+def update_payment(reservation, actor, *, payment_type, amount_paid):
     """Validate and persist payment information for an external reservation.
 
-    The reservation is re-read under a row lock so concurrent updates cannot
-    interleave and leave an amount paid above the required amount.
+    The required amount is calculated on the backend from the stored rental
+    total and the selected payment type. The client cannot submit or override
+    it. The reservation is re-read under a row lock so concurrent updates
+    cannot interleave and leave an invalid recorded amount.
     """
     if not payment_type or payment_type not in Reservation.PaymentType.values:
         raise PaymentError("Select a valid payment type.")
-    required = _coerce_amount(
-        payment_required_amount, "required payment amount", allow_zero=False
-    )
     paid = _coerce_amount(amount_paid, "amount paid", allow_zero=True)
-    if paid > required:
-        raise PaymentError("The amount paid cannot exceed the required payment amount.")
 
     with transaction.atomic():
         locked = (
@@ -115,13 +131,23 @@ def update_payment(reservation, actor, *, payment_type, payment_required_amount,
                 "Payment tracking applies only to external organization "
                 "reservations."
             )
+        total = money(locked.estimated_total)
+        if total <= ZERO:
+            raise PaymentError(
+                "This reservation has no chargeable rental total to collect."
+            )
+        if paid > total:
+            raise PaymentError(
+                "The amount paid cannot exceed the total reservation price."
+            )
 
         previous = (
             locked.get_payment_type_display() if locked.payment_type else "Not set",
-            locked.payment_required_amount,
-            locked.amount_paid,
+            money(locked.required_payment_amount),
+            money(locked.amount_paid),
         )
         locked.payment_type = payment_type
+        required = money(locked.required_payment_amount)
         locked.payment_required_amount = required
         locked.amount_paid = paid
         locked.save(

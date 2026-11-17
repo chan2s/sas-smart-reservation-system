@@ -128,17 +128,12 @@ class ReservationFeeSerializer(serializers.ModelSerializer):
 class ReservationPaymentUpdateSerializer(serializers.Serializer):
     """Validated input for administrative payment tracking.
 
-    The backend derives the payment status and remaining balance, so only the
-    two amounts and the payment type are accepted from the client.
+    Only the payment type and actual amount received are accepted. The
+    required down payment/full payment is calculated by the backend from the
+    reservation's snapshotted total and cannot be overridden by a client.
     """
 
     payment_type = serializers.ChoiceField(choices=Reservation.PaymentType.choices)
-    payment_required_amount = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        min_value=Decimal("0.01"),
-        max_value=Decimal("9999999999.99"),
-    )
     amount_paid = serializers.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -146,17 +141,6 @@ class ReservationPaymentUpdateSerializer(serializers.Serializer):
         max_value=Decimal("9999999999.99"),
         default=Decimal("0.00"),
     )
-
-    def validate(self, attrs):
-        if attrs["amount_paid"] > attrs["payment_required_amount"]:
-            raise serializers.ValidationError(
-                {
-                    "amount_paid": (
-                        "The amount paid cannot exceed the required payment amount."
-                    )
-                }
-            )
-        return attrs
 
 
 class ReservationEventSerializer(serializers.ModelSerializer):
@@ -417,11 +401,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
         return {
             "payment_type": summary["payment_type"],
             "payment_type_label": summary["payment_type_label"],
-            "required_amount": (
-                f"{summary['required_amount']:.2f}"
-                if summary["required_amount"] is not None
-                else None
-            ),
+            "total_amount": f"{summary['total_amount']:.2f}",
+            "down_payment_amount": f"{summary['down_payment_amount']:.2f}",
+            "required_amount": f"{summary['required_amount']:.2f}",
             "amount_paid": f"{summary['amount_paid']:.2f}",
             "remaining_balance": f"{summary['remaining_balance']:.2f}",
             "status": summary["status"],

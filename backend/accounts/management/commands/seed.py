@@ -64,11 +64,12 @@ FACILITIES = [
         ),
         "capacity": 500,
         "location": "Student Center, Ground Floor",
-        # A dining space: it already seats 300 at its own tables and chairs, so
-        # extra seating is only suggested above that.
+        # A dining space: it already seats 300 at its own tables, so extra
+        # seating is only suggested above that. "chairs" is deliberately not a
+        # built-in token: Plastic Chairs are independently rentable inventory.
         "seating_type": Facility.SeatingType.TABLES_AND_CHAIRS,
         "built_in_seats": 300,
-        "built_ins": ["tables", "chairs"],
+        "built_ins": ["tables"],
         "rules": [
             "Outside catering requires prior coordination with SAS",
             "Tables and chairs must be rearranged back to default layout",

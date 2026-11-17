@@ -292,6 +292,8 @@ class ReservationAdmin(admin.ModelAdmin):
     readonly_fields = (
         "approval_email_status",
         "estimated_total",
+        "total_price_admin",
+        "payment_required_amount",
         "payment_status_admin",
         "remaining_balance_admin",
         "checkin_code",
@@ -339,6 +341,7 @@ class ReservationAdmin(admin.ModelAdmin):
             "Payment (external organizations only)",
             {
                 "fields": (
+                    "total_price_admin",
                     "payment_type",
                     "payment_required_amount",
                     "amount_paid",
@@ -346,9 +349,10 @@ class ReservationAdmin(admin.ModelAdmin):
                     "remaining_balance_admin",
                 ),
                 "description": (
-                    "Required amount is what the external organization must "
-                    "pay; a down payment does not waive the remaining "
-                    "balance. Payment status is calculated from these amounts."
+                    "The required amount is calculated automatically from the "
+                    "rental total: down payment is 50%, full payment is 100%. "
+                    "Recording or recalculating a payment never changes the "
+                    "amount already received."
                 ),
             },
         ),
@@ -401,6 +405,12 @@ class ReservationAdmin(admin.ModelAdmin):
             )
         return fieldsets
 
+    @admin.display(description="Total reservation price")
+    def total_price_admin(self, obj):
+        if obj.requester_type != Reservation.RequesterType.EXTERNAL:
+            return "—"
+        return f"PHP {obj.estimated_total:,.2f}"
+
     @admin.display(description="Payment status")
     def payment_status_admin(self, obj):
         if obj.requester_type != Reservation.RequesterType.EXTERNAL:
@@ -422,7 +432,7 @@ class ReservationAdmin(admin.ModelAdmin):
     def remaining_balance_admin(self, obj):
         if (
             obj.requester_type != Reservation.RequesterType.EXTERNAL
-            or obj.payment_required_amount is None
+            or not obj.payment_is_configured
         ):
             return "—"
         return f"PHP {obj.remaining_balance:,.2f}"

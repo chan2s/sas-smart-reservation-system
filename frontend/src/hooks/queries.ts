@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   api,
+  ApiError,
   endpoints,
   galleryChangeIsEmpty,
   type CreateReservationPayload,
@@ -461,10 +462,15 @@ export function useReservationCounts() {
 }
 
 export function useReservation(id: number | null) {
+  const validId = typeof id === 'number' && Number.isInteger(id) && id > 0
   return useQuery({
     queryKey: ['reservation', id],
     queryFn: () => endpoints.reservation(id as number),
-    enabled: id != null,
+    enabled: validId,
+    // A deleted or unknown reservation is a definitive 404, not a transient
+    // failure — retrying only repeats the same request.
+    retry: (failureCount, error) =>
+      !(error instanceof ApiError && error.status === 404) && failureCount < 1,
   })
 }
 
@@ -602,7 +608,6 @@ export function useUpdateReservationPayment(id: number | null) {
   return useMutation({
     mutationFn: (payload: {
       payment_type: 'DOWN_PAYMENT' | 'FULL_PAYMENT'
-      payment_required_amount: string
       amount_paid: string
     }) => endpoints.updateReservationPayment(id as number, payload),
     onSuccess: () => {

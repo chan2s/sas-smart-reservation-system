@@ -36,9 +36,23 @@ import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { draftForReservationEdit, draftFromReservation, saveDraft } from '@/lib/reservationDraft'
-import { Skeleton } from '@/components/ui/Misc'
+import { EmptyState, Skeleton } from '@/components/ui/Misc'
 import { cn, formatCurrency, formatDateTime, formatTime } from '@/lib/utils'
-import type { ReservationDetail, ReservationEvent, ReservationFee } from '@/lib/types'
+import type {
+  ReservationDetail,
+  ReservationEvent,
+  ReservationFee,
+  ReservationPaymentInfo,
+} from '@/lib/types'
+
+/**
+ * A payment needs acknowledgement whenever the server supplies a warning or
+ * reports an outstanding balance. Checking both keeps the dialog from being
+ * skipped if either derived field is missing from an API response.
+ */
+function paymentNeedsAcknowledgement(payment: ReservationPaymentInfo | null | undefined) {
+  return Boolean(payment?.approval_warning || payment?.is_outstanding)
+}
 
 export function ReservationDetailPage() {
   const { id } = useParams()
@@ -46,7 +60,7 @@ export function ReservationDetailPage() {
   const navigate = useNavigate()
   const { user, isStaff, isViewOnly } = useAuth()
   const { toast } = useToast()
-  const { data: reservation, isLoading } = useReservation(reservationId)
+  const { data: reservation, isLoading, isError, error, refetch } = useReservation(reservationId)
   const action = useReservationAction(reservationId)
   const retryEmail = useRetryApprovalEmail(reservationId)
   const retryDocument = useRetryApprovalDocument(reservationId)
@@ -65,10 +79,11 @@ export function ReservationDetailPage() {
   >(null)
   const [reason, setReason] = useState('')
   const [paymentEditing, setPaymentEditing] = useState(false)
-  const [paymentType, setPaymentType] = useState<'DOWN_PAYMENT' | 'FULL_PAYMENT'>('FULL_PAYMENT')
-  const [requiredAmount, setRequiredAmount] = useState('')
+  const [paymentType, setPaymentType] = useState<'DOWN_PAYMENT' | 'FULL_PAYMENT'>('DOWN_PAYMENT')
   const [amountPaidInput, setAmountPaidInput] = useState('')
   const [paymentError, setPaymentError] = useState('')
+  const [warningPayment, setWarningPayment] = useState<ReservationPaymentInfo | null>(null)
+  const [checkingPayment, setCheckingPayment] = useState(false)
   const [revisionSubject, setRevisionSubject] = useState('')
   const [revisionMessage, setRevisionMessage] = useState('')
   const [approvalImageFile, setApprovalImageFile] = useState<File | null>(null)
@@ -77,6 +92,41 @@ export function ReservationDetailPage() {
   useEffect(() => () => {
     if (approvalPreviewUrl) URL.revokeObjectURL(approvalPreviewUrl)
   }, [approvalPreviewUrl])
+
+  if (!Number.isInteger(reservationId) || reservationId <= 0) {
+    return (
+      <EmptyState
+        title="Reservation not found"
+        description="This reservation link is not valid. It may have been removed or deleted."
+        action={<Button onClick={() => navigate('/reservations')}>Back to reservations</Button>}
+      />
+    )
+  }
+
+  if (isError) {
+    // A 404 must win over cached data: React Query can still hold the last
+    // successful response for this key after the record is deleted.
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <EmptyState
+          title="Reservation not found"
+          description="This reservation no longer exists. It may have been deleted after the page was opened."
+          action={<Button onClick={() => navigate('/reservations')}>Back to reservations</Button>}
+        />
+      )
+    }
+    return (
+      <EmptyState
+        title="Unable to load this reservation"
+        description={
+          error instanceof ApiError && error.message
+            ? error.message
+            : 'Check your connection and try again.'
+        }
+        action={<Button onClick={() => void refetch()}>Try again</Button>}
+      />
+    )
+  }
 
   if (isLoading || !reservation) {
     return (
@@ -102,6 +152,11 @@ export function ReservationDetailPage() {
     checkInOpen && !Number.isNaN(checkInOpen.getTime())
       ? `${format(checkInOpen, 'h:mm a')} on ${format(checkInOpen, 'MMMM d, yyyy')}`
       : ''
+  // The warning dialog prefers the fresh payment snapshot fetched at approval
+  // time (or returned by the backend's 409) over the cached reservation.
+  const warningDetails = warningPayment ?? reservation.payment ?? null
+  const partiallyPaid = warningDetails?.status === 'PARTIALLY_PAID'
+  const warningIsFullPayment = warningDetails?.payment_type === 'FULL_PAYMENT'
 
   async function runAction(
     actionName: 'approve' | 'reject' | 'request_changes' | 'cancel',
@@ -141,6 +196,11 @@ export function ReservationDetailPage() {
         error.status === 409 &&
         (error.data as { code?: string } | undefined)?.code === 'PAYMENT_WARNING'
       ) {
+        // The backend re-checked the payment and refused an unacknowledged
+        // approval. Prefer its current payment data over the cached page.
+        const payment = (error.data as { payment?: ReservationPaymentInfo } | undefined)
+          ?.payment
+        if (payment) setWarningPayment(payment)
         setModal('payment-warning')
         toast(error.message, 'error')
         return
@@ -156,8 +216,7 @@ export function ReservationDetailPage() {
 
   function startPaymentEdit() {
     const payment = reservation?.payment
-    setPaymentType(payment?.payment_type === 'DOWN_PAYMENT' ? 'DOWN_PAYMENT' : 'FULL_PAYMENT')
-    setRequiredAmount(payment?.required_amount ?? reservation?.estimated_total ?? '')
+    setPaymentType(payment?.payment_type === 'FULL_PAYMENT' ? 'FULL_PAYMENT' : 'DOWN_PAYMENT')
     setAmountPaidInput(payment?.amount_paid ?? '0.00')
     setPaymentError('')
     setPaymentEditing(true)
@@ -166,25 +225,20 @@ export function ReservationDetailPage() {
   async function savePayment() {
     const current = reservation
     if (!current) return
-    const required = Number.parseFloat(requiredAmount || '0')
+    const total = Number.parseFloat(current.payment?.total_amount ?? current.estimated_total ?? '0')
     const paid = Number.parseFloat(amountPaidInput || '0')
-    if (!Number.isFinite(required) || required <= 0) {
-      setPaymentError('Enter a required payment amount greater than zero.')
-      return
-    }
     if (!Number.isFinite(paid) || paid < 0) {
       setPaymentError('The amount paid cannot be negative.')
       return
     }
-    if (paid > required) {
-      setPaymentError('The amount paid cannot exceed the required payment amount.')
+    if (Number.isFinite(total) && paid > total) {
+      setPaymentError('The amount paid cannot exceed the total reservation price.')
       return
     }
     setPaymentError('')
     try {
       await updatePayment.mutateAsync({
         payment_type: paymentType,
-        payment_required_amount: required.toFixed(2),
         amount_paid: paid.toFixed(2),
       })
       toast('Payment information saved.')
@@ -198,10 +252,30 @@ export function ReservationDetailPage() {
     }
   }
 
-  function requestApproval() {
-    if (reservation?.payment?.is_outstanding) {
-      setModal('payment-warning')
-      return
+  async function requestApproval() {
+    setCheckingPayment(true)
+    try {
+      // Always decide from the server's latest payment position rather than a
+      // cached page. If the refresh fails, the loaded reservation's own
+      // payment warning is still enough to stop the approval and ask first.
+      const latest = await refetch()
+      const payment = latest.data?.payment
+      if (
+        paymentNeedsAcknowledgement(payment) ||
+        (!payment && paymentNeedsAcknowledgement(reservation?.payment))
+      ) {
+        setWarningPayment(payment ?? reservation?.payment ?? null)
+        setModal('payment-warning')
+        return
+      }
+    } catch {
+      if (paymentNeedsAcknowledgement(reservation?.payment)) {
+        setWarningPayment(reservation?.payment ?? null)
+        setModal('payment-warning')
+        return
+      }
+    } finally {
+      setCheckingPayment(false)
     }
     void runAction('approve', '')
   }
@@ -484,7 +558,7 @@ export function ReservationDetailPage() {
             <Button
               icon={<CheckCircle2 className="size-4" />}
               onClick={requestApproval}
-              loading={action.isPending}
+              loading={action.isPending || checkingPayment}
             >
               Approve
             </Button>
@@ -733,23 +807,35 @@ export function ReservationDetailPage() {
               <Card>
                 <CardHeader
                   title="Payment"
-                  description="Required payment and amount received from this external organization"
+                  description="Total price, required down payment, and amount received from this external organization"
                 />
-                {reservation.payment?.is_configured ? (
+                {reservation.payment ? (
                   <>
                     <div className="mt-4">
-                      <Badge tone={paymentStatusTone(reservation.payment.status)}>
-                        {reservation.payment.status_label}
-                      </Badge>
+                      {reservation.payment.is_configured ? (
+                        <Badge tone={paymentStatusTone(reservation.payment.status)}>
+                          {reservation.payment.status_label}
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral">No payment required</Badge>
+                      )}
                     </div>
                     <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                      <DetailItem
+                        label="Total reservation price"
+                        value={formatCurrency(reservation.payment.total_amount)}
+                      />
                       <DetailItem
                         label="Payment type"
                         value={reservation.payment.payment_type_label}
                       />
                       <DetailItem
-                        label="Required amount"
-                        value={formatCurrency(reservation.payment.required_amount ?? '0')}
+                        label={
+                          reservation.payment.payment_type === 'FULL_PAYMENT'
+                            ? 'Required payment (100%)'
+                            : 'Required downpayment (50%)'
+                        }
+                        value={formatCurrency(reservation.payment.required_amount)}
                       />
                       <DetailItem
                         label="Amount paid"
@@ -774,24 +860,22 @@ export function ReservationDetailPage() {
                   </>
                 ) : (
                   <p className="mt-4 text-sm text-muted">
-                    No payment amount has been set for this reservation.
+                    No payment information is available for this reservation.
                   </p>
                 )}
 
-                {!isViewOnly && !paymentEditing && (
+                {!isViewOnly && !paymentEditing && reservation.payment?.is_configured && (
                   <Button
                     className="mt-4"
-                    variant={reservation.payment?.is_configured ? 'ghost' : 'secondary'}
+                    variant="ghost"
                     size="sm"
                     onClick={startPaymentEdit}
                   >
-                    {reservation.payment?.is_configured
-                      ? 'Update payment information'
-                      : 'Set up payment'}
+                    Update payment information
                   </Button>
                 )}
 
-                {!isViewOnly && paymentEditing && (
+                {!isViewOnly && paymentEditing && reservation.payment && (
                   <div className="mt-4 space-y-4 rounded-xl border border-line bg-soft/60 p-4">
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Field label="Payment type" htmlFor="payment-type">
@@ -802,38 +886,45 @@ export function ReservationDetailPage() {
                             setPaymentType(event.target.value as 'DOWN_PAYMENT' | 'FULL_PAYMENT')
                           }
                         >
-                          <option value="FULL_PAYMENT">Full Payment</option>
-                          <option value="DOWN_PAYMENT">Down Payment</option>
+                          <option value="DOWN_PAYMENT">Down Payment (50%)</option>
+                          <option value="FULL_PAYMENT">Full Payment (100%)</option>
                         </Select>
-                      </Field>
-                      <Field label="Required amount (₱)" htmlFor="payment-required">
-                        <Input
-                          id="payment-required"
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={requiredAmount}
-                          onChange={(event) => setRequiredAmount(event.target.value)}
-                        />
                       </Field>
                       <Field label="Amount paid (₱)" htmlFor="payment-paid">
                         <Input
                           id="payment-paid"
                           type="number"
                           min="0"
+                          max={reservation.payment.total_amount}
                           step="0.01"
                           inputMode="decimal"
                           value={amountPaidInput}
                           onChange={(event) => setAmountPaidInput(event.target.value)}
                         />
                       </Field>
-                      <div>
-                        <p className="text-[13px] font-medium text-ink">Remaining balance</p>
-                        <p className="mt-2 text-sm font-semibold tabular-nums text-ink">
-                          {formatCurrency(previewRemaining(requiredAmount, amountPaidInput))}
-                        </p>
-                      </div>
+                      <DetailItem
+                        label="Total reservation price"
+                        value={formatCurrency(reservation.payment.total_amount)}
+                      />
+                      <DetailItem
+                        label={
+                          paymentType === 'FULL_PAYMENT'
+                            ? 'Required payment (100%)'
+                            : 'Required downpayment (50%)'
+                        }
+                        value={formatCurrency(
+                          previewRequiredAmount(reservation.payment.total_amount, paymentType),
+                        )}
+                      />
+                      <DetailItem
+                        label="Remaining balance"
+                        value={formatCurrency(
+                          previewRemaining(
+                            previewRequiredAmount(reservation.payment.total_amount, paymentType),
+                            amountPaidInput,
+                          ),
+                        )}
+                      />
                     </div>
                     {paymentError && (
                       <p role="alert" className="text-xs text-status-rejected">
@@ -841,8 +932,8 @@ export function ReservationDetailPage() {
                       </p>
                     )}
                     <p className="text-xs text-muted">
-                      A down payment does not waive the remaining balance — it stays tracked
-                      against the amount received.
+                      The backend calculates the required amount from the total reservation price.
+                      A down payment does not waive the remaining balance.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -1335,12 +1426,20 @@ export function ReservationDetailPage() {
       <Modal
         open={modal === 'payment-warning'}
         onClose={() => setModal(null)}
-        title="Payment outstanding"
-        description="This external organization has not fully paid for the reservation."
+        title="Payment Required Before Approval"
+        description={
+          partiallyPaid
+            ? warningIsFullPayment
+              ? 'This external reservation has not completed the required full payment.'
+              : 'This external reservation has not completed the required downpayment.'
+            : warningIsFullPayment
+              ? 'This external reservation has not received any payment yet. The full reservation price is required before approval.'
+              : 'This external reservation has not received any payment yet. The required downpayment is 50% of the total reservation price.'
+        }
         footer={
           <>
             <Button variant="ghost" onClick={() => setModal(null)} disabled={action.isPending}>
-              Cancel
+              Wait for Downpayment
             </Button>
             <Button
               onClick={() => {
@@ -1357,27 +1456,50 @@ export function ReservationDetailPage() {
         <div className="rounded-xl border border-status-maintenance/25 bg-status-maintenance-bg p-4">
           <p className="flex items-start gap-2 text-sm font-semibold text-status-maintenance">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {reservation.payment?.approval_warning ??
-              'Payment has not been received for this reservation. Are you sure you want to approve it without payment?'}
+            {partiallyPaid
+              ? 'This external reservation has only been partially paid.'
+              : 'This external reservation has not received any payment yet.'}
           </p>
-          {reservation.payment?.is_configured && (
+          {warningDetails && (
             <dl className="mt-3 space-y-2 text-sm">
               <div className="flex items-start justify-between gap-4">
-                <dt className="shrink-0 text-body">Required amount</dt>
+                <dt className="shrink-0 text-body">Total Reservation Price</dt>
                 <dd className="text-right font-medium tabular-nums text-ink">
-                  {formatCurrency(reservation.payment.required_amount ?? '0')}
+                  {formatCurrency(warningDetails.total_amount ?? reservation.estimated_total)}
                 </dd>
               </div>
               <div className="flex items-start justify-between gap-4">
-                <dt className="shrink-0 text-body">Amount paid</dt>
+                <dt className="shrink-0 text-body">
+                  {warningIsFullPayment ? 'Required Payment (100%)' : 'Required Downpayment (50%)'}
+                </dt>
                 <dd className="text-right font-medium tabular-nums text-ink">
-                  {formatCurrency(reservation.payment.amount_paid)}
+                  {formatCurrency(
+                    warningIsFullPayment
+                      ? warningDetails.required_amount
+                      : warningDetails.down_payment_amount ?? warningDetails.required_amount,
+                  )}
                 </dd>
               </div>
               <div className="flex items-start justify-between gap-4">
-                <dt className="shrink-0 text-body">Remaining balance</dt>
+                <dt className="shrink-0 text-body">Amount Paid</dt>
+                <dd className="text-right font-medium tabular-nums text-ink">
+                  {formatCurrency(warningDetails.amount_paid)}
+                </dd>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <dt className="shrink-0 text-body">
+                  {warningDetails.payment_type === 'FULL_PAYMENT'
+                    ? 'Remaining Payment'
+                    : 'Remaining Downpayment'}
+                </dt>
                 <dd className="text-right font-semibold tabular-nums text-status-maintenance">
-                  {formatCurrency(reservation.payment.remaining_balance)}
+                  {formatCurrency(warningDetails.remaining_balance)}
+                </dd>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <dt className="shrink-0 text-body">Payment Status</dt>
+                <dd className="text-right font-semibold text-status-maintenance">
+                  {warningDetails.status_label}
                 </dd>
               </div>
             </dl>
@@ -1385,7 +1507,7 @@ export function ReservationDetailPage() {
         </div>
         <p className="mt-4 text-sm leading-relaxed text-body">
           The reservation can still be approved. Selecting <strong>Approve Anyway</strong>{' '}
-          keeps the current payment status and records the approval.
+          keeps the actual payment status and amount paid.
         </p>
       </Modal>
 
@@ -1509,7 +1631,16 @@ function paymentStatusTone(
   return 'rose'
 }
 
-/** Display-only preview; the backend always recalculates the saved balance. */
+/** Display-only preview; the backend remains authoritative for saved amounts. */
+function previewRequiredAmount(
+  total: string,
+  paymentType: 'DOWN_PAYMENT' | 'FULL_PAYMENT',
+): string {
+  const totalValue = Number.parseFloat(total || '0')
+  if (!Number.isFinite(totalValue)) return '0'
+  return String(paymentType === 'FULL_PAYMENT' ? totalValue : totalValue * 0.5)
+}
+
 function previewRemaining(required: string, paid: string): string {
   const requiredValue = Number.parseFloat(required || '0')
   const paidValue = Number.parseFloat(paid || '0')

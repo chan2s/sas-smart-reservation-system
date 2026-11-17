@@ -329,7 +329,11 @@ class ExternalApprovalDocumentTests(TestCase):
         self.assertEqual(approved.approval_email_attempts, 2)
         self.assertEqual(len(mail.outbox), 2)
 
-        duplicate = client.post(f"/api/reservations/{approved.pk}/approve/", {}, format="json")
+        duplicate = client.post(
+            f"/api/reservations/{approved.pk}/approve/",
+            {"acknowledge_payment_warning": True},
+            format="json",
+        )
         self.assertEqual(duplicate.status_code, 400)
         self.assertEqual(len(mail.outbox), 2)
 

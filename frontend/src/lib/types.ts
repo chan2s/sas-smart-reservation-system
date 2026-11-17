@@ -658,9 +658,14 @@ export interface InspectionReport {
 }
 
 export interface ReservationPaymentInfo {
-  payment_type: '' | 'DOWN_PAYMENT' | 'FULL_PAYMENT'
+  payment_type: 'DOWN_PAYMENT' | 'FULL_PAYMENT'
   payment_type_label: string
-  required_amount: string | null
+  /** Snapshotted total reservation price from the existing fee calculation. */
+  total_amount: string
+  /** Automatic 50% down payment for the current total. */
+  down_payment_amount: string
+  /** Required amount for the selected payment type (50% or 100%). */
+  required_amount: string
   amount_paid: string
   remaining_balance: string
   status: 'UNPAID' | 'PARTIALLY_PAID' | 'FULLY_PAID'

@@ -880,12 +880,11 @@ export const endpoints = {
       verification_session,
       otp,
     }),
-  /** Staff-only: save the required amount, payment type, and amount received. */
+  /** Staff-only: save the payment type and amount received; backend derives the requirement. */
   updateReservationPayment: (
     id: number,
     payload: {
       payment_type: 'DOWN_PAYMENT' | 'FULL_PAYMENT'
-      payment_required_amount: string
       amount_paid: string
     },
   ) =>

@@ -1139,10 +1139,11 @@ class ReservationViewSet(viewsets.ModelViewSet):
     def payments(self, request, pk=None):
         """Administrative payment tracking for an external reservation.
 
-        GET returns the derived payment position. POST/PATCH saves the required
-        amount, payment type, and amount received. Internal/campus reservations
-        are rejected outright: this feature never introduces a payment
-        obligation for them.
+        GET returns the derived payment position. POST/PATCH saves the payment
+        type and amount received; the required amount is calculated by the
+        backend from the reservation total. Internal/campus reservations are
+        rejected outright: this feature never introduces a payment obligation
+        for them.
         """
         reservation = self.get_object()
         if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
@@ -1184,11 +1185,9 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return {
             "payment_type": summary["payment_type"],
             "payment_type_label": summary["payment_type_label"],
-            "required_amount": (
-                f"{summary['required_amount']:.2f}"
-                if summary["required_amount"] is not None
-                else None
-            ),
+            "total_amount": f"{summary['total_amount']:.2f}",
+            "down_payment_amount": f"{summary['down_payment_amount']:.2f}",
+            "required_amount": f"{summary['required_amount']:.2f}",
             "amount_paid": f"{summary['amount_paid']:.2f}",
             "remaining_balance": f"{summary['remaining_balance']:.2f}",
             "status": summary["status"],

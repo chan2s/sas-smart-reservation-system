@@ -12,9 +12,14 @@ import type { ReservationDetail } from '@/lib/types'
 
 const state = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
+  paymentMutate: vi.fn(),
   retryMutate: vi.fn(),
+  refetch: vi.fn(),
   toast: vi.fn(),
   reservation: null as unknown as ReservationDetail,
+  isError: false,
+  error: null as unknown,
+  routeId: '7',
   isStaff: true,
   isViewOnly: false,
 }))
@@ -24,11 +29,17 @@ vi.mock('react-router-dom', () => ({
     <a href={to}>{children}</a>
   ),
   useNavigate: () => vi.fn(),
-  useParams: () => ({ id: '7' }),
+  useParams: () => ({ id: state.routeId }),
 }))
 
 vi.mock('@/hooks/queries', () => ({
-  useReservation: () => ({ data: state.reservation, isLoading: false }),
+  useReservation: () => ({
+    data: state.reservation,
+    isLoading: false,
+    isError: state.isError,
+    error: state.error,
+    refetch: state.refetch,
+  }),
   useReservationAction: () => ({
     mutateAsync: state.mutateAsync,
     mutate: vi.fn(),
@@ -40,7 +51,7 @@ vi.mock('@/hooks/queries', () => ({
   }),
   useRetryApprovalDocument: () => ({ mutate: vi.fn(), isPending: false }),
   useResendApprovalEmail: () => ({ mutate: vi.fn(), isPending: false }),
-  useUpdateReservationPayment: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateReservationPayment: () => ({ mutateAsync: state.paymentMutate, isPending: false }),
   useUploadApprovalLetterImage: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
@@ -59,9 +70,11 @@ vi.mock('@/components/ui/Toast', () => ({
 vi.mock('@/lib/api', () => ({
   ApiError: class ApiError extends Error {
     status: number
-    constructor(status: number, message: string) {
+    data: unknown
+    constructor(status: number, message: string, data?: unknown) {
       super(message)
       this.status = status
+      this.data = data
     }
   },
   api: { fileUrl: vi.fn(), downloadFile: vi.fn() },
@@ -169,6 +182,27 @@ function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDet
   }
 }
 
+function paymentInfo(
+  overrides: Partial<NonNullable<ReservationDetail['payment']>> = {},
+): NonNullable<ReservationDetail['payment']> {
+  return {
+    payment_type: 'DOWN_PAYMENT',
+    payment_type_label: 'Down Payment',
+    total_amount: '10000.00',
+    down_payment_amount: '5000.00',
+    required_amount: '5000.00',
+    amount_paid: '0.00',
+    remaining_balance: '5000.00',
+    status: 'UNPAID',
+    status_label: 'Unpaid',
+    is_configured: true,
+    is_outstanding: true,
+    approval_warning:
+      'This external reservation has not received any payment yet. The required downpayment is 50% of the total reservation price.',
+    ...overrides,
+  }
+}
+
 function renderPage() {
   return render(<ReservationDetailPage />)
 }
@@ -183,10 +217,15 @@ function cancelButton() {
 
 beforeEach(() => {
   state.mutateAsync = vi.fn()
+  state.paymentMutate = vi.fn()
   state.retryMutate = vi.fn()
+  state.refetch = vi.fn(async () => ({ data: state.reservation }))
   state.toast = vi.fn()
   state.isStaff = true
   state.isViewOnly = false
+  state.isError = false
+  state.error = null
+  state.routeId = '7'
   state.reservation = reservation()
 })
 
@@ -613,5 +652,223 @@ describe('ReservationDetailPage cancel action visibility', () => {
         'error',
       ),
     )
+  })
+})
+
+describe('ReservationDetailPage payment calculation', () => {
+  it('previews the automatic 50% downpayment and saves only type plus amount paid', async () => {
+    state.paymentMutate.mockResolvedValue(undefined)
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      estimated_total: '10000.00',
+      payment: paymentInfo(),
+    })
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /update payment information/i }))
+
+    expect(screen.getAllByText('Total reservation price').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Required downpayment (50%)').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('₱5,000.00').length).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByLabelText('Payment type'), {
+      target: { value: 'FULL_PAYMENT' },
+    })
+    expect(screen.getAllByText('Required payment (100%)').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('₱10,000.00').length).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByLabelText('Amount paid (₱)'), {
+      target: { value: '7000.00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^save payment$/i }))
+
+    await waitFor(() =>
+      expect(state.paymentMutate).toHaveBeenCalledWith({
+        payment_type: 'FULL_PAYMENT',
+        amount_paid: '7000.00',
+      }),
+    )
+  })
+})
+
+describe('ReservationDetailPage approval payment warning', () => {
+  function approveButton() {
+    return screen.getByRole('button', { name: /^approve$/i })
+  }
+
+  it('warns before approving an unpaid external reservation and only approves after acknowledgement', async () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      payment: paymentInfo(),
+    })
+    renderPage()
+
+    fireEvent.click(approveButton())
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText('Payment Required Before Approval')).toBeTruthy()
+    expect(
+      within(dialog).getByText(
+        'This external reservation has not received any payment yet. The required downpayment is 50% of the total reservation price.',
+      ),
+    ).toBeTruthy()
+    expect(within(dialog).getByText('Total Reservation Price')).toBeTruthy()
+    expect(within(dialog).getByText('Required Downpayment (50%)')).toBeTruthy()
+    expect(within(dialog).getByText('Remaining Downpayment')).toBeTruthy()
+    expect(within(dialog).getByText('Payment Status')).toBeTruthy()
+    expect(within(dialog).getByText('Unpaid')).toBeTruthy()
+    expect(within(dialog).getByText('₱10,000.00')).toBeTruthy()
+    expect(within(dialog).getAllByText('₱5,000.00')).toHaveLength(2)
+    expect(state.mutateAsync).not.toHaveBeenCalled()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /^approve anyway$/i }))
+
+    await waitFor(() =>
+      expect(state.mutateAsync).toHaveBeenCalledWith({
+        action: 'approve',
+        body: { comment: '', acknowledge_payment_warning: true },
+      }),
+    )
+  })
+
+  it('keeps the reservation pending when the warning is cancelled', async () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      payment: paymentInfo(),
+    })
+    renderPage()
+
+    fireEvent.click(approveButton())
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /^wait for downpayment$/i }),
+    )
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(state.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it('shows the outstanding balance for a partially paid reservation', async () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      payment: paymentInfo({
+        status: 'PARTIALLY_PAID',
+        status_label: 'Partially Paid',
+        amount_paid: '2000.00',
+        remaining_balance: '3000.00',
+      }),
+    })
+    renderPage()
+
+    fireEvent.click(approveButton())
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText('Payment Required Before Approval')).toBeTruthy()
+    expect(
+      within(dialog).getByText(
+        'This external reservation has not completed the required downpayment.',
+      ),
+    ).toBeTruthy()
+    expect(
+      within(dialog).getByText('This external reservation has only been partially paid.'),
+    ).toBeTruthy()
+    expect(within(dialog).getByText('₱3,000.00')).toBeTruthy()
+  })
+
+  it('approves a fully paid reservation without a warning', async () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      payment: paymentInfo({
+        status: 'FULLY_PAID',
+        status_label: 'Fully Paid',
+        amount_paid: '5000.00',
+        remaining_balance: '0.00',
+        is_outstanding: false,
+        approval_warning: null,
+      }),
+    })
+    renderPage()
+
+    fireEvent.click(approveButton())
+
+    await waitFor(() =>
+      expect(state.mutateAsync).toHaveBeenCalledWith({
+        action: 'approve',
+        body: { comment: '' },
+      }),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it("uses the backend's fresh payment data when a cached page says it is settled", async () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      payment: paymentInfo({
+        status: 'FULLY_PAID',
+        status_label: 'Fully Paid',
+        amount_paid: '5000.00',
+        remaining_balance: '0.00',
+        is_outstanding: false,
+        approval_warning: null,
+      }),
+    })
+    state.mutateAsync.mockRejectedValue(
+      new ApiError(409, 'Payment outstanding.', {
+        code: 'PAYMENT_WARNING',
+        payment: paymentInfo({
+          status: 'PARTIALLY_PAID',
+          status_label: 'Partially Paid',
+          amount_paid: '2000.00',
+          remaining_balance: '3000.00',
+        }),
+      }),
+    )
+    renderPage()
+
+    fireEvent.click(approveButton())
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText('Payment Required Before Approval')).toBeTruthy()
+    expect(within(dialog).getByText('₱3,000.00')).toBeTruthy()
+  })
+
+  it('shows not found instead of cached data when the reservation was deleted', () => {
+    state.isError = true
+    state.error = new ApiError(404, 'Not found.')
+    state.reservation = reservation()
+    renderPage()
+
+    expect(screen.getByText('Reservation not found')).toBeTruthy()
+    expect(screen.queryByText('Science Fair')).toBeNull()
+  })
+
+  it('shows not found for an invalid reservation id without treating it as loading', () => {
+    state.routeId = 'not-a-number'
+    state.reservation = null as unknown as ReservationDetail
+    renderPage()
+
+    expect(screen.getByText('Reservation not found')).toBeTruthy()
+  })
+
+  it('still warns from the loaded reservation when the refresh fails', async () => {
+    state.reservation = reservation({
+      requester_type: 'EXTERNAL',
+      status: 'PENDING',
+      payment: paymentInfo(),
+    })
+    state.refetch.mockRejectedValue(new Error('offline'))
+    renderPage()
+
+    fireEvent.click(approveButton())
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText('Payment Required Before Approval')).toBeTruthy()
+    expect(state.mutateAsync).not.toHaveBeenCalled()
   })
 })
