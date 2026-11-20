@@ -1,4 +1,5 @@
 from decimal import Decimal
+from django.utils import timezone
 
 from django.conf import settings
 from django.db import models
@@ -41,6 +42,12 @@ class Equipment(models.Model):
         PAIR = "pair", "Pair"
         BOX = "box", "Box"
 
+    class PricingMethod(models.TextChoices):
+        """How this equipment is priced."""
+        PER_UNIT = "PER_UNIT", "Per Unit (Quantity-Based)"
+        DURATION = "DURATION", "Half-Day / Whole-Day"
+        PACKAGE = "PACKAGE", "Package-Based (Not Individually Priced)"
+
     name = models.CharField(max_length=120)
     category = models.ForeignKey(
         EquipmentCategory, on_delete=models.PROTECT, related_name="items"
@@ -60,15 +67,62 @@ class Equipment(models.Model):
     )
     storage_location = models.CharField(max_length=120, blank=True)
     asset_code = models.CharField(max_length=60, blank=True)
+    
+    # Pricing Configuration
+    pricing_method = models.CharField(
+        max_length=16,
+        choices=PricingMethod.choices,
+        default=PricingMethod.PER_UNIT,
+        help_text="How this equipment is priced: per unit, by duration (half/whole day), or package-based"
+    )
+    #: Per-unit price (used when pricing_method=PER_UNIT)
+    unit_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Price per unit when using per-unit pricing (e.g., ₱5.00 per chair)"
+    )
+    #: Half-day price (used when pricing_method=DURATION)
+    half_day_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Price for half-day (4+ hours) reservations when using duration-based pricing"
+    )
+    #: Whole-day price (used when pricing_method=DURATION)
+    whole_day_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Price for whole-day (8+ hours) reservations when using duration-based pricing"
+    )
+    #: Hourly rate (used when pricing_method=DURATION for short reservations)
+    hourly_rate = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Price per hour for reservations under 4 hours when using duration-based pricing"
+    )
+    #: Package price (used when pricing_method=PACKAGE). Charged once per
+    #: package selected, so components bundled into the package are never
+    #: charged individually. ``0`` means "not configured", letting the legacy
+    #: per-category rate apply.
+    package_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Price per package when using package-based pricing (e.g., Sound System Package)"
+    )
+    
     #: Legacy per-item value retained for historical records. Current rental
-    #: prices are managed centrally through reservations.PricingRule.
+    #: prices are managed through pricing_method and associated fields above.
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         default=Decimal("0.00"),
         help_text=(
-            "Legacy item price retained for historical records. Manage current "
-            "rental rates in the unified pricing configuration."
+            "Legacy item price retained for historical records. Use the new pricing "
+            "configuration fields (unit_price, half_day_price, whole_day_price) instead."
         ),
     )
     image = models.ImageField(upload_to="equipment/", blank=True, null=True)
@@ -81,13 +135,27 @@ class Equipment(models.Model):
         ordering = ["name"]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(price__gte=0),
-                name="equipment_price_nonnegative",
+                check=models.Q(unit_price__gte=0) & models.Q(half_day_price__gte=0) & 
+                      models.Q(whole_day_price__gte=0) & models.Q(hourly_rate__gte=0) &
+                      models.Q(package_price__gte=0),
+                name="equipment_prices_nonnegative",
             ),
         ]
 
     def __str__(self) -> str:
         return self.name
+
+    def get_effective_price_for_duration(self, duration_hours: Decimal) -> tuple[Decimal, str]:
+        """Configured rate for a scheduled duration.
+
+        Returns ``(price, unit)`` using the ``PricingRule.Unit`` vocabulary
+        (``unit``, ``flat``, ``hour``). Delegates to the reservation pricing
+        service, which is the single authoritative resolver, so a rate shown
+        here is exactly the rate charged on a reservation.
+        """
+        from reservations.services.pricing import equipment_price_for
+
+        return equipment_price_for(self, duration_hours)
 
 
 class FacilityResource(models.Model):
@@ -273,3 +341,116 @@ class MaintenanceRecord(models.Model):
 
     def __str__(self) -> str:
         return f"{self.equipment.name} — {self.get_issue_type_display()}"
+
+
+class SoundSystemOperator(models.Model):
+    """A qualified Sound System Operator available for rental reservations.
+    
+    Operators are managed independently from physical equipment inventory.
+    Each operator has their own availability schedule and can be assigned to
+    multiple reservations across different time slots.
+    """
+    
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        UNAVAILABLE = "UNAVAILABLE", "Unavailable"
+    
+    name = models.CharField(max_length=120)
+    contact_phone = models.CharField(max_length=20, blank=True)
+    contact_email = models.EmailField(blank=True)
+    rate = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("500.00"),
+        help_text="Default operator rate per package/reservation"
+    )
+    status = models.CharField(
+        max_length=16, 
+        choices=Status.choices, 
+        default=Status.AVAILABLE,
+        help_text="Operational availability of this operator"
+    )
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ["name"]
+    
+    def __str__(self) -> str:
+        return f"{self.name} ({self.get_status_display()})"
+
+
+class EquipmentPackage(models.Model):
+    """A bundle of equipment items treated as a single rentable package.
+    
+    Packages group multiple equipment items and optional required services
+    (operators) into a single reservable unit. The package composition is
+    configurable and inventory is calculated as the minimum availability
+    across all required components.
+    
+    Currently used for Sound System Package implementation.
+    """
+    
+    class Type(models.TextChoices):
+        SOUND_SYSTEM = "SOUND_SYSTEM", "Sound System Package"
+    
+    package_type = models.CharField(
+        max_length=32,
+        choices=Type.choices,
+        unique=True,
+        help_text="Type/category of package"
+    )
+    name = models.CharField(max_length=120, help_text="Display name of the package")
+    description = models.TextField(blank=True, help_text="Description of included items and services")
+    operator_required = models.BooleanField(
+        default=True,
+        help_text="Whether an operator/technician is required for this package"
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ["package_type"]
+    
+    def __str__(self) -> str:
+        return self.name
+
+
+class EquipmentPackageComponent(models.Model):
+    """A required component of an EquipmentPackage.
+    
+    Defines which equipment items and quantities are required to constitute
+    one complete package unit. When availability is calculated, the package
+    is only available if ALL components have sufficient quantities.
+    """
+    
+    package = models.ForeignKey(
+        EquipmentPackage,
+        on_delete=models.CASCADE,
+        related_name="components"
+    )
+    equipment = models.ForeignKey(
+        Equipment,
+        on_delete=models.CASCADE,
+        related_name="package_components"
+    )
+    quantity_per_package = models.PositiveIntegerField(
+        default=1,
+        help_text="How many units of this equipment are required per complete package"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Specific description of this component (e.g., '2x Wireless Microphones')"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [["package", "equipment"]]
+        ordering = ["equipment__name"]
+    
+    def __str__(self) -> str:
+        return f"{self.package.name} → {self.quantity_per_package}× {self.equipment.name}"

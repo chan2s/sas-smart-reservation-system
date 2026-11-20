@@ -3443,3 +3443,250 @@ class EquipmentPricePricingTests(TestCase):
         self.assertEqual(mic_line["quantity"], "2")
         self.assertEqual(mic_line["unit_price"], "100.00")
         self.assertEqual(mic_line["subtotal"], "200.00")
+
+
+class EquipmentPricingConfigurationTests(TestCase):
+    """Equipment Management is the authoritative rental pricing source.
+
+    The configured pricing method and rates on the equipment item drive every
+    reservation quote. Per-unit items charge quantity x unit price, duration
+    items charge the configured half-day / whole-day / additional-hour rate for
+    the scheduled window, and package items charge their package price without
+    billing bundled components separately.
+    """
+
+    def setUp(self):
+        from decimal import Decimal as D
+
+        self.client = APIClient()
+        self.staff = User.objects.create_user(
+            username="pricing_staff", password="pass12345", role=User.Role.STAFF
+        )
+        self.requester = User.objects.create_user(
+            username="pricing_requester", password="pass12345", role=User.Role.REQUESTER
+        )
+        self.facility = Facility.objects.create(
+            name="Pricing Hall", facility_type=Facility.FacilityType.CAFETERIA, capacity=200
+        )
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
+
+        # The official catalog (LED Wall, Sound System, Plastic Chairs) is
+        # seeded by migrations, so reuse and reconfigure those rows instead of
+        # inserting duplicates of the unique category names.
+        def item(name, **fields):
+            category, _ = EquipmentCategory.objects.get_or_create(name=name)
+            equipment, _ = Equipment.objects.get_or_create(
+                name=name, defaults={"category": category}
+            )
+            equipment.category = category
+            for field, value in fields.items():
+                setattr(equipment, field, value)
+            equipment.save()
+            return equipment
+
+        self.chairs = item(
+            "Plastic Chairs",
+            total_quantity=300,
+            pricing_method=Equipment.PricingMethod.PER_UNIT,
+            unit_price=D("5.00"),
+        )
+        self.led = item(
+            "LED Wall",
+            total_quantity=2,
+            pricing_method=Equipment.PricingMethod.DURATION,
+            half_day_price=D("3000.00"),
+            whole_day_price=D("5000.00"),
+            hourly_rate=D("800.00"),
+        )
+        self.sound = item(
+            "Sound System",
+            total_quantity=2,
+            pricing_method=Equipment.PricingMethod.PACKAGE,
+            package_price=D("8000.00"),
+        )
+
+    def _quote(self, equipment, quantity=1, start=time(8, 0), end=time(17, 0)):
+        return quote_fees(
+            Reservation.RequesterType.EXTERNAL,
+            facility=self.facility,
+            items=[{"equipment_id": equipment.id, "quantity": quantity}],
+            start_time=start,
+            end_time=end,
+        )
+
+    @staticmethod
+    def _equipment_line(quote):
+        lines = [f for f in quote["fees"] if f["fee_type"] == PricingRule.FeeType.EQUIPMENT]
+        assert len(lines) == 1, lines
+        return lines[0]
+
+    def test_per_unit_configuration_charges_quantity_times_unit_price(self):
+        line = self._equipment_line(self._quote(self.chairs, quantity=112))
+        self.assertEqual(line["unit_price"], 5)
+        self.assertEqual(line["quantity"], 112)
+        self.assertEqual(f"{line['subtotal']:.2f}", "560.00")
+
+    def test_half_day_reservation_uses_configured_half_day_rate(self):
+        line = self._equipment_line(self._quote(self.led, start=time(9, 0), end=time(14, 0)))
+        self.assertEqual(f"{line['unit_price']:.2f}", "3000.00")
+        self.assertEqual(line["unit"], PricingRule.Unit.FLAT)
+
+    def test_whole_day_reservation_uses_configured_whole_day_rate(self):
+        line = self._equipment_line(self._quote(self.led, start=time(8, 0), end=time(17, 0)))
+        self.assertEqual(f"{line['unit_price']:.2f}", "5000.00")
+
+    def test_additional_hour_rate_applies_to_short_reservations(self):
+        quote = self._quote(self.led, start=time(9, 0), end=time(11, 0))
+        line = self._equipment_line(quote)
+        self.assertEqual(line["unit"], PricingRule.Unit.HOUR)
+        self.assertEqual(f"{line['unit_price']:.2f}", "800.00")
+        self.assertEqual(f"{line['subtotal']:.2f}", "1600.00")
+        self.assertEqual(f"{quote['duration_hours']:.2f}", "2.00")
+
+    def test_short_reservation_without_hourly_rate_falls_back_to_half_day(self):
+        self.led.hourly_rate = 0
+        self.led.save(update_fields=["hourly_rate"])
+        line = self._equipment_line(self._quote(self.led, start=time(9, 0), end=time(11, 0)))
+        self.assertEqual(f"{line['unit_price']:.2f}", "3000.00")
+
+    def test_package_price_is_charged_per_package_without_component_prices(self):
+        quote = quote_fees(
+            Reservation.RequesterType.EXTERNAL,
+            facility=self.facility,
+            items=[{"equipment_id": self.sound.id, "quantity": 2}],
+            start_time=time(8, 0),
+            end_time=time(17, 0),
+        )
+        line = self._equipment_line(quote)
+        self.assertEqual(f"{line['unit_price']:.2f}", "8000.00")
+        self.assertEqual(f"{line['subtotal']:.2f}", "16000.00")
+
+    def test_package_without_configured_price_keeps_legacy_category_rate(self):
+        """Backward compatibility: an unconfigured package still prices from
+        the existing per-category rule instead of becoming free."""
+        self.sound.package_price = 0
+        self.sound.save(update_fields=["package_price"])
+        PricingRule.objects.create(
+            fee_type=PricingRule.FeeType.EQUIPMENT,
+            equipment_category=self.sound.category,
+            label="Sound System",
+            unit=PricingRule.Unit.UNIT,
+            unit_price=1000,
+        )
+        line = self._equipment_line(self._quote(self.sound, quantity=1))
+        self.assertEqual(f"{line['unit_price']:.2f}", "1000.00")
+
+    def test_staff_can_configure_rates_through_equipment_api(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.patch(
+            f"/api/equipment/{self.led.id}/",
+            {"whole_day_price": "6500.00", "half_day_price": "3500.00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["whole_day_price"], "6500.00")
+        line = self._equipment_line(self._quote(self.led))
+        self.assertEqual(f"{line['unit_price']:.2f}", "6500.00")
+
+    def test_package_price_can_be_configured_through_equipment_api(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.patch(
+            f"/api/equipment/{self.sound.id}/",
+            {"package_price": "9500.00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        line = self._equipment_line(self._quote(self.sound, quantity=1))
+        self.assertEqual(f"{line['unit_price']:.2f}", "9500.00")
+
+    def test_availability_endpoint_prices_from_equipment_configuration(self):
+        """The reservation form's endpoint quotes the configured duration rate
+        for the actual scheduled window (half-day vs whole-day)."""
+        FacilityResource.objects.create(facility=self.facility, equipment=self.led)
+        self.client.force_authenticate(self.staff)
+
+        def equipment_price(start, end):
+            response = self.client.post(
+                "/api/availability/check/",
+                {
+                    "facility_id": self.facility.id,
+                    "date": self.day.isoformat(),
+                    "start_time": start,
+                    "end_time": end,
+                    "requester_type": "EXTERNAL",
+                    "items": [{"equipment_id": self.led.id, "quantity": 1}],
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+            line = next(
+                fee
+                for fee in response.json()["pricing"]["fees"]
+                if fee["fee_type"] == "EQUIPMENT"
+            )
+            return line["unit_price"]
+
+        self.assertEqual(equipment_price("13:00", "17:00"), "3000.00")  # 4h
+        self.assertEqual(equipment_price("08:00", "17:00"), "5000.00")  # 9h
+
+    def test_requesters_cannot_change_equipment_pricing(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.patch(
+            f"/api/equipment/{self.chairs.id}/",
+            {"unit_price": "0.01"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_negative_prices_are_rejected(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.patch(
+            f"/api/equipment/{self.chairs.id}/",
+            {"unit_price": "-5.00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("unit_price", response.json())
+
+    def test_pricing_edit_updates_future_quotes_but_not_snapshotted_history(self):
+        reservation = Reservation.objects.create(
+            requester_type=Reservation.RequesterType.EXTERNAL,
+            organization="ABC School",
+            contact_person="Juan",
+            contact_email="juan@example.com",
+            event_name="Gala",
+            event_type=Reservation.EventType.OTHER,
+            facility=self.facility,
+            date=self.day,
+            start_time=time(8, 0),
+            end_time=time(17, 0),
+            expected_participants=100,
+        )
+        ReservationItem.objects.create(reservation=reservation, equipment=self.led, quantity=1)
+        snapshot_reservation_fees(reservation)
+        reservation.refresh_from_db()
+        # The configured whole-day rate is the EQUIPMENT line, snapshotted
+        # alongside the facility and environmental lines.
+        snapshot_total = reservation.estimated_total
+        equipment_fee = lambda: [
+            f"{fee.unit_price:.2f}"
+            for fee in reservation.fees.filter(
+                fee_type=PricingRule.FeeType.EQUIPMENT
+            )
+        ]
+        self.assertEqual(equipment_fee(), ["5000.00"])
+
+        # A later rate edit changes FUTURE quotes...
+        self.led.whole_day_price = 7000
+        self.led.save(update_fields=["whole_day_price"])
+        self.assertEqual(
+            f"{self._equipment_line(self._quote(self.led))['unit_price']:.2f}",
+            "7000.00",
+        )
+
+        # ...but the already-submitted reservation keeps its snapshot.
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.estimated_total, snapshot_total)
+        self.assertEqual(equipment_fee(), ["5000.00"])

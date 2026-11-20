@@ -381,6 +381,9 @@ export type EquipmentStatus = 'AVAILABLE' | 'MAINTENANCE' | 'UNAVAILABLE' | 'RET
 
 export type EquipmentCondition = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED'
 
+/** How an equipment item is priced on a reservation. */
+export type EquipmentPricingMethod = 'PER_UNIT' | 'DURATION' | 'PACKAGE'
+
 export interface EquipmentAvailability {
   total: number
   /** Units free during the selected window (or at-a-glance). */
@@ -421,6 +424,19 @@ export interface Equipment {
   unit: string
   /** Per-unit price configured by the SAS Office ("1000.00"). "0.00" = free / no item override. */
   price: string
+  /** Authoritative pricing method used by the backend reservation quote. */
+  pricing_method: EquipmentPricingMethod
+  pricing_method_label: string
+  /** Configured per-unit rate (PER_UNIT pricing). "0.00" = not configured. */
+  unit_price: string
+  /** Configured half-day rate (DURATION pricing, 4–7.99 scheduled hours). */
+  half_day_price: string
+  /** Configured whole-day rate (DURATION pricing, 8+ scheduled hours). */
+  whole_day_price: string
+  /** Configured hourly rate (DURATION pricing, under 4 scheduled hours). */
+  hourly_rate: string
+  /** Configured package price (PACKAGE pricing). "0.00" = use category rate. */
+  package_price: string
   condition: EquipmentCondition
   condition_label: string
   status: EquipmentStatus

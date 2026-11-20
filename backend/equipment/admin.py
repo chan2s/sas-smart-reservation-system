@@ -6,8 +6,11 @@ from .models import (
     Equipment,
     EquipmentCategory,
     EquipmentImage,
+    EquipmentPackage,
+    EquipmentPackageComponent,
     FacilityResource,
     MaintenanceRecord,
+    SoundSystemOperator,
 )
 
 
@@ -100,11 +103,72 @@ class FacilityResourceInline(admin.TabularInline):
 @admin.register(Equipment)
 class EquipmentAdmin(admin.ModelAdmin):
     form = OfficialEquipmentAdminForm
-    readonly_fields = ("price",)
-    list_display = ("name", "category", "total_quantity", "condition", "is_active")
-    list_filter = ("category", "condition", "is_active")
+    readonly_fields = ()  # No longer readonly - allow pricing configuration
+    list_display = ("name", "category", "total_quantity", "pricing_method", "condition", "is_active")
+    list_filter = ("category", "condition", "pricing_method", "is_active")
     search_fields = ("name",)
     inlines = (EquipmentImageInline, FacilityResourceInline)
+    
+    fieldsets = (
+        (
+            "Basic Information",
+            {
+                "fields": ("name", "category", "description", "total_quantity", "unit"),
+            },
+        ),
+        (
+            "Rental Pricing Configuration",
+            {
+                "fields": ("pricing_method",),
+                "description": "Choose how this equipment is priced: per unit (quantity-based), by rental duration (half-day/whole-day), or as part of a package.",
+            },
+        ),
+        (
+            "Per-Unit Pricing",
+            {
+                "fields": ("unit_price",),
+                "description": "Configure when Pricing Method is 'Per Unit'. Price per unit (piece, set, etc.).",
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Duration-Based Pricing",
+            {
+                "fields": ("half_day_price", "whole_day_price", "hourly_rate"),
+                "description": "Configure when Pricing Method is 'Half-Day / Whole-Day'. Prices for different reservation durations.",
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Package Pricing",
+            {
+                "fields": ("package_price",),
+                "description": "Configure when Pricing Method is 'Package-Based'. Charged per package selected; bundled components are not charged individually.",
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Status & Location",
+            {
+                "fields": ("condition", "status", "storage_location", "asset_code", "is_active"),
+            },
+        ),
+        (
+            "Additional Information",
+            {
+                "fields": ("notes", "image"),
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Historical Data",
+            {
+                "fields": ("price",),
+                "description": "Legacy per-item price retained for historical records. Use the new pricing fields above instead.",
+                "classes": ("collapse",),
+            },
+        ),
+    )
 
 
 @admin.register(FacilityResource)
@@ -165,3 +229,65 @@ class FacilityResourceAdmin(admin.ModelAdmin):
 class MaintenanceRecordAdmin(admin.ModelAdmin):
     list_display = ("equipment", "quantity", "issue_type", "status", "created_at")
     list_filter = ("issue_type", "status")
+
+
+class EquipmentPackageComponentInline(admin.TabularInline):
+    """Inline editor for package components."""
+    model = EquipmentPackageComponent
+    extra = 0
+    autocomplete_fields = ("equipment",)
+    fields = ("equipment", "quantity_per_package", "description")
+
+
+@admin.register(SoundSystemOperator)
+class SoundSystemOperatorAdmin(admin.ModelAdmin):
+    """Manage Sound System Operators and their availability."""
+    list_display = ("name", "status", "rate", "is_active", "created_at")
+    list_filter = ("status", "is_active")
+    search_fields = ("name", "contact_phone", "contact_email")
+    readonly_fields = ("created_at", "updated_at")
+    fieldsets = (
+        (
+            "Operator",
+            {"fields": ("name", "status", "is_active")},
+        ),
+        (
+            "Contact",
+            {"fields": ("contact_phone", "contact_email")},
+        ),
+        (
+            "Rates",
+            {"fields": ("rate",)},
+        ),
+        (
+            "Notes",
+            {"fields": ("notes",)},
+        ),
+        (
+            "Metadata",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+
+@admin.register(EquipmentPackage)
+class EquipmentPackageAdmin(admin.ModelAdmin):
+    """Manage equipment packages (e.g., Sound System Package)."""
+    list_display = ("name", "package_type", "operator_required", "is_active")
+    list_filter = ("package_type", "operator_required", "is_active")
+    readonly_fields = ("created_at", "updated_at")
+    fieldsets = (
+        (
+            "Package",
+            {"fields": ("package_type", "name", "operator_required", "is_active")},
+        ),
+        (
+            "Description",
+            {"fields": ("description",)},
+        ),
+        (
+            "Metadata",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+    inlines = (EquipmentPackageComponentInline,)

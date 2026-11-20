@@ -302,6 +302,7 @@ class ReservationAdmin(admin.ModelAdmin):
         "reminder_email_claimed_at",
         "no_show_marked_at",
         "no_show_marked_by",
+        "operator_assigned_at",
     )
     fieldsets = (
         (
@@ -390,6 +391,17 @@ class ReservationAdmin(admin.ModelAdmin):
                     "checked_out_at",
                     "early_check_in_override",
                 )
+            },
+        ),
+        (
+            "Sound System Package - Operator Assignment",
+            {
+                "fields": ("assigned_operator", "operator_assigned_at"),
+                "description": (
+                    "Assign a qualified Sound System Operator to this reservation. "
+                    "This field is used when the reservation includes the Sound System Package."
+                ),
+                "classes": ("collapse",),
             },
         ),
     )

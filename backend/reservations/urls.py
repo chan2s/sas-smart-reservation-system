@@ -12,6 +12,8 @@ from .views import (
     public_booker_resend,
     public_booker_verify,
     public_facility_resources,
+    public_package_availability,
+    public_operator_availability,
     public_pricing_rates,
     public_reservation_catalog,
     public_reservation_submit,
@@ -89,6 +91,8 @@ urlpatterns = [
     path("public/reservations/recommendations/", public_resource_recommendation, name="public-reservation-recommendations"),
     path("public/reservations/pricing/", public_pricing_rates, name="public-reservation-pricing"),
     path("public/reservations/facilities/<int:facility_id>/resources/", public_facility_resources, name="public-facility-resources"),
+    path("public/reservations/packages/availability/", public_package_availability, name="public-package-availability"),
+    path("public/reservations/operators/availability/", public_operator_availability, name="public-operator-availability"),
 ] + router.urls + [
     # Authenticated endpoints.
     path("availability/check/", availability_check, name="availability-check"),

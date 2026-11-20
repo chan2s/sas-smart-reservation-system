@@ -43,6 +43,7 @@ from .serializers import (
 from .services import confirmations, expiration, payments as payment_service, workflow
 from .services import booker_lookup as booker_service
 from .services.availability import check_availability, find_alternatives
+from .services.package_availability import package_availability, operator_availability
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
 from .services.public_tracking import reservation_for_tracking_token
 from .services.recommendations import recommend_resources_with_pricing
@@ -2166,3 +2167,76 @@ def public_booked_dates(request):
         }
         for reservation in reservations
     ])
+
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationThrottle])
+def public_package_availability(request):
+    """Check availability of equipment packages (e.g., Sound System Package).
+    
+    Returns detailed package composition and available quantity for the requested
+    time window.
+    """
+    import datetime
+    from equipment.models import EquipmentPackage
+    
+    data = request.data
+    try:
+        package_id = int(data.get("package_id", ""))
+        facility_id = int(data.get("facility_id", ""))
+        target_date = datetime.date.fromisoformat(data["date"]) if data.get("date") else None
+        start = datetime.time.fromisoformat(data["start_time"]) if data.get("start_time") else None
+        end = datetime.time.fromisoformat(data["end_time"]) if data.get("end_time") else None
+    except (TypeError, ValueError, KeyError) as exc:
+        return Response({"detail": f"Invalid request: {exc}"}, status=400)
+    
+    if not Facility.objects.filter(pk=facility_id, is_active=True).exists():
+        return Response({"detail": "Facility not found."}, status=404)
+    
+    if not EquipmentPackage.objects.filter(pk=package_id, is_active=True).exists():
+        return Response({"detail": "Package not found."}, status=404)
+    
+    try:
+        availability = package_availability(
+            package_id, facility_id, target_date, start, end
+        )
+    except Exception as exc:
+        return Response({"detail": f"Error checking availability: {exc}"}, status=400)
+    
+    return Response(availability)
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationThrottle])
+def public_operator_availability(request):
+    """Check availability of Sound System Operators for a time window.
+    
+    Returns list of available operators and their rates.
+    """
+    import datetime
+    
+    data = request.data
+    try:
+        facility_id = int(data.get("facility_id", ""))
+        target_date = datetime.date.fromisoformat(data["date"]) if data.get("date") else None
+        start = datetime.time.fromisoformat(data["start_time"]) if data.get("start_time") else None
+        end = datetime.time.fromisoformat(data["end_time"]) if data.get("end_time") else None
+    except (TypeError, ValueError, KeyError) as exc:
+        return Response({"detail": f"Invalid request: {exc}"}, status=400)
+    
+    if not Facility.objects.filter(pk=facility_id, is_active=True).exists():
+        return Response({"detail": "Facility not found."}, status=404)
+    
+    try:
+        availability = operator_availability(
+            facility_id, target_date, start, end
+        )
+    except Exception as exc:
+        return Response({"detail": f"Error checking availability: {exc}"}, status=400)
+    
+    return Response(availability)

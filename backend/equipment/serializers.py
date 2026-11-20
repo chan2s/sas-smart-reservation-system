@@ -104,19 +104,52 @@ class EquipmentSerializer(serializers.ModelSerializer):
     images = serializers.SerializerMethodField()
     condition_label = serializers.CharField(source="get_condition_display", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    pricing_method_label = serializers.CharField(
+        source="get_pricing_method_display", read_only=True
+    )
     availability = serializers.SerializerMethodField()
     has_history = serializers.SerializerMethodField()
     is_active = serializers.BooleanField(required=False)
-    #: Per-unit price used by reservation pricing. Writable only through the
-    #: equipment endpoints, which are staff-only (``IsSasStaffOrReadOnly``) —
-    #: requesters can read prices but can never change them. ``0`` means the
-    #: per-category rate applies (see ``pricing.quote_fees``).
+    #: Rental pricing is configured only through the equipment endpoints, which
+    #: are staff-only (``IsSasStaffOrReadOnly``): requesters can read the
+    #: configured rates but can never change them. ``0`` means "not configured",
+    #: in which case ``pricing.quote_fees`` falls back to the legacy item price
+    #: and then to the per-category ``PricingRule``.
     price = serializers.DecimalField(
         max_digits=10,
         decimal_places=2,
         min_value=Decimal("0.00"),
-        default=Decimal("0.00"),
-        read_only=True,
+        required=False,
+    )
+    unit_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        required=False,
+    )
+    half_day_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        required=False,
+    )
+    whole_day_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        required=False,
+    )
+    hourly_rate = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        required=False,
+    )
+    package_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        required=False,
     )
 
     class Meta:
@@ -129,7 +162,14 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "description",
             "total_quantity",
             "unit",
+            "pricing_method",
+            "pricing_method_label",
             "price",
+            "unit_price",
+            "half_day_price",
+            "whole_day_price",
+            "hourly_rate",
+            "package_price",
             "condition",
             "condition_label",
             "status",
@@ -145,7 +185,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("availability", "has_history", "price")
+        read_only_fields = ("availability", "has_history")
 
     def get_images(self, obj):
         """The gallery, ordered by the model's ordering.
@@ -226,7 +266,58 @@ class EquipmentSerializer(serializers.ModelSerializer):
             category.name.casefold() != name.casefold() or not category.is_active
         ):
             raise serializers.ValidationError({"category_id": "Use the matching active category from the official equipment catalog."})
+
+        attrs = self._validate_pricing(attrs)
         return attrs
+
+    def _validate_pricing(self, attrs):
+        """Validate and reconcile the rental pricing configuration.
+
+        ``price`` is the legacy per-item value, while ``unit_price`` is the
+        configured per-unit rate the pricing service reads first. For per-unit
+        equipment the two are kept in sync (whichever the caller sent wins), so
+        an older client that only knows ``price`` keeps working and no second,
+        divergent pricing source is created. Duration-based equipment must have
+        a whole-day rate, because otherwise the item would silently fall back to
+        a different pricing basis.
+        """
+        method = attrs.get(
+            "pricing_method",
+            self.instance.pricing_method
+            if self.instance is not None
+            else Equipment.PricingMethod.PER_UNIT,
+        )
+
+        def resolved(field):
+            if field in attrs:
+                return attrs[field]
+            if self.instance is not None:
+                return getattr(self.instance, field)
+            return Decimal("0.00")
+
+        if method == Equipment.PricingMethod.DURATION and resolved("whole_day_price") <= 0:
+            raise serializers.ValidationError(
+                {
+                    "whole_day_price": (
+                        "Set the whole-day rental price for duration-based pricing. "
+                        "Use per-unit pricing for quantity-based equipment."
+                    )
+                }
+            )
+
+        if method == Equipment.PricingMethod.PER_UNIT:
+            if "unit_price" in attrs:
+                attrs["price"] = attrs["unit_price"]
+            elif "price" in attrs:
+                attrs["unit_price"] = attrs["price"]
+
+        return attrs
+
+    def create(self, validated_data):
+        """Keep the legacy price column populated for new equipment."""
+        if not validated_data.get("price") and validated_data.get("unit_price"):
+            validated_data["price"] = validated_data["unit_price"]
+        return super().create(validated_data)
 
     def validate_total_quantity(self, value):
         """Inventory must never drop below what is already committed.

@@ -114,6 +114,33 @@ def _rules_by_category(fee_type) -> dict:
     return mapping
 
 
+def _period_rules_by_category(fee_type) -> dict:
+    """(equipment_category_id, rental_period) -> active rule.
+
+    Period-specific category rates (whole day / half day / per hour) are the
+    legacy official catalog rates for duration-priced items. They are only a
+    fallback: a rate configured directly on the equipment item always wins.
+    """
+    rows = PricingRule.objects.filter(
+        is_active=True,
+        fee_type=fee_type,
+        equipment_category__isnull=False,
+    ).exclude(rental_period="")
+    mapping: dict[tuple[int, str], PricingRule] = {}
+    for rule in rows.order_by("id"):
+        mapping.setdefault((rule.equipment_category_id, rule.rental_period), rule)
+    return mapping
+
+
+def rental_period_for(duration_hours: Decimal) -> str:
+    """Official rental period for a scheduled duration."""
+    if duration_hours >= Decimal("8.00"):
+        return PricingRule.RentalPeriod.WHOLE_DAY
+    if duration_hours >= Decimal("4.00"):
+        return PricingRule.RentalPeriod.HALF_DAY
+    return PricingRule.RentalPeriod.PER_HOUR
+
+
 def _facility_resources(facility) -> dict:
     """equipment_id -> active ``FacilityResource`` for this facility.
 
@@ -157,6 +184,53 @@ def _resolve_items(items) -> list[tuple[Equipment, int, bool | None]]:
             operator = bool(operator)
         resolved.append((equipment, quantity, operator))
     return resolved
+
+
+def equipment_price_for(equipment: Equipment, duration_hours: Decimal) -> tuple[Decimal, str]:
+    """Configured equipment rate for a scheduled duration.
+
+    Returns ``(price, unit)`` where ``unit`` is one of the ``PricingRule.Unit``
+    values (``unit``, ``flat``, ``hour``). The configured fields on the item are
+    authoritative; ``0`` means "not configured" and lets the caller fall back to
+    the category rate in ``quote_fees``. The legacy ``Equipment.price`` column is
+    still read for per-unit items that predate the pricing configuration.
+
+    Per-unit items charge ``quantity × unit_price``. Duration items charge the
+    configured whole-day, half-day, or additional-hour rate for the scheduled
+    window. Package items charge the configured package price per package, so
+    their bundled components are never charged separately.
+    """
+    if equipment.pricing_method == Equipment.PricingMethod.PER_UNIT:
+        if equipment.unit_price > 0:
+            return (money(equipment.unit_price), PricingRule.Unit.UNIT)
+        if equipment.price > 0:
+            return (money(equipment.price), PricingRule.Unit.UNIT)
+        return (Decimal("0.00"), PricingRule.Unit.UNIT)
+
+    if equipment.pricing_method == Equipment.PricingMethod.DURATION:
+        period = rental_period_for(duration_hours)
+        if period == PricingRule.RentalPeriod.WHOLE_DAY:
+            return (money(equipment.whole_day_price), PricingRule.Unit.FLAT)
+        if period == PricingRule.RentalPeriod.HALF_DAY:
+            return (money(equipment.half_day_price), PricingRule.Unit.FLAT)
+        if equipment.hourly_rate > 0:
+            return (money(equipment.hourly_rate), PricingRule.Unit.HOUR)
+        # No additional-hour rate configured: a short booking still pays the
+        # half-day rate rather than silently becoming free.
+        if equipment.half_day_price > 0:
+            return (money(equipment.half_day_price), PricingRule.Unit.FLAT)
+        return (Decimal("0.00"), PricingRule.Unit.HOUR)
+
+    if equipment.pricing_method == Equipment.PricingMethod.PACKAGE:
+        # Components bundled into the package are never charged individually.
+        # The configured package price is charged per package selected; ``0``
+        # means "not configured" and lets the caller fall back to the legacy
+        # per-category rate (which is the pre-configuration behavior).
+        if equipment.package_price > 0:
+            return (money(equipment.package_price), PricingRule.Unit.UNIT)
+        return (Decimal("0.00"), PricingRule.Unit.FLAT)
+
+    return (Decimal("0.00"), PricingRule.Unit.FLAT)
 
 
 # ---------------------------------------------------------------------------
@@ -257,91 +331,81 @@ def quote_fees(
     # Equipment + operator fees ---------------------------------------------
     # Unit prices resolve in priority order:
     #   1. a facility's own ``FacilityResource.additional_fee`` for that item
-    #      (so the same item can cost differently from facility to facility —
-    #      a non-zero fee overrides everything below; 0 means "no override"),
-    #   2. the equipment item's own ``Equipment.price`` (configured per item
-    #      by the SAS Office in the equipment manager),
-    #   3. the legacy per-category ``PricingRule`` (kept so databases with
-    #      category rates and items without a configured price keep working).
+    #   2. the equipment item's configured rental pricing (authoritative):
+    #      ``unit_price`` for per-unit items, the half-day / whole-day /
+    #      additional-hour rate for duration items, or ``package_price`` for
+    #      package items
+    #   3. the item's legacy ``Equipment.price`` (per-unit items only)
+    #   4. the legacy per-category ``PricingRule``: a period-specific rate for
+    #      the reservation's rental period first, then the plain category rate
     equipment_rules = _rules_by_category(PricingRule.FeeType.EQUIPMENT)
+    period_rules = _period_rules_by_category(PricingRule.FeeType.EQUIPMENT)
     operator_rules = _rules_by_category(PricingRule.FeeType.OPERATOR)
     facility_resources = _facility_resources(facility)
+    rental_period = rental_period_for(duration)
+
+    def resolve_category_price(category_id, fallback_unit):
+        """Configured category rate for this reservation, if any."""
+        period_rule = period_rules.get((category_id, rental_period))
+        if period_rule is None and rental_period == PricingRule.RentalPeriod.PER_HOUR:
+            # A short booking without an hourly rate still pays the half-day
+            # rate rather than becoming free.
+            period_rule = period_rules.get(
+                (category_id, PricingRule.RentalPeriod.HALF_DAY)
+            )
+        if period_rule is not None:
+            return money(period_rule.unit_price), (
+                period_rule.unit or PricingRule.Unit.FLAT
+            )
+        rule = equipment_rules.get(category_id)
+        if rule is not None:
+            return money(rule.unit_price), (rule.unit or fallback_unit)
+        return Decimal("0.00"), fallback_unit
+
+    def equipment_fee_line(equipment, quantity, unit_price, unit):
+        """One EQUIPMENT fee line priced by its configured unit."""
+        if unit == PricingRule.Unit.UNIT:
+            line_quantity = money(quantity)
+        elif unit == PricingRule.Unit.HOUR:
+            line_quantity = money(duration)
+        else:
+            line_quantity = Decimal("1.00")
+            unit = PricingRule.Unit.FLAT
+        return {
+            "fee_type": PricingRule.FeeType.EQUIPMENT,
+            "description": equipment.name,
+            "quantity": line_quantity,
+            "unit": unit,
+            "unit_price": unit_price,
+            "subtotal": money(unit_price * line_quantity),
+            "equipment_id": equipment.id,
+            "equipment_category_id": equipment.category_id,
+            "equipment_unit": equipment.unit,
+        }
 
     operator_triggers: dict[int, PricingRule] = {}
     for equipment, quantity, operator_requested in _resolve_items(items):
         category_id = equipment.category_id
-        normalized_name = equipment.name.strip().casefold()
-        # LED Wall and Plastic Chairs have special equipment pricing rules
-        if normalized_name in {"led wall", "plastic chairs"}:
-            if normalized_name == "led wall":
-                equipment_period = "WHOLE_DAY" if duration >= Decimal("8") else "HALF_DAY"
-                official_rule = PricingRule.objects.filter(
-                    is_active=True,
-                    fee_type=PricingRule.FeeType.EQUIPMENT,
-                    equipment_category_id=equipment.category_id,
-                    rental_period=equipment_period,
-                ).order_by("id").first()
-            else:
-                official_rule = equipment_rules.get(category_id)
-            official_equipment_price = money(official_rule.unit_price) if official_rule else Decimal("0.00")
-            line_quantity = quantity if normalized_name == "plastic chairs" else 1
-            fees.append({
-                "fee_type": PricingRule.FeeType.EQUIPMENT,
-                "description": equipment.name,
-                "quantity": money(quantity),
-                "unit": PricingRule.Unit.FLAT if normalized_name == "led wall" else PricingRule.Unit.UNIT,
-                "unit_price": official_equipment_price,
-                "subtotal": money(official_equipment_price * line_quantity),
-                "equipment_id": equipment.id,
-                "equipment_category_id": category_id,
-                "equipment_unit": equipment.unit,
-            })
-            # LED Wall has an operator fee that is time-triggered
-            if normalized_name == "led wall":
-                if category_id in operator_rules and operator_requested is not False:
-                    operator_triggers.setdefault(category_id, operator_rules[category_id])
-            continue
         resource = facility_resources.get(equipment.id)
-        rule = equipment_rules.get(category_id)
-        # The equipment item's own price — the primary per-item rate.
-        item_price = money(getattr(equipment, "price", None) or 0)
 
-        if resource is not None:
-            # Facility-configured resource. A non-zero ``additional_fee`` is a
-            # facility-specific override; when it is zero no override is
-            # configured, so the item price (then the per-category rate)
-            # still applies. A resource is therefore free only when none of
-            # the three sources is set.
+        if resource is not None and money(resource.additional_fee) > 0:
+            # A non-zero facility ``additional_fee`` is a facility-specific
+            # override and takes precedence over the item's own configuration.
             unit_price = money(resource.additional_fee)
             unit = PricingRule.Unit.UNIT
-            description = equipment.name
-            if unit_price <= 0 and item_price > 0:
-                unit_price = item_price
-            elif unit_price <= 0 and rule is not None:
-                unit_price = money(rule.unit_price)
-                unit = rule.unit or PricingRule.Unit.UNIT
-            if unit_price > 0:
-                fees.append(
-                    {
-                        "fee_type": PricingRule.FeeType.EQUIPMENT,
-                        # Show the resource the requester actually selected
-                        # rather than the generic category label.
-                        "description": description,
-                        "quantity": money(quantity),
-                        "unit": unit,
-                        "unit_price": unit_price,
-                        "subtotal": money(unit_price * quantity),
-                        "equipment_id": equipment.id,
-                        "equipment_category_id": category_id,
-                        # The item's configured counting unit ("piece", "set",
-                        # …) so clients can say "112 pieces × ₱5.00".
-                        "equipment_unit": equipment.unit,
-                    }
-                )
+        else:
+            # No (priced) facility override: the equipment configuration is the
+            # authoritative source, then the legacy category rate.
+            unit_price, unit = equipment_price_for(equipment, duration)
+            if unit_price <= 0:
+                unit_price, unit = resolve_category_price(category_id, unit)
+
+        if unit_price > 0:
+            fees.append(equipment_fee_line(equipment, quantity, unit_price, unit))
+
+        if resource is not None:
             # Operator service: only when explicitly requested (or forced by
             # the resource configuration), never just because it is present.
-            # The facility resource stays authoritative here — a facility that
-            # does not offer the operator is never charged for one.
             operator_fee = money(resource.operator_fee)
             if (
                 (resource.operator_required or operator_requested is True)
@@ -361,34 +425,6 @@ def quote_fees(
                     }
                 )
             continue
-
-        if item_price > 0:
-            unit_price = item_price
-            unit = PricingRule.Unit.UNIT
-            description = equipment.name
-        elif rule is not None:
-            unit_price = money(rule.unit_price)
-            unit = rule.unit or PricingRule.Unit.UNIT
-            description = rule.display_label
-        else:
-            unit_price = Decimal("0.00")
-            description = equipment.name
-
-        if unit_price > 0:
-            fees.append(
-                {
-                    "fee_type": PricingRule.FeeType.EQUIPMENT,
-                    "description": description,
-                    "quantity": money(quantity),
-                    "unit": unit,
-                    "unit_price": unit_price,
-                    "subtotal": money(unit_price * quantity),
-                    "equipment_id": equipment.id,
-                    "equipment_category_id": category_id,
-                    # The item's configured counting unit ("piece", "set", …).
-                    "equipment_unit": equipment.unit,
-                }
-            )
 
         # Legacy category operator: applies unless the requester explicitly
         # opted out (``operator_requested is False``). Pre-existing callers

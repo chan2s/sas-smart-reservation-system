@@ -233,22 +233,12 @@ def details_for(verification) -> dict:
             "rejected": rejected_count,
         }
         
-        # Get recent reservations (last 5)
-        recent = reservations[:5].values(
-            "id",
-            "reservation_id",
-            "event_name",
-            "purpose",
-            "date",
-            "created_at",
-            "status",
-            "facility__name",
-        )
-        result["recent_reservations"] = list(recent)
+        # Define pending statuses once for consistency
+        pending_statuses = [Reservation.Status.PENDING, Reservation.Status.APPROVED]
         
-        # Get pending reservations
+        # Get pending reservations first (ordered by newest first)
         pending = reservations.filter(
-            status__in=[Reservation.Status.PENDING, Reservation.Status.APPROVED]
+            status__in=pending_statuses
         ).order_by("-created_at").values(
             "id",
             "reservation_id",
@@ -259,6 +249,22 @@ def details_for(verification) -> dict:
             "facility__name",
         )
         result["pending_reservations"] = list(pending)
+        
+        # Get recent reservations (last 5), EXCLUDING pending reservations
+        # This ensures recent history never includes pending/approved reservations
+        recent = reservations.exclude(
+            status__in=pending_statuses
+        ).order_by("-created_at")[:5].values(
+            "id",
+            "reservation_id",
+            "event_name",
+            "purpose",
+            "date",
+            "created_at",
+            "status",
+            "facility__name",
+        )
+        result["recent_reservations"] = list(recent)
     else:
         result["reservation_summary"] = {
             "total": 0,

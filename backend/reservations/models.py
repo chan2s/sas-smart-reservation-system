@@ -781,6 +781,21 @@ class Reservation(models.Model):
         help_text="True when an administrator checked the reservation in before the standard 3-hour window.",
     )
 
+    # Sound System Package operator assignment
+    assigned_operator = models.ForeignKey(
+        "equipment.SoundSystemOperator",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_reservations",
+        help_text="Sound System Operator assigned to this reservation (when required)"
+    )
+    operator_assigned_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the operator was assigned to this reservation"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

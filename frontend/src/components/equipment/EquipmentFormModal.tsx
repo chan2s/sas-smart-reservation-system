@@ -8,7 +8,13 @@ import {
   type GalleryState,
 } from '@/components/ui/ImageGalleryManager'
 import { Modal } from '@/components/ui/Modal'
-import type { Equipment, EquipmentCategory, EquipmentCondition, EquipmentStatus } from '@/lib/types'
+import type {
+  Equipment,
+  EquipmentCategory,
+  EquipmentCondition,
+  EquipmentPricingMethod,
+  EquipmentStatus,
+} from '@/lib/types'
 
 export interface EquipmentFormValues {
   name: string
@@ -16,7 +22,12 @@ export interface EquipmentFormValues {
   description: string
   total_quantity: string
   unit: string
-  price: string
+  pricing_method: EquipmentPricingMethod
+  unit_price: string
+  half_day_price: string
+  whole_day_price: string
+  hourly_rate: string
+  package_price: string
   condition: EquipmentCondition
   status: EquipmentStatus
   storage_location: string
@@ -48,6 +59,18 @@ const UNITS: { value: string; label: string }[] = [
   { value: 'box', label: 'Box' },
 ]
 
+/** Pricing methods — must mirror Equipment.PricingMethod on the backend. */
+const PRICING_METHODS: { value: EquipmentPricingMethod; label: string }[] = [
+  { value: 'PER_UNIT', label: 'Per unit (quantity-based)' },
+  { value: 'DURATION', label: 'Half-day / whole-day (duration-based)' },
+  { value: 'PACKAGE', label: 'Package-based (included in package price)' },
+]
+
+/** A configured rate as a form string; empty/invalid input means "not set". */
+function rateValue(value: string | null | undefined): string {
+  return value ? String(value) : '0.00'
+}
+
 function initialValues(equipment: Equipment | null): EquipmentFormValues {
   return {
     name: equipment?.name ?? '',
@@ -55,7 +78,17 @@ function initialValues(equipment: Equipment | null): EquipmentFormValues {
     description: equipment?.description ?? '',
     total_quantity: String(equipment?.total_quantity ?? 1),
     unit: equipment?.unit ?? 'unit',
-    price: equipment ? String(equipment.price ?? '0.00') : '0.00',
+    pricing_method: equipment?.pricing_method ?? 'PER_UNIT',
+    // Records that predate the pricing configuration kept their rate in the
+    // legacy `price` column; surface it as the per-unit rate so editing an old
+    // item never silently drops its charge.
+    unit_price: rateValue(equipment?.unit_price) === '0.00' && Number(equipment?.price ?? 0) > 0
+      ? rateValue(equipment?.price)
+      : rateValue(equipment?.unit_price),
+    half_day_price: rateValue(equipment?.half_day_price),
+    whole_day_price: rateValue(equipment?.whole_day_price),
+    hourly_rate: rateValue(equipment?.hourly_rate),
+    package_price: rateValue(equipment?.package_price),
     condition: equipment?.condition ?? 'GOOD',
     status: equipment?.status ?? 'AVAILABLE',
     storage_location: equipment?.storage_location ?? '',
@@ -125,11 +158,16 @@ export function EquipmentFormModal({
     setError(null)
     const name = values.name.trim()
     const quantity = Number(values.total_quantity)
-    // Normalize the price: empty/invalid input means "no item override" (the
-    // per-category rate applies). Negative values are rejected here and by
-    // the backend.
-    const parsedPrice = Number(values.price)
-    const price = Number.isFinite(parsedPrice) && parsedPrice > 0 ? parsedPrice.toFixed(2) : '0.00'
+    // Normalize each configured rate. The backend recalculates every
+    // reservation price from these stored values, so they are the only pricing
+    // input and are validated for negatives here and by the API.
+    const unitPrice = Number(values.unit_price)
+    const halfDayPrice = Number(values.half_day_price)
+    const wholeDayPrice = Number(values.whole_day_price)
+    const hourlyRate = Number(values.hourly_rate)
+    const packagePrice = Number(values.package_price)
+    const rate = (value: number) =>
+      Number.isFinite(value) && value > 0 ? value.toFixed(2) : '0.00'
 
     if (!name) {
       setError('Equipment name is required.')
@@ -143,8 +181,12 @@ export function EquipmentFormModal({
       setError('Total quantity must be a whole number of at least 1.')
       return
     }
-    if (parsedPrice < 0) {
-      setError('Price cannot be negative.')
+    if ([unitPrice, halfDayPrice, wholeDayPrice, hourlyRate, packagePrice].some((value) => value < 0)) {
+      setError('Prices cannot be negative.')
+      return
+    }
+    if (values.pricing_method === 'DURATION' && !(wholeDayPrice > 0)) {
+      setError('Set a whole-day price for duration-based pricing.')
       return
     }
 
@@ -154,7 +196,12 @@ export function EquipmentFormModal({
     form.append('description', values.description)
     form.append('total_quantity', String(quantity))
     form.append('unit', values.unit.trim() || 'unit')
-    form.append('price', price)
+    form.append('pricing_method', values.pricing_method)
+    form.append('unit_price', rate(unitPrice))
+    form.append('half_day_price', rate(halfDayPrice))
+    form.append('whole_day_price', rate(wholeDayPrice))
+    form.append('hourly_rate', rate(hourlyRate))
+    form.append('package_price', rate(packagePrice))
     form.append('condition', values.condition)
     form.append('status', values.status)
     form.append('storage_location', values.storage_location)
@@ -288,21 +335,131 @@ export function EquipmentFormModal({
           </Select>
         </Field>
 
+        <div className="sm:col-span-2">
+          <h3 className="text-sm font-semibold text-ink">Rental Pricing Configuration</h3>
+          <p className="mt-1 text-xs text-muted">
+            These rates are the official source for reservation pricing. The reservation form,
+            admin details, and rental agreements all quote the same backend calculation.
+          </p>
+        </div>
+
         <Field
-          label="Price (₱)"
-          htmlFor="equipment-price"
-          hint="Per-unit cost used when pricing reservations. ₱0.00 uses the category rate, if configured."
+          label="Pricing method *"
+          htmlFor="equipment-pricing-method"
+          hint="Choose the basis this item is charged on."
+          className="sm:col-span-2"
         >
-          <Input
-            id="equipment-price"
-            type="number"
-            inputMode="decimal"
-            min={0}
-            step="0.01"
-            value={values.price}
-            onChange={(event) => set('price', event.target.value)}
-          />
+          <Select
+            id="equipment-pricing-method"
+            value={values.pricing_method}
+            onChange={(event) =>
+              set('pricing_method', event.target.value as EquipmentPricingMethod)
+            }
+          >
+            {PRICING_METHODS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
         </Field>
+
+        {values.pricing_method === 'PER_UNIT' && (
+          <Field
+            label="Unit price (₱)"
+            htmlFor="equipment-unit-price"
+            hint="Charged per unit selected, e.g. 112 pieces × ₱5.00. ₱0.00 uses the category rate, if configured."
+            className="sm:col-span-2"
+          >
+            <Input
+              id="equipment-unit-price"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              value={values.unit_price}
+              onChange={(event) => set('unit_price', event.target.value)}
+            />
+          </Field>
+        )}
+
+        {values.pricing_method === 'DURATION' && (
+          <>
+            <Field
+              label="Half-day price (₱)"
+              htmlFor="equipment-half-day-price"
+              hint="Applies to reservations scheduled for 4 to 7.99 hours."
+            >
+              <Input
+                id="equipment-half-day-price"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={values.half_day_price}
+                onChange={(event) => set('half_day_price', event.target.value)}
+              />
+            </Field>
+
+            <Field
+              label="Whole-day price (₱)"
+              htmlFor="equipment-whole-day-price"
+              hint="Applies to reservations scheduled for 8 hours or more."
+            >
+              <Input
+                id="equipment-whole-day-price"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={values.whole_day_price}
+                onChange={(event) => set('whole_day_price', event.target.value)}
+              />
+            </Field>
+
+            <Field
+              label="Additional hour rate (₱)"
+              htmlFor="equipment-hourly-rate"
+              hint="Optional. Applies to reservations under 4 hours; leave ₱0.00 to use the half-day price."
+              className="sm:col-span-2"
+            >
+              <Input
+                id="equipment-hourly-rate"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={values.hourly_rate}
+                onChange={(event) => set('hourly_rate', event.target.value)}
+              />
+            </Field>
+          </>
+        )}
+
+        {values.pricing_method === 'PACKAGE' && (
+          <>
+            <Field
+              label="Package price (₱)"
+              htmlFor="equipment-package-price"
+              hint="Charged once per package selected. ₱0.00 uses the category rate, if configured."
+              className="sm:col-span-2"
+            >
+              <Input
+                id="equipment-package-price"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={values.package_price}
+                onChange={(event) => set('package_price', event.target.value)}
+              />
+            </Field>
+            <p className="rounded-lg border border-line bg-surface px-3.5 py-2.5 text-xs text-muted sm:col-span-2">
+              The package's components are included in this price, so they are not charged
+              individually on a reservation. The package's operator/service fee still applies.
+            </p>
+          </>
+        )}
 
         <Field label="Status" htmlFor="equipment-status">
           <Select
