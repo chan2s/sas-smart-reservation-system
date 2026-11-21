@@ -1,0 +1,14 @@
+{% autoescape off %}
+GSO RESERVE - Reschedule request received
+
+Your email address was verified and your reschedule request for reservation {{ reservation_id }} is now awaiting administrator review.
+
+Current schedule: {{ current_date }} {{ current_start_time }} - {{ current_end_time }}
+Requested schedule: {{ requested_date }} {{ requested_start_time }} - {{ requested_end_time }}
+Reason: {{ reason }}
+
+Submitting a request does not guarantee approval. An administrator will review the schedule and confirm the change.
+
+---
+This is an automated notification from {{ site_name }}.
+{% endautoescape %}

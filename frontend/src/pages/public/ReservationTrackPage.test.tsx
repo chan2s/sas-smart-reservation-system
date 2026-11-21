@@ -8,6 +8,8 @@ const apiState = vi.hoisted(() => ({
   legacyTrack: vi.fn(),
   upload: vi.fn(),
   editDetails: vi.fn(),
+  requestRescheduleOTP: vi.fn(),
+  verifyRescheduleOTP: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -16,6 +18,8 @@ vi.mock('@/lib/api', () => ({
     trackPublicReservation: apiState.legacyTrack,
     uploadPublicApprovalLetter: apiState.upload,
     publicReservationEditDetails: apiState.editDetails,
+    requestPublicRescheduleOTP: apiState.requestRescheduleOTP,
+    verifyPublicRescheduleOTP: apiState.verifyRescheduleOTP,
   },
 }))
 
@@ -51,6 +55,7 @@ const result = {
   approval_document_status: 'AWAITING' as const,
   approval_document_status_label: 'Awaiting Approval Letter',
   can_edit: true,
+  reschedule: { can_request: false, request: null },
 }
 
 afterEach(() => {
@@ -60,6 +65,8 @@ afterEach(() => {
   apiState.legacyTrack.mockReset()
   apiState.upload.mockReset()
   apiState.editDetails.mockReset()
+  apiState.requestRescheduleOTP.mockReset()
+  apiState.verifyRescheduleOTP.mockReset()
 })
 
 describe('ReservationTrackPage', () => {
@@ -137,6 +144,86 @@ describe('ReservationTrackPage', () => {
     expect(await screen.findByText('Approval Letter Submitted')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Take Photo' })).toBeNull()
     expect(screen.queryByLabelText('Upload approval letter image')).toBeNull()
+  })
+
+  it('submits an OTP-verified reschedule request and shows its pending status', async () => {
+    apiState.track.mockResolvedValue({
+      ...result,
+      status: 'APPROVED',
+      status_label: 'Approved',
+      approval_document_status: 'NOT_REQUIRED',
+      approval_document_status_label: 'Not required for this reservation',
+      can_edit: false,
+      reschedule: { can_request: true, request: null },
+    })
+    apiState.requestRescheduleOTP.mockResolvedValue({
+      verification_session: 'session-token',
+      expires_at: '2026-11-21T10:05:00+08:00',
+      resend_available_at: '2026-11-21T10:01:00+08:00',
+      email_hint: 'r***@example.com',
+    })
+    apiState.verifyRescheduleOTP.mockResolvedValue({
+      ...result,
+      status: 'APPROVED',
+      status_label: 'Approved',
+      approval_document_status: 'NOT_REQUIRED',
+      approval_document_status_label: 'Not required for this reservation',
+      can_edit: false,
+      reschedule: {
+        can_request: false,
+        request: {
+          status: 'PENDING',
+          status_label: 'Pending Admin Review',
+          requested_date: '2026-12-15',
+          requested_start_time: '13:00:00',
+          requested_end_time: '15:00:00',
+          reason: 'Conflict with another event.',
+          submitted_at: '2026-11-21T10:00:00+08:00',
+          rejection_reason: '',
+          admin_message: '',
+        },
+      },
+    })
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Request Reschedule' }))
+
+    fireEvent.change(screen.getByLabelText('Requested new date'), {
+      target: { value: '2026-12-15' },
+    })
+    fireEvent.change(screen.getByLabelText('Requested start time'), {
+      target: { value: '13:00' },
+    })
+    fireEvent.change(screen.getByLabelText('Requested end time'), {
+      target: { value: '15:00' },
+    })
+    fireEvent.change(screen.getByLabelText('Reason for the request'), {
+      target: { value: 'Conflict with another event.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+
+    await waitFor(() =>
+      expect(apiState.requestRescheduleOTP).toHaveBeenCalledWith('GSO-2026-00024', {
+        requested_date: '2026-12-15',
+        requested_start_time: '13:00',
+        requested_end_time: '15:00',
+        reason: 'Conflict with another event.',
+      }),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Email verification code'), {
+      target: { value: '123456' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and submit request' }))
+
+    await waitFor(() =>
+      expect(apiState.verifyRescheduleOTP).toHaveBeenCalledWith(
+        'GSO-2026-00024',
+        'session-token',
+        '123456',
+      ),
+    )
+    expect(await screen.findByText('Pending Admin Review')).toBeTruthy()
   })
 
   it('uploads a selected image and refreshes the displayed status', async () => {

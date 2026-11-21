@@ -3,12 +3,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, CalendarDays, Check, CircleAlert, MapPin, Search, ShieldCheck, Upload } from 'lucide-react'
 import { format } from 'date-fns'
-import { endpoints, type PublicReservationTracking } from '@/lib/api'
+import {
+  endpoints,
+  type PublicRescheduleRequest,
+  type PublicReservationTracking,
+  type RescheduleRequestPayload,
+} from '@/lib/api'
 import type { ReservationStatus } from '@/lib/types'
 import { StatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Field, Input } from '@/components/ui/Form'
+import { Field, Input, Textarea } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Misc'
 import { BrandMark } from '@/components/auth/AuthPanel'
 import { ApprovalLetterCapture } from '@/components/reservations/ApprovalLetterCapture'
@@ -35,6 +40,14 @@ export function ReservationTrackPage() {
   const [uploadSuccess, setUploadSuccess] = useState(false)
   const [startingEdit, setStartingEdit] = useState(false)
   const [editError, setEditError] = useState('')
+  const [rescheduleOpen, setRescheduleOpen] = useState(false)
+  const [reschedulePayload, setReschedulePayload] = useState<RescheduleRequestPayload | null>(null)
+  const [rescheduleSession, setRescheduleSession] = useState('')
+  const [rescheduleOtp, setRescheduleOtp] = useState('')
+  const [rescheduleError, setRescheduleError] = useState('')
+  const [rescheduleNotice, setRescheduleNotice] = useState('')
+  const [sendingReschedule, setSendingReschedule] = useState(false)
+  const [verifyingReschedule, setVerifyingReschedule] = useState(false)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -81,6 +94,60 @@ export function ReservationTrackPage() {
       setUploadError(error instanceof Error ? error.message : 'The document could not be uploaded. Try again.')
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function submitRescheduleRequest(
+    reservation: PublicReservationTracking,
+    payload: RescheduleRequestPayload,
+  ) {
+    setSendingReschedule(true)
+    setRescheduleError('')
+    setRescheduleNotice('')
+    try {
+      const response = await endpoints.requestPublicRescheduleOTP(
+        reservation.reservation_id,
+        payload,
+      )
+      setReschedulePayload(payload)
+      setRescheduleSession(response.verification_session ?? '')
+      setRescheduleOtp('')
+      setRescheduleNotice(
+        `A verification code was sent to the email address on file${response.email_hint ? ` (${response.email_hint})` : ''}. It expires in 5 minutes.`,
+      )
+    } catch (error) {
+      setRescheduleError(
+        error instanceof Error ? error.message : 'The reschedule request could not be submitted.',
+      )
+    } finally {
+      setSendingReschedule(false)
+    }
+  }
+
+  async function verifyRescheduleOtp(reservation: PublicReservationTracking) {
+    if (!rescheduleSession) return
+    setVerifyingReschedule(true)
+    setRescheduleError('')
+    try {
+      const result = await endpoints.verifyPublicRescheduleOTP(
+        reservation.reservation_id,
+        rescheduleSession,
+        rescheduleOtp,
+      )
+      queryClient.setQueryData(queryKey, result)
+      setRescheduleSession('')
+      setReschedulePayload(null)
+      setRescheduleOtp('')
+      setRescheduleOpen(false)
+      setRescheduleNotice(
+        'Your reschedule request was verified and submitted. An administrator will review it. Approval is not guaranteed.',
+      )
+    } catch (error) {
+      setRescheduleError(
+        error instanceof Error ? error.message : 'The verification code could not be validated.',
+      )
+    } finally {
+      setVerifyingReschedule(false)
     }
   }
 
@@ -196,9 +263,48 @@ export function ReservationTrackPage() {
             reservation={trackQuery.data}
             onEdit={() => void startEdit(trackQuery.data!)}
             editing={startingEdit}
+            onRequestReschedule={() => {
+              setRescheduleError('')
+              setRescheduleNotice('')
+              setRescheduleSession('')
+              setReschedulePayload(null)
+              setRescheduleOpen(true)
+            }}
           />
         )}
         {editError && <p role="alert" className="mt-3 text-sm text-status-rejected">{editError}</p>}
+        {rescheduleNotice && (
+          <p role="status" className="mt-4 rounded-lg border border-status-available/25 bg-status-available-bg p-3 text-sm text-status-available">
+            {rescheduleNotice}
+          </p>
+        )}
+        {trackQuery.data?.reschedule?.request && (
+          <RescheduleStatusCard request={trackQuery.data.reschedule.request} />
+        )}
+        {trackQuery.data && rescheduleOpen && (
+          <RescheduleForm
+            reservation={trackQuery.data}
+            sessionActive={Boolean(rescheduleSession)}
+            otp={rescheduleOtp}
+            onOtpChange={setRescheduleOtp}
+            error={rescheduleError}
+            sending={sendingReschedule}
+            verifying={verifyingReschedule}
+            onSubmit={(payload) => void submitRescheduleRequest(trackQuery.data!, payload)}
+            onVerify={() => void verifyRescheduleOtp(trackQuery.data!)}
+            onResend={() => {
+              if (reschedulePayload) {
+                void submitRescheduleRequest(trackQuery.data!, reschedulePayload)
+              }
+            }}
+            onCancel={() => {
+              setRescheduleOpen(false)
+              setRescheduleError('')
+              setRescheduleSession('')
+              setReschedulePayload(null)
+            }}
+          />
+        )}
         {uploadSuccess && (
           <p role="status" className="mt-4 rounded-lg border border-status-available/25 bg-status-available-bg p-3 text-sm text-status-available">
             Event approval letter uploaded successfully.
@@ -252,10 +358,12 @@ function TrackingResult({
   reservation,
   onEdit,
   editing,
+  onRequestReschedule,
 }: {
   reservation: PublicReservationTracking
   onEdit: () => void
   editing: boolean
+  onRequestReschedule: () => void
 }) {
   const terminal = ['REJECTED', 'CANCELLED', 'EXPIRED', 'NO_SHOW', 'COMPLETED'].includes(
     reservation.status,
@@ -379,7 +487,239 @@ function TrackingResult({
             Edit Reservation
           </Button>
         )}
+        {reservation.reschedule?.can_request && (
+          <Button variant="outline" onClick={onRequestReschedule}>
+            Request Reschedule
+          </Button>
+        )}
       </div>
+    </Card>
+  )
+}
+
+function scheduleLabel(
+  date: string,
+  start: string,
+  end: string,
+) {
+  return `${format(new Date(`${date}T12:00:00`), 'MMMM d, yyyy')} · ${start}–${end}`
+}
+
+function RescheduleStatusCard({ request }: { request: PublicRescheduleRequest }) {
+  return (
+    <Card className="mt-5" padding="none">
+      <div className="flex flex-col gap-2 border-b border-line p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-muted">Reschedule request</p>
+          <p className="mt-1 text-sm font-semibold text-ink">{request.status_label}</p>
+        </div>
+        <span className="text-xs text-muted">
+          Submitted {format(new Date(request.submitted_at), 'MMMM d, yyyy')}
+        </span>
+      </div>
+      <div className="p-5">
+        <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+          <TrackingDetail
+            label="Requested date and time"
+            value={scheduleLabel(
+              request.requested_date,
+              request.requested_start_time,
+              request.requested_end_time,
+            )}
+          />
+          <TrackingDetail label="Your reason" value={request.reason} />
+        </dl>
+        {request.status === 'PENDING' && (
+          <p className="mt-4 rounded-lg bg-soft p-3 text-sm text-body">
+            This request is awaiting administrator review. Your current reservation remains
+            unchanged until it is approved.
+          </p>
+        )}
+        {request.status === 'REJECTED' && request.rejection_reason && (
+          <p className="mt-4 rounded-lg bg-status-rejected-bg p-3.5 text-sm text-status-rejected">
+            Rejected: {request.rejection_reason}
+          </p>
+        )}
+        {request.status === 'INFO_REQUIRED' && request.admin_message && (
+          <p className="mt-4 rounded-lg border border-line bg-soft p-3.5 text-sm text-body">
+            GSO staff need more information: {request.admin_message}
+          </p>
+        )}
+        {request.status === 'APPROVED' && (
+          <p className="mt-4 rounded-lg border border-status-available/25 bg-status-available-bg p-3.5 text-sm text-status-available">
+            Approved and rescheduled. The updated date and time are shown above.
+          </p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function RescheduleForm({
+  reservation,
+  sessionActive,
+  otp,
+  onOtpChange,
+  error,
+  sending,
+  verifying,
+  onSubmit,
+  onVerify,
+  onResend,
+  onCancel,
+}: {
+  reservation: PublicReservationTracking
+  sessionActive: boolean
+  otp: string
+  onOtpChange: (value: string) => void
+  error: string
+  sending: boolean
+  verifying: boolean
+  onSubmit: (payload: RescheduleRequestPayload) => void
+  onVerify: () => void
+  onResend: () => void
+  onCancel: () => void
+}) {
+  const [date, setDate] = useState(reservation.date)
+  const [start, setStart] = useState(reservation.start_time.slice(0, 5))
+  const [end, setEnd] = useState(reservation.end_time.slice(0, 5))
+  const [reason, setReason] = useState('')
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSubmit({
+      requested_date: date,
+      requested_start_time: start,
+      requested_end_time: end,
+      reason: reason.trim(),
+    })
+  }
+
+  return (
+    <Card className="mt-5">
+      <h2 className="text-base font-semibold text-ink">Request a reschedule</h2>
+      <p className="mt-1 text-sm leading-6 text-body">
+        State the date and time you want and why. Submitting a request does not change
+        your reservation and does not guarantee approval — GSO staff review every request
+        and perform the actual reschedule.
+      </p>
+
+      <div className="mt-5 rounded-xl border border-line bg-soft p-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-muted">Current schedule</p>
+        <p className="mt-1 text-sm font-medium text-ink">
+          {scheduleLabel(reservation.date, reservation.start_time, reservation.end_time)}
+        </p>
+      </div>
+
+      {!sessionActive ? (
+        <form className="mt-5" onSubmit={submit}>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Requested new date" htmlFor="reschedule-date">
+              <Input
+                id="reschedule-date"
+                type="date"
+                value={date}
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(event) => setDate(event.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Requested start time" htmlFor="reschedule-start">
+              <Input
+                id="reschedule-start"
+                type="time"
+                value={start}
+                min="08:00"
+                onChange={(event) => setStart(event.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Requested end time" htmlFor="reschedule-end">
+              <Input
+                id="reschedule-end"
+                type="time"
+                value={end}
+                onChange={(event) => setEnd(event.target.value)}
+                required
+              />
+            </Field>
+          </div>
+          <div className="mt-4">
+            <Field label="Reason for the request" htmlFor="reschedule-reason">
+              <Textarea
+                id="reschedule-reason"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                rows={4}
+                maxLength={2000}
+                placeholder="Explain why you need a different date or time."
+                required
+              />
+            </Field>
+          </div>
+          {error && (
+            <p role="alert" className="mt-3 text-sm text-status-rejected">
+              {error}
+            </p>
+          )}
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <Button type="submit" loading={sending} disabled={!reason.trim()}>
+              Submit request and send code
+            </Button>
+            <Button type="button" variant="ghost" onClick={onCancel} disabled={sending}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <form
+          className="mt-5"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onVerify()
+          }}
+        >
+          <Field label="Email verification code" htmlFor="reschedule-otp">
+            <Input
+              id="reschedule-otp"
+              value={otp}
+              onChange={(event) => onOtpChange(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={6}
+              required
+              className="font-mono tracking-[0.3em]"
+            />
+          </Field>
+          <p className="mt-2 text-xs leading-5 text-body">
+            Enter the six-digit code sent to the email address on file. For security, the
+            address and code are validated by the server and the code cannot be reused.
+          </p>
+          {error && (
+            <p role="alert" className="mt-3 text-sm text-status-rejected">
+              {error}
+            </p>
+          )}
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <Button type="submit" loading={verifying} disabled={otp.length !== 6}>
+              Verify and submit request
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              loading={sending}
+              disabled={sending}
+              onClick={onResend}
+            >
+              Send a new code
+            </Button>
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
     </Card>
   )
 }

@@ -6,6 +6,7 @@ from PIL import Image
 from PIL import UnidentifiedImageError
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 
 from accounts.models import Organization
@@ -20,6 +21,7 @@ from .models import (
     ReservationEvent,
     ReservationFee,
     ReservationItem,
+    RescheduleRequest,
 )
 from .services.availability import EARLIEST_START_TIME, check_availability
 from .services.pricing import snapshot_reservation_fees
@@ -560,6 +562,9 @@ class ReservationDetailSerializer(ReservationListSerializer):
     # The reservation a rebook / new-schedule request created, if any. Lets an
     # expired reservation link forward to its replacement.
     rescheduled_to = serializers.SerializerMethodField()
+    # Latest reschedule request (staff only). The public tracking endpoint has
+    # its own deliberately limited reschedule payload.
+    reschedule_request = serializers.SerializerMethodField()
 
     class Meta(ReservationListSerializer.Meta):
         fields = ReservationListSerializer.Meta.fields + (
@@ -582,6 +587,7 @@ class ReservationDetailSerializer(ReservationListSerializer):
             "availability",
             "submission_ip",
             "rescheduled_to",
+            "reschedule_request",
         )
 
     def get_submission_ip(self, obj):
@@ -599,6 +605,17 @@ class ReservationDetailSerializer(ReservationListSerializer):
 
     def get_no_show_marked_by_name(self, obj):
         return obj.no_show_marked_by.display_name if obj.no_show_marked_by else ""
+
+    def get_reschedule_request(self, obj):
+        request = self.context.get("request")
+        if not (
+            request
+            and request.user.is_authenticated
+            and request.user.is_gso_staff
+        ):
+            return None
+        latest = obj.reschedule_requests.first()
+        return RescheduleRequestSerializer(latest).data if latest else None
 
     def get_rescheduled_to(self, obj):
         latest = (
@@ -1355,6 +1372,85 @@ class ReservationResubmitSerializer(
 # ---------------------------------------------------------------------------
 
 
+class RescheduleRequestInputSerializer(serializers.Serializer):
+    """Validated public input for a reschedule request.
+
+    Deliberately narrow: the requester may only propose a date, a time window,
+    and a reason. Facility, resources, identity, status, and pricing are never
+    writable — an administrator decides whether the change happens.
+    """
+
+    requested_date = serializers.DateField()
+    requested_start_time = serializers.TimeField()
+    requested_end_time = serializers.TimeField()
+    reason = serializers.CharField(max_length=2000, trim_whitespace=True)
+
+    def validate_requested_date(self, value):
+        if value < timezone.localdate():
+            raise serializers.ValidationError("Choose a date that is not in the past.")
+        return value
+
+    def validate(self, attrs):
+        start = attrs["requested_start_time"]
+        end = attrs["requested_end_time"]
+        if start >= end:
+            raise serializers.ValidationError(
+                {"requested_end_time": "The end time must be after the start time."}
+            )
+        if start < EARLIEST_START_TIME:
+            raise serializers.ValidationError(
+                {"requested_start_time": "Reservations cannot start before 8:00 AM."}
+            )
+        if not attrs.get("reason", "").strip():
+            raise serializers.ValidationError(
+                {"reason": "Explain why you are requesting this schedule change."}
+            )
+        return attrs
+
+
+class RescheduleRequestSerializer(serializers.ModelSerializer):
+    """Administrative view of one reschedule request."""
+
+    reservation = serializers.IntegerField(source="reservation_id", read_only=True)
+    reservation_reference = serializers.CharField(
+        source="reservation.reservation_id", read_only=True
+    )
+    current_date = serializers.DateField(source="reservation.date", read_only=True)
+    current_start_time = serializers.TimeField(
+        source="reservation.start_time", read_only=True
+    )
+    current_end_time = serializers.TimeField(
+        source="reservation.end_time", read_only=True
+    )
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RescheduleRequest
+        fields = (
+            "id",
+            "reservation",
+            "reservation_reference",
+            "current_date",
+            "current_start_time",
+            "current_end_time",
+            "requested_date",
+            "requested_start_time",
+            "requested_end_time",
+            "reason",
+            "status",
+            "status_label",
+            "admin_message",
+            "rejection_reason",
+            "submitted_at",
+            "reviewed_by_name",
+            "reviewed_at",
+        )
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.display_name if obj.reviewed_by else ""
+
+
 class PublicTrackSerializer(serializers.Serializer):
     """Limited reservation view returned by the public tracking endpoint.
 
@@ -1375,6 +1471,7 @@ class PublicTrackSerializer(serializers.Serializer):
     end_time = serializers.TimeField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     can_edit = serializers.SerializerMethodField()
+    reschedule = serializers.SerializerMethodField()
 
     def get_approval_document_status(self, obj):
         return event_approval_document_status(obj)
@@ -1389,6 +1486,35 @@ class PublicTrackSerializer(serializers.Serializer):
             and obj.created_by_id is None
             and obj.contact_email
         )
+
+    def get_reschedule(self, obj):
+        """Public reschedule state: no email, notes, or internal metadata."""
+        latest = obj.reschedule_requests.first()
+        guest = obj.requester_id is None and obj.created_by_id is None
+        can_request = bool(
+            guest
+            and obj.status == Reservation.Status.APPROVED
+            and obj.contact_email.strip()
+            and not obj.has_started
+            and not (
+                latest is not None
+                and latest.status == RescheduleRequest.Status.PENDING
+            )
+        )
+        request = None
+        if latest is not None:
+            request = {
+                "status": latest.status,
+                "status_label": latest.get_status_display(),
+                "requested_date": latest.requested_date,
+                "requested_start_time": latest.requested_start_time,
+                "requested_end_time": latest.requested_end_time,
+                "reason": latest.reason,
+                "submitted_at": latest.submitted_at,
+                "rejection_reason": latest.rejection_reason,
+                "admin_message": latest.admin_message,
+            }
+        return {"can_request": can_request, "request": request}
 
 
 class PublicApprovalLetterUploadSerializer(serializers.Serializer):

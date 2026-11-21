@@ -589,6 +589,9 @@ export function useReservationAction(id: number | null) {
         | 'check_in'
         | 'check_out'
         | 'mark-no-show'
+        | 'approve-reschedule'
+        | 'reject-reschedule'
+        | 'request-reschedule-info'
       body?: Record<string, unknown>
     }) => endpoints.reservationAction(id as number, action, body),
     onSuccess: () => {

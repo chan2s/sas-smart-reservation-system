@@ -648,6 +648,7 @@ export interface PublicReservationTracking {
   approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
   approval_document_status_label: string
   can_edit: boolean
+  reschedule: PublicRescheduleState
 }
 
 export interface PublicReservationEditDetails {
@@ -683,6 +684,58 @@ export interface PublicReservationSubmission {
   requester_type: 'CAMPUS' | 'EXTERNAL'
   approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
   approval_document_status_label: string
+}
+
+export type RescheduleRequestStatus =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'INFO_REQUIRED'
+
+/** Public reschedule state shown on the tracking page (no contact details). */
+export interface PublicRescheduleRequest {
+  status: RescheduleRequestStatus
+  status_label: string
+  requested_date: string
+  requested_start_time: string
+  requested_end_time: string
+  reason: string
+  submitted_at: string
+  rejection_reason: string
+  admin_message: string
+}
+
+export interface PublicRescheduleState {
+  can_request: boolean
+  request: PublicRescheduleRequest | null
+}
+
+/** Staff-only reschedule request attached to a reservation detail payload. */
+export interface RescheduleRequest {
+  id: number
+  reservation: number
+  reservation_reference: string
+  current_date: string
+  current_start_time: string
+  current_end_time: string
+  requested_date: string
+  requested_start_time: string
+  requested_end_time: string
+  reason: string
+  status: RescheduleRequestStatus
+  status_label: string
+  admin_message: string
+  rejection_reason: string
+  submitted_at: string
+  reviewed_by_name: string
+  reviewed_at: string | null
+}
+
+export interface RescheduleRequestPayload {
+  requested_date: string
+  requested_start_time: string
+  requested_end_time: string
+  reason: string
 }
 
 export const endpoints = {
@@ -774,6 +827,23 @@ export const endpoints = {
       form,
     )
   },
+  requestPublicRescheduleOTP: (
+    reservation_id: string,
+    payload: RescheduleRequestPayload,
+  ) =>
+    api.post<ReservationEditOTPResponse>(
+      '/api/public/reservations/request-reschedule-otp/',
+      { reservation_id, ...payload },
+    ),
+  verifyPublicRescheduleOTP: (
+    reservation_id: string,
+    verification_session: string,
+    otp: string,
+  ) =>
+    api.post<PublicReservationTracking>(
+      '/api/public/reservations/verify-reschedule-otp/',
+      { reservation_id, verification_session, otp },
+    ),
   submitPublicReservation: (payload: CreateReservationPayload) => {
     if (!payload.approval_letter_image) {
       return api.post<PublicReservationSubmission>('/api/public/reservations/submit/', payload)

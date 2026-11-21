@@ -1234,6 +1234,16 @@ class ReservationEvent(models.Model):
             "NEW_SCHEDULE_REQUESTED",
             "New schedule requested",
         )
+        # OTP-verified request to change an approved reservation's schedule.
+        # The status stays APPROVED; only an administrator's approval moves the
+        # reservation to the requested date/time.
+        RESCHEDULE_REQUESTED = "RESCHEDULE_REQUESTED", "Reschedule requested"
+        RESCHEDULED = "RESCHEDULED", "Reservation rescheduled"
+        RESCHEDULE_REJECTED = "RESCHEDULE_REJECTED", "Reschedule request rejected"
+        RESCHEDULE_INFO_REQUIRED = (
+            "RESCHEDULE_INFO_REQUIRED",
+            "Reschedule information requested",
+        )
 
     reservation = models.ForeignKey(
         Reservation, on_delete=models.CASCADE, related_name="events"
@@ -1316,6 +1326,99 @@ class ReservationEditVerification(models.Model):
         related_name="reservation_edit_verifications",
         null=True,
         blank=True,
+    )
+    encrypted_payload = models.TextField()
+    otp_hash = models.CharField(max_length=256)
+    session_token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField(db_index=True)
+    resend_available_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["reservation", "consumed_at"])]
+
+
+class RescheduleRequest(models.Model):
+    """A requester's proposed schedule change, pending an administrator's review.
+
+    The requester never edits the reservation directly: this row only records
+    the requested date/time and the reason. The reservation itself (and its
+    reference, documents, and payment records) is changed exclusively by an
+    administrator approving the request.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending Admin Review"
+        APPROVED = "APPROVED", "Approved and Rescheduled"
+        REJECTED = "REJECTED", "Rejected"
+        INFO_REQUIRED = "INFO_REQUIRED", "More Information Required"
+
+    reservation = models.ForeignKey(
+        Reservation, on_delete=models.CASCADE, related_name="reschedule_requests"
+    )
+    requested_date = models.DateField()
+    requested_start_time = models.TimeField()
+    requested_end_time = models.TimeField()
+    reason = models.TextField()
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    #: Message shown to the requester when an administrator asks for more
+    #: information. Never an internal-only note.
+    admin_message = models.TextField(blank=True)
+    rejection_reason = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reschedule_requests_reviewed",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-submitted_at", "-id"]
+        indexes = [
+            models.Index(fields=["reservation", "status"]),
+            models.Index(fields=["status", "submitted_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reservation"],
+                condition=models.Q(status="PENDING"),
+                name="one_pending_reschedule_request_per_reservation",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(requested_end_time__gt=models.F("requested_start_time")),
+                name="reschedule_request_end_after_start",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Reschedule {self.reservation.reservation_id} → {self.requested_date} "
+            f"{self.requested_start_time:%H:%M}–{self.requested_end_time:%H:%M}"
+        )
+
+
+class RescheduleVerification(models.Model):
+    """Short-lived OTP challenge for a reschedule request.
+
+    The requested changes are held encrypted until the code sent to the
+    reservation's existing email address is verified; only then is a
+    ``RescheduleRequest`` created. Mirrors the reservation-edit verification
+    pattern: hashed OTP, hashed single-use session token, expiry, attempt limit,
+    resend cooldown, and a consumed marker that prevents reuse.
+    """
+
+    reservation = models.ForeignKey(
+        Reservation, on_delete=models.CASCADE, related_name="reschedule_verifications"
     )
     encrypted_payload = models.TextField()
     otp_hash = models.CharField(max_length=256)

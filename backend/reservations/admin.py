@@ -12,6 +12,7 @@ from .models import (
     ReservationEvent,
     ReservationFee,
     ReservationItem,
+    RescheduleRequest,
 )
 
 
@@ -506,6 +507,58 @@ class ReservationAdmin(admin.ModelAdmin):
             f"Approval email retry: {sent} sent, {failed} failed, "
             f"{skipped} skipped (no requester email), {already} already sent.",
         )
+
+
+@admin.register(RescheduleRequest)
+class RescheduleRequestAdmin(admin.ModelAdmin):
+    """Read-only review queue; decisions run through the reservation API."""
+
+    list_display = (
+        "reservation",
+        "current_schedule",
+        "requested_schedule",
+        "status",
+        "submitted_at",
+        "reviewed_by",
+    )
+    list_filter = ("status", "submitted_at")
+    search_fields = (
+        "reservation__reservation_id",
+        "reservation__event_name",
+        "reason",
+    )
+    readonly_fields = (
+        "reservation",
+        "requested_date",
+        "requested_start_time",
+        "requested_end_time",
+        "reason",
+        "status",
+        "admin_message",
+        "rejection_reason",
+        "submitted_at",
+        "reviewed_by",
+        "reviewed_at",
+        "created_at",
+        "updated_at",
+    )
+
+    @admin.display(description="Current schedule")
+    def current_schedule(self, obj):
+        return (
+            f"{obj.reservation.date} "
+            f"{obj.reservation.start_time:%H:%M}–{obj.reservation.end_time:%H:%M}"
+        )
+
+    @admin.display(description="Requested schedule")
+    def requested_schedule(self, obj):
+        return (
+            f"{obj.requested_date} "
+            f"{obj.requested_start_time:%H:%M}–{obj.requested_end_time:%H:%M}"
+        )
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(InspectionReport)

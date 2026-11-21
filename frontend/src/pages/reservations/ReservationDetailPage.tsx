@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowLeft,
+  CalendarDays,
   CheckCircle2,
   ClipboardCheck,
   Clock3,
@@ -76,6 +77,9 @@ export function ReservationDetailPage() {
     | 'checkin-override'
     | 'no-show'
     | 'payment-warning'
+    | 'reschedule-approve'
+    | 'reschedule-reject'
+    | 'reschedule-info'
   >(null)
   const [reason, setReason] = useState('')
   const [paymentEditing, setPaymentEditing] = useState(false)
@@ -157,6 +161,34 @@ export function ReservationDetailPage() {
   const warningDetails = warningPayment ?? reservation.payment ?? null
   const partiallyPaid = warningDetails?.status === 'PARTIALLY_PAID'
   const warningIsFullPayment = warningDetails?.payment_type === 'FULL_PAYMENT'
+
+  async function runRescheduleAction(
+    actionName: 'approve-reschedule' | 'reject-reschedule' | 'request-reschedule-info',
+    body: Record<string, unknown>,
+  ) {
+    const requestId = reservation?.reschedule_request?.id
+    if (!requestId) return
+    try {
+      await action.mutateAsync({
+        action: actionName,
+        body: { request_id: requestId, ...body },
+      })
+      toast(
+        actionName === 'approve-reschedule'
+          ? 'Reservation rescheduled.'
+          : actionName === 'reject-reschedule'
+            ? 'Reschedule request rejected.'
+            : 'More information requested.',
+      )
+      setModal(null)
+      setReason('')
+    } catch (error) {
+      toast(
+        error instanceof ApiError ? error.message : 'The reschedule request could not be updated.',
+        'error',
+      )
+    }
+  }
 
   async function runAction(
     actionName: 'approve' | 'reject' | 'request_changes' | 'cancel',
@@ -409,6 +441,15 @@ export function ReservationDetailPage() {
   // The requester-submitted event approval letter only applies to internal
   // reservations. External generated approval letters use a separate card.
   const showEventApprovalLetter = reservation.requester_type !== 'EXTERNAL'
+  const rescheduleRequest = reservation.reschedule_request
+  const rescheduleTone =
+    rescheduleRequest?.status === 'APPROVED'
+      ? 'emerald'
+      : rescheduleRequest?.status === 'REJECTED'
+        ? 'rose'
+        : rescheduleRequest?.status === 'INFO_REQUIRED'
+          ? 'orange'
+          : 'amber'
   const canApprove =
     !isViewOnly && isStaff && reservation.status === 'PENDING' &&
     (reservation.requester_type === 'EXTERNAL' || reservation.approval_document_status !== 'AWAITING')
@@ -732,6 +773,77 @@ export function ReservationDetailPage() {
               {reservation.notes && <DetailItem label="Notes" value={reservation.notes} wide />}
             </dl>
           </Card>
+
+          {/* Reschedule request — staff review and the actual reschedule. */}
+          {isStaff && rescheduleRequest && (
+            <Card>
+              <CardHeader
+                title="Reschedule request"
+                description="The requester proposed a new schedule. The reservation is unchanged until you approve it."
+                action={<Badge tone={rescheduleTone}>{rescheduleRequest.status_label}</Badge>}
+              />
+              <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                <DetailItem
+                  label="Current date and time"
+                  value={`${format(new Date(`${rescheduleRequest.current_date}T12:00:00`), 'MMMM d, yyyy')} · ${formatTime(rescheduleRequest.current_start_time)} – ${formatTime(rescheduleRequest.current_end_time)}`}
+                />
+                <DetailItem
+                  label="Requested date and time"
+                  value={`${format(new Date(`${rescheduleRequest.requested_date}T12:00:00`), 'MMMM d, yyyy')} · ${formatTime(rescheduleRequest.requested_start_time)} – ${formatTime(rescheduleRequest.requested_end_time)}`}
+                />
+                <DetailItem label="Requester's reason" value={rescheduleRequest.reason} wide />
+                <DetailItem
+                  label="Submitted"
+                  value={formatDateTime(rescheduleRequest.submitted_at)}
+                />
+                {rescheduleRequest.reviewed_by_name && (
+                  <DetailItem
+                    label="Reviewed by"
+                    value={`${rescheduleRequest.reviewed_by_name}${
+                      rescheduleRequest.reviewed_at
+                        ? ` · ${formatDateTime(rescheduleRequest.reviewed_at)}`
+                        : ''
+                    }`}
+                  />
+                )}
+                {rescheduleRequest.status === 'REJECTED' && rescheduleRequest.rejection_reason && (
+                  <DetailItem label="Rejection reason" value={rescheduleRequest.rejection_reason} wide />
+                )}
+                {rescheduleRequest.status === 'INFO_REQUIRED' && rescheduleRequest.admin_message && (
+                  <DetailItem label="Information requested" value={rescheduleRequest.admin_message} wide />
+                )}
+              </dl>
+              {rescheduleRequest.status === 'PENDING' && !isViewOnly && (
+                <div className="mt-5 flex flex-wrap gap-2.5 border-t border-line pt-4">
+                  <Button
+                    icon={<CalendarDays className="size-4" />}
+                    onClick={() => setModal('reschedule-approve')}
+                  >
+                    Approve and Reschedule
+                  </Button>
+                  <Button
+                    variant="danger"
+                    icon={<XCircle className="size-4" />}
+                    onClick={() => setModal('reschedule-reject')}
+                  >
+                    Reject Request
+                  </Button>
+                  <Button
+                    variant="outline"
+                    icon={<Mail className="size-4" />}
+                    onClick={() => setModal('reschedule-info')}
+                  >
+                    Request More Information
+                  </Button>
+                </div>
+              )}
+              {rescheduleRequest.status === 'APPROVED' && (
+                <p className="mt-4 rounded-lg border border-status-available/25 bg-status-available-bg p-3.5 text-sm text-status-available">
+                  This request was approved and the reservation was moved to the requested schedule.
+                </p>
+              )}
+            </Card>
+          )}
 
           {/* Requested resources */}
           <Card>
@@ -1308,6 +1420,109 @@ export function ReservationDetailPage() {
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="Explain why this request cannot be approved…"
+            autoFocus
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={modal === 'reschedule-approve'}
+        onClose={() => setModal(null)}
+        title="Approve and reschedule"
+        description="Availability and fees are re-checked before the reservation's date and time are changed."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModal(null)}>
+              Cancel
+            </Button>
+            <Button
+              icon={<CalendarDays className="size-4" />}
+              onClick={() => void runRescheduleAction('approve-reschedule', {})}
+              loading={action.isPending}
+            >
+              Approve and Reschedule
+            </Button>
+          </>
+        }
+      >
+        {rescheduleRequest && (
+          <div className="rounded-xl border border-line bg-soft/60 p-4 text-sm">
+            <p className="text-body">
+              Move <span className="font-medium text-ink">{reservation.event_name}</span> to:
+            </p>
+            <p className="mt-1 font-semibold text-ink">
+              {format(new Date(`${rescheduleRequest.requested_date}T12:00:00`), 'MMMM d, yyyy')}{' '}
+              · {formatTime(rescheduleRequest.requested_start_time)} –{' '}
+              {formatTime(rescheduleRequest.requested_end_time)}
+            </p>
+            <p className="mt-3 text-xs leading-5 text-body">
+              The reservation reference, approval documents, and payment records are preserved.
+              Applicable fees are recalculated automatically. If the slot is unavailable, the
+              request stays pending so you can reject it or coordinate another schedule.
+            </p>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={modal === 'reschedule-reject'}
+        onClose={() => setModal(null)}
+        title="Reject reschedule request"
+        description="The requester is emailed your reason. The original reservation stays unchanged."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModal(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!reason.trim()}
+              onClick={() => void runRescheduleAction('reject-reschedule', { reason })}
+              loading={action.isPending}
+            >
+              Reject Request
+            </Button>
+          </>
+        }
+      >
+        <Field label="Reason for rejection" htmlFor="reschedule-reject-reason">
+          <Textarea
+            id="reschedule-reject-reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="e.g. The facility is already reserved for that time…"
+            autoFocus
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={modal === 'reschedule-info'}
+        onClose={() => setModal(null)}
+        title="Request more information"
+        description="The requester is emailed your message. The request remains open for review."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModal(null)}>
+              Cancel
+            </Button>
+            <Button
+              icon={<Mail className="size-4" />}
+              disabled={!reason.trim()}
+              onClick={() => void runRescheduleAction('request-reschedule-info', { message: reason })}
+              loading={action.isPending}
+            >
+              Send Request
+            </Button>
+          </>
+        }
+      >
+        <Field label="Message to the requester" htmlFor="reschedule-info-message">
+          <Textarea
+            id="reschedule-info-message"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Explain what clarification or detail you need…"
             autoFocus
           />
         </Field>

@@ -1,0 +1,12 @@
+{% autoescape off %}
+GSO RESERVE - Reschedule request rejected
+
+The reschedule request for reservation {{ reservation_id }} ({{ event_name }}) was not approved. Your original schedule remains unchanged.
+
+Reason from GSO staff: {{ rejection_reason }}
+
+Contact the GSO Office if you would like to coordinate a different schedule.
+
+---
+This is an automated notification from {{ site_name }}.
+{% endautoescape %}

@@ -1,0 +1,12 @@
+{% autoescape off %}
+GSO RESERVE - Reservation rescheduled
+
+Reservation {{ reservation_id }} for {{ event_name }} at {{ facility }} has been moved to:
+
+New date and time: {{ requested_date }} {{ requested_start_time }} - {{ requested_end_time }}
+
+Your reservation reference, approval documents, and payment records are unchanged. Updated fees, if any, appear on your tracking page.
+
+---
+This is an automated notification from {{ site_name }}.
+{% endautoescape %}

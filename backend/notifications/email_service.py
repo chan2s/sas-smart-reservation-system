@@ -225,6 +225,79 @@ def send_reservation_modified(reservation, recipient_email: str) -> bool:
             "purpose": reservation.purpose,
         },
     )
+def _reschedule_context(reservation, reschedule_request) -> dict:
+    return {
+        "site_name": SITE_NAME,
+        "reservation_id": reservation.reservation_id,
+        "event_name": reservation.event_name,
+        "facility": reservation.facility.name,
+        "current_date": reservation.date,
+        "current_start_time": reservation.start_time,
+        "current_end_time": reservation.end_time,
+        "requested_date": reschedule_request.requested_date,
+        "requested_start_time": reschedule_request.requested_start_time,
+        "requested_end_time": reschedule_request.requested_end_time,
+        "reason": reschedule_request.reason,
+        "rejection_reason": reschedule_request.rejection_reason,
+        "admin_message": reschedule_request.admin_message,
+    }
+
+
+def send_reschedule_otp(reservation, recipient_email: str, otp: str) -> bool:
+    """Send the one-time code that authorises a reschedule request."""
+    return send_reservation_email(
+        recipient_email,
+        f"Verify reschedule request - {reservation.reservation_id}",
+        "reschedule_otp",
+        {
+            "site_name": SITE_NAME,
+            "reservation_id": reservation.reservation_id,
+            "otp": otp,
+            "expires_minutes": 5,
+        },
+    )
+
+
+def send_reschedule_submitted(reservation, reschedule_request, recipient_email: str) -> bool:
+    """Confirm the OTP-verified request is now awaiting administrator review."""
+    return send_reservation_email(
+        recipient_email,
+        f"Reschedule request received - {reservation.reservation_id}",
+        "reschedule_submitted",
+        _reschedule_context(reservation, reschedule_request),
+    )
+
+
+def send_reschedule_approved(reservation, reschedule_request, recipient_email: str) -> bool:
+    """Tell the requester their reservation was moved to the requested slot."""
+    return send_reservation_email(
+        recipient_email,
+        f"Reservation rescheduled - {reservation.reservation_id}",
+        "reschedule_approved",
+        _reschedule_context(reservation, reschedule_request),
+    )
+
+
+def send_reschedule_rejected(reservation, reschedule_request, recipient_email: str) -> bool:
+    return send_reservation_email(
+        recipient_email,
+        f"Reschedule request rejected - {reservation.reservation_id}",
+        "reschedule_rejected",
+        _reschedule_context(reservation, reschedule_request),
+    )
+
+
+def send_reschedule_info_requested(
+    reservation, reschedule_request, recipient_email: str
+) -> bool:
+    return send_reservation_email(
+        recipient_email,
+        f"More information needed - {reservation.reservation_id}",
+        "reschedule_info_requested",
+        _reschedule_context(reservation, reschedule_request),
+    )
+
+
 def _classify_email_error(exc: Exception) -> str:
     """Map an email exception to a short, safe category (never logs secrets)."""
     if isinstance(exc, smtplib.SMTPAuthenticationError):

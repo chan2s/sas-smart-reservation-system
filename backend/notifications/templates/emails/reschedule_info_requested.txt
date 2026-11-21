@@ -1,0 +1,12 @@
+{% autoescape off %}
+GSO RESERVE - More information needed
+
+GSO staff need more information about the reschedule request for reservation {{ reservation_id }} ({{ event_name }}).
+
+Message from GSO staff: {{ admin_message }}
+
+Please contact the GSO Office with the requested details. Your reservation's current schedule remains in place.
+
+---
+This is an automated notification from {{ site_name }}.
+{% endautoescape %}

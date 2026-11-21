@@ -947,6 +947,25 @@ export interface ReservationDetail extends ReservationSummary {
     items: AvailabilityItem[]
     problems: { type: string; message: string }[]
   }
+  /** Staff-only: latest reschedule request on this reservation. */
+  reschedule_request?: {
+    id: number
+    reservation_reference: string
+    current_date: string
+    current_start_time: string
+    current_end_time: string
+    requested_date: string
+    requested_start_time: string
+    requested_end_time: string
+    reason: string
+    status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INFO_REQUIRED'
+    status_label: string
+    admin_message: string
+    rejection_reason: string
+    submitted_at: string
+    reviewed_by_name: string
+    reviewed_at: string | null
+  } | null
 }
 
 export interface CalendarEvent {

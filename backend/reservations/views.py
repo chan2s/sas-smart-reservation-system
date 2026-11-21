@@ -30,7 +30,13 @@ from facilities.models import Facility
 from equipment.services import unassigned_equipment_for_facility
 from notifications.models import Notification
 from notifications.services import notify, notify_staff
-from .models import Reservation, ReservationEditVerification, ReservationEvent
+from .models import (
+    Reservation,
+    ReservationEditVerification,
+    ReservationEvent,
+    RescheduleRequest,
+    RescheduleVerification,
+)
 from .serializers import (
     ReservationCreateSerializer,
     ReservationDetailSerializer,
@@ -39,9 +45,11 @@ from .serializers import (
     ReservationResubmitSerializer,
     PublicTrackSerializer,
     PublicApprovalLetterUploadSerializer,
+    RescheduleRequestInputSerializer,
 )
 from .services import confirmations, expiration, payments as payment_service, workflow
 from .services import booker_lookup as booker_service
+from .services import reschedule as reschedule_service
 from .services.availability import check_availability, find_alternatives
 from .services.package_availability import package_availability, operator_availability
 from .services.pricing import quote_fees, quote_to_dict, rates_payload
@@ -423,6 +431,253 @@ def public_reservation_verify_edit_otp(request):
                 lambda current=reservation, recipient=recipient_email: send_reservation_modified(current, recipient),
                 robust=True,
             )
+    return Response(PublicTrackSerializer(reservation).data)
+
+
+def _public_reschedule_reservation(reference, *, lock=False):
+    """Resolve only guest reservations eligible for a reschedule request.
+
+    Account-owned reservations, unapproved reservations, and reservations whose
+    event has already started are never reachable through the public API.
+    """
+    reference = str(reference or "").strip().upper()
+    if not reference:
+        return None
+    reservations = Reservation.objects.select_related("facility")
+    if lock:
+        reservations = reservations.select_for_update()
+    reservation = reservations.filter(
+        reservation_id__iexact=reference,
+        requester__isnull=True,
+        created_by__isnull=True,
+    ).first()
+    if (
+        reservation is None
+        or reservation.status != Reservation.Status.APPROVED
+        or not reservation.contact_email.strip()
+        or reservation.has_started
+    ):
+        return None
+    return reservation
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationEditOTPThrottle])
+def public_reschedule_request_otp(request):
+    """Validate a proposed schedule and email an OTP to the contact on file.
+
+    No reschedule request exists until the code is verified. The requested
+    changes are encrypted in a short-lived verification row.
+    """
+    data = request.data if hasattr(request.data, "get") else {}
+    reference = str(data.get("reservation_id", "")).strip().upper()
+    reservation = _public_reschedule_reservation(reference)
+    if reservation is None:
+        return Response({"detail": "This reservation cannot be rescheduled."}, status=404)
+
+    serializer = RescheduleRequestInputSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    payload = dict(serializer.validated_data)
+    if (
+        payload["requested_date"] == reservation.date
+        and payload["requested_start_time"] == reservation.start_time
+        and payload["requested_end_time"] == reservation.end_time
+    ):
+        return Response(
+            {"detail": "The requested schedule is the same as the current one."},
+            status=400,
+        )
+    if RescheduleRequest.objects.filter(
+        reservation=reservation, status=RescheduleRequest.Status.PENDING
+    ).exists():
+        return Response(
+            {"detail": "A reschedule request for this reservation is already awaiting review."},
+            status=409,
+        )
+
+    report = reschedule_service.availability_for(
+        reservation,
+        payload["requested_date"],
+        payload["requested_start_time"],
+        payload["requested_end_time"],
+    )
+    if not report["overall"]["ok"]:
+        return Response(
+            {
+                "detail": "The requested schedule is unavailable.",
+                "availability": report,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    now = timezone.now()
+    with transaction.atomic():
+        reservation = _public_reschedule_reservation(reference, lock=True)
+        if reservation is None:
+            return Response(
+                {"detail": "This reservation cannot be rescheduled."}, status=404
+            )
+        active = RescheduleVerification.objects.select_for_update().filter(
+            reservation=reservation, consumed_at__isnull=True
+        )
+        latest = active.order_by("-created_at").first()
+        if latest is not None and now < latest.resend_available_at:
+            return Response(
+                {
+                    "detail": "Please wait before requesting another code.",
+                    "resend_available_at": latest.resend_available_at,
+                },
+                status=429,
+            )
+        # A new code invalidates every previously issued one.
+        active.update(consumed_at=now)
+        otp = generate_otp()
+        session_token = generate_session_token()
+        verification = RescheduleVerification.objects.create(
+            reservation=reservation,
+            encrypted_payload=encrypt_payload(
+                {
+                    "requested_date": payload["requested_date"].isoformat(),
+                    "requested_start_time": payload["requested_start_time"].isoformat(),
+                    "requested_end_time": payload["requested_end_time"].isoformat(),
+                    "reason": payload["reason"],
+                }
+            ),
+            otp_hash=hash_otp(otp),
+            session_token_hash=hash_session_token(session_token),
+            expires_at=now + datetime.timedelta(minutes=5),
+            resend_available_at=now + datetime.timedelta(seconds=60),
+        )
+
+    from notifications.email_service import send_reschedule_otp
+
+    if not send_reschedule_otp(reservation, reservation.contact_email.strip(), otp):
+        verification.delete()
+        return Response(
+            {"detail": "The verification email could not be sent. Please try again."},
+            status=503,
+        )
+    return Response(
+        {
+            "verification_session": session_token,
+            "expires_at": verification.expires_at,
+            "resend_available_at": verification.resend_available_at,
+            "email_hint": _masked_email(reservation.contact_email.strip()),
+        },
+        status=202,
+    )
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicReservationEditOTPThrottle])
+def public_reschedule_verify_otp(request):
+    """Verify the OTP and create the reschedule request for admin review."""
+    data = request.data if hasattr(request.data, "get") else {}
+    reference = str(data.get("reservation_id", "")).strip().upper()
+    session_token = str(data.get("verification_session", ""))
+    otp = str(data.get("otp", ""))
+    if len(otp) != 6 or not otp.isdigit():
+        return Response({"detail": "Enter the six-digit verification code."}, status=400)
+    token_hash = hash_session_token(session_token) if session_token else ""
+    now = timezone.now()
+    with transaction.atomic():
+        reservation = _public_reschedule_reservation(reference, lock=True)
+        verification = None
+        if reservation is not None:
+            verification = RescheduleVerification.objects.select_for_update().filter(
+                reservation=reservation,
+                session_token_hash=token_hash,
+                consumed_at__isnull=True,
+            ).first()
+        if reservation is None or verification is None:
+            return Response(
+                {"detail": "This verification session is no longer valid."}, status=400
+            )
+        if now >= verification.expires_at:
+            verification.consumed_at = now
+            verification.save(update_fields=["consumed_at", "updated_at"])
+            return Response(
+                {"detail": "This verification code has expired. Start the request again."},
+                status=400,
+            )
+        if verification.attempts >= 5:
+            return Response(
+                {"detail": "Too many incorrect codes. Start the request again."},
+                status=400,
+            )
+        if not verify_otp(otp, verification.otp_hash):
+            verification.attempts += 1
+            verification.save(update_fields=["attempts", "updated_at"])
+            return Response(
+                {
+                    "detail": (
+                        f"Incorrect code. {max(0, 5 - verification.attempts)} "
+                        "attempts remaining."
+                    )
+                },
+                status=400,
+            )
+        try:
+            payload = decrypt_payload(verification.encrypted_payload)
+        except ValueError as exc:
+            verification.delete()
+            return Response({"detail": str(exc)}, status=400)
+        serializer = RescheduleRequestInputSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        if RescheduleRequest.objects.filter(
+            reservation=reservation, status=RescheduleRequest.Status.PENDING
+        ).exists():
+            verification.consumed_at = now
+            verification.save(update_fields=["consumed_at", "updated_at"])
+            return Response(
+                {"detail": "A reschedule request for this reservation is already awaiting review."},
+                status=409,
+            )
+        request_row = RescheduleRequest.objects.create(
+            reservation=reservation,
+            requested_date=serializer.validated_data["requested_date"],
+            requested_start_time=serializer.validated_data["requested_start_time"],
+            requested_end_time=serializer.validated_data["requested_end_time"],
+            reason=serializer.validated_data["reason"],
+        )
+        verification.consumed_at = now
+        verification.save(update_fields=["consumed_at", "updated_at"])
+        event = workflow.record_event(
+            reservation,
+            ReservationEvent.EventType.RESCHEDULE_REQUESTED,
+            actor=None,
+            from_status=reservation.status,
+            to_status=reservation.status,
+            message=(
+                f"OTP-verified reschedule request for {request_row.requested_date} "
+                f"{request_row.requested_start_time:%H:%M}–"
+                f"{request_row.requested_end_time:%H:%M}. "
+                f"Reason: {request_row.reason}"
+            ),
+        )
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "Reschedule request submitted",
+            (
+                f"{reservation.event_name} ({reservation.reservation_id}) has a "
+                "reschedule request awaiting review."
+            ),
+            f"/reservations/{reservation.id}",
+            event_key=f"reservation-event:{event.pk}:reschedule-requested",
+        )
+        recipient = reservation.contact_email.strip()
+        from notifications.email_service import send_reschedule_submitted
+
+        transaction.on_commit(
+            lambda current=reservation, req=request_row, to=recipient: (
+                send_reschedule_submitted(current, req, to)
+            ),
+            robust=True,
+        )
     return Response(PublicTrackSerializer(reservation).data)
 
 
@@ -831,7 +1086,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             "approved_by",
             "no_show_marked_by",
             "organization_ref",
-        ).prefetch_related("items__equipment__category", "events")
+        ).prefetch_related("items__equipment__category", "events", "reschedule_requests")
         user = self.request.user
 
         if not user.is_gso_staff:
@@ -1359,6 +1614,89 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 reservation, context={"request": request}
             ).data
         )
+
+    def _reschedule_request_for(self, reservation, request):
+        request_id = request.data.get("request_id")
+        if not request_id:
+            return None
+        return reservation.reschedule_requests.filter(pk=request_id).first()
+
+    def _reschedule_response(self, reservation, request):
+        reservation.refresh_from_db()
+        return Response(
+            ReservationDetailSerializer(
+                reservation, context={"request": request}
+            ).data
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="approve-reschedule",
+        permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],
+    )
+    def approve_reschedule(self, request, pk=None):
+        """Approve a pending request and apply its schedule in place."""
+        reservation = self.get_object()
+        request_row = self._reschedule_request_for(reservation, request)
+        if request_row is None:
+            return Response(
+                {"detail": "Reschedule request not found."}, status=404
+            )
+        try:
+            reschedule_service.approve(
+                request_row, request.user, request.data.get("comment", "")
+            )
+        except reschedule_service.RescheduleUnavailable as exc:
+            return Response(
+                {"detail": str(exc), "availability": exc.report},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return self._reschedule_response(reservation, request)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="reject-reschedule",
+        permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],
+    )
+    def reject_reschedule(self, request, pk=None):
+        reservation = self.get_object()
+        request_row = self._reschedule_request_for(reservation, request)
+        if request_row is None:
+            return Response(
+                {"detail": "Reschedule request not found."}, status=404
+            )
+        try:
+            reschedule_service.reject(
+                request_row, request.user, request.data.get("reason", "")
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return self._reschedule_response(reservation, request)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="request-reschedule-info",
+        permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],
+    )
+    def request_reschedule_info(self, request, pk=None):
+        reservation = self.get_object()
+        request_row = self._reschedule_request_for(reservation, request)
+        if request_row is None:
+            return Response(
+                {"detail": "Reschedule request not found."}, status=404
+            )
+        try:
+            reschedule_service.request_more_information(
+                request_row, request.user, request.data.get("message", "")
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return self._reschedule_response(reservation, request)
 
     @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def request_changes(self, request, pk=None):
