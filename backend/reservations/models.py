@@ -1244,6 +1244,18 @@ class ReservationEvent(models.Model):
             "RESCHEDULE_INFO_REQUIRED",
             "Reschedule information requested",
         )
+        # After a reschedule is approved the existing approval letter is
+        # regenerated from the final schedule and emailed again. These events
+        # record both outcomes independently so a delivery failure is visible
+        # even though the regenerated letter is retained.
+        APPROVAL_LETTER_REGENERATED = (
+            "APPROVAL_LETTER_REGENERATED",
+            "Approval letter regenerated",
+        )
+        APPROVAL_EMAIL_RESENT = (
+            "APPROVAL_EMAIL_RESENT",
+            "Approval email resent",
+        )
 
     reservation = models.ForeignKey(
         Reservation, on_delete=models.CASCADE, related_name="events"

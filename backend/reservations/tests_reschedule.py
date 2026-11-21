@@ -1,8 +1,13 @@
 from datetime import time, timedelta
 from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
+from docx import Document
+from django.core import mail
 from django.core.cache import cache
+from django.core.files.base import ContentFile
 from django.template.loader import render_to_string
 from django.test import TestCase
 from django.utils import timezone
@@ -16,6 +21,14 @@ from reservations.models import (
     RescheduleRequest,
     RescheduleVerification,
 )
+
+
+def fake_pdf(docx_path, output_dir):
+    path = Path(output_dir) / f"{Path(docx_path).stem}.pdf"
+    path.write_bytes(
+        b"%PDF-1.4\n" + b"Printable approval letter test content " * 8 + b"\n%%EOF"
+    )
+    return path
 
 
 class RescheduleWorkflowTests(TestCase):
@@ -96,16 +109,39 @@ class RescheduleWorkflowTests(TestCase):
             format="json",
         )
 
-    def create_pending(self):
-        response, sent = self.request_otp()
+    def create_pending(self, reservation=None):
+        reservation = reservation or self.reservation
+        response, sent = self.request_otp(
+            self.payload(reservation_id=reservation.reservation_id),
+            reservation=reservation,
+        )
         self.assertEqual(response.status_code, 202, response.content)
         result = self.verify(
-            self.reservation.reservation_id,
+            reservation.reservation_id,
             response.json()["verification_session"],
             sent["code"],
         )
         self.assertEqual(result.status_code, 200, result.content)
-        return RescheduleRequest.objects.get(reservation=self.reservation)
+        return RescheduleRequest.objects.get(reservation=reservation)
+
+    def make_external_with_letter(self, reference="GSO-RESCHED-EXT"):
+        """An approved external reservation with an already-sent approval letter."""
+        external = self.make_reservation(
+            reference=reference,
+            requester_type=Reservation.RequesterType.EXTERNAL,
+        )
+        external.generated_approval_docx.save(
+            "old-letter.docx", ContentFile(b"old docx"), save=False
+        )
+        external.generated_approval_pdf.save(
+            "old-letter.pdf", ContentFile(b"%PDF-1.4\nold\n%%EOF"), save=False
+        )
+        external.generated_approval_status = (
+            Reservation.GeneratedApprovalStatus.GENERATED
+        )
+        external.approval_email_status = Reservation.ApprovalEmailStatus.SENT
+        external.save()
+        return external, external.generated_approval_pdf.name
 
     def admin(self):
         user = User.objects.create_user(
@@ -317,15 +353,15 @@ class RescheduleWorkflowTests(TestCase):
 
         admin = self.admin()
         with patch(
-            "notifications.email_service.send_reschedule_approved"
-        ) as send_approved:
+            "reservations.services.approval_documents._convert_pdf",
+            side_effect=fake_pdf,
+        ):
             with self.captureOnCommitCallbacks(execute=True):
                 approved = self.client.post(
                     f"/api/reservations/{external.pk}/approve-reschedule/",
                     {"request_id": request_row.pk},
                     format="json",
                 )
-        self.assertTrue(send_approved.called)
         self.assertEqual(approved.status_code, 200, approved.content)
         external.refresh_from_db()
         request_row.refresh_from_db()
@@ -344,6 +380,173 @@ class RescheduleWorkflowTests(TestCase):
         self.assertTrue(
             external.events.filter(event_type="RESCHEDULED").exists()
         )
+
+    @patch("reservations.services.approval_documents._convert_pdf", side_effect=fake_pdf)
+    def test_reschedule_approval_regenerates_letter_and_resends_it(self, _convert):
+        external, old_pdf_name = self.make_external_with_letter()
+        request_row = self.create_pending(external)
+        self.admin()
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"/api/reservations/{external.pk}/approve-reschedule/",
+                {"request_id": request_row.pk},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        external.refresh_from_db()
+
+        self.assertEqual(external.status, Reservation.Status.APPROVED)
+        self.assertEqual(external.date, self.day)
+        self.assertEqual(external.start_time, time(13, 0))
+        self.assertEqual(external.end_time, time(15, 0))
+        self.assertEqual(
+            external.generated_approval_status,
+            Reservation.GeneratedApprovalStatus.GENERATED,
+        )
+        self.assertFalse(external.generated_approval_pdf.storage.exists(old_pdf_name))
+        self.assertEqual(
+            external.approval_email_status, Reservation.ApprovalEmailStatus.SENT
+        )
+
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [external.contact_email])
+        self.assertIn(external.event_name, message.subject)
+        self.assertEqual(len(message.attachments), 1)
+        filename, attachment, mimetype = message.attachments[0]
+        self.assertEqual(
+            filename, f"GSO-RESERVE-APPROVAL-{external.reservation_id}.pdf"
+        )
+        self.assertEqual(mimetype, "application/pdf")
+        with external.generated_approval_pdf.open("rb") as saved_pdf:
+            self.assertEqual(attachment, saved_pdf.read())
+
+        # The regenerated DOCX carries the approved reschedule, not the old slot.
+        with external.generated_approval_docx.open("rb") as saved_docx:
+            document = Document(BytesIO(saved_docx.read()))
+        letter_text = "\n".join(p.text for p in document.paragraphs)
+        letter_text += "\n" + "\n".join(
+            cell.text
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+        )
+        expected_date = self.day.strftime("%B %d, %Y").replace(" 0", " ")
+        self.assertIn(expected_date, letter_text)
+        self.assertIn("1:00 PM to 3:00 PM", letter_text)
+
+        self.assertTrue(
+            external.events.filter(
+                event_type="APPROVAL_LETTER_REGENERATED"
+            ).exists()
+        )
+        self.assertTrue(
+            external.events.filter(event_type="APPROVAL_EMAIL_RESENT").exists()
+        )
+
+        # A repeated approval must not reschedule again or send a second email.
+        duplicate = self.client.post(
+            f"/api/reservations/{external.pk}/approve-reschedule/",
+            {"request_id": request_row.pk},
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @patch(
+        "reservations.services.approval_documents._convert_pdf",
+        side_effect=RuntimeError("converter unavailable"),
+    )
+    def test_reschedule_approval_stays_approved_when_letter_generation_fails(
+        self, _convert
+    ):
+        external, old_pdf_name = self.make_external_with_letter()
+        request_row = self.create_pending(external)
+        self.admin()
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"/api/reservations/{external.pk}/approve-reschedule/",
+                {"request_id": request_row.pk},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        external.refresh_from_db()
+
+        self.assertEqual(external.status, Reservation.Status.APPROVED)
+        self.assertEqual(external.start_time, time(13, 0))
+        self.assertEqual(external.end_time, time(15, 0))
+        self.assertEqual(
+            external.generated_approval_status,
+            Reservation.GeneratedApprovalStatus.FAILED,
+        )
+        self.assertEqual(
+            external.approval_email_status, Reservation.ApprovalEmailStatus.NOT_SENT
+        )
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertTrue(
+            external.events.filter(
+                event_type="APPROVAL_LETTER_REGENERATED",
+                message__contains="failed",
+            ).exists()
+        )
+        # The old letter is never reused after a failed regeneration.
+        self.assertTrue(external.generated_approval_pdf.storage.exists(old_pdf_name))
+
+    @patch("reservations.services.approval_documents._convert_pdf", side_effect=fake_pdf)
+    def test_reschedule_approval_keeps_new_letter_when_email_fails(self, _convert):
+        external, _old_pdf_name = self.make_external_with_letter()
+        request_row = self.create_pending(external)
+        self.admin()
+        mail.outbox.clear()
+
+        with patch(
+            "reservations.services.workflow.send_external_reservation_approval",
+            return_value=(False, "smtp_connection"),
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.post(
+                    f"/api/reservations/{external.pk}/approve-reschedule/",
+                    {"request_id": request_row.pk},
+                    format="json",
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        external.refresh_from_db()
+
+        self.assertEqual(external.status, Reservation.Status.APPROVED)
+        self.assertEqual(
+            external.generated_approval_status,
+            Reservation.GeneratedApprovalStatus.GENERATED,
+        )
+        self.assertTrue(
+            external.generated_approval_pdf.storage.exists(
+                external.generated_approval_pdf.name
+            )
+        )
+        self.assertEqual(
+            external.approval_email_status, Reservation.ApprovalEmailStatus.FAILED
+        )
+        self.assertEqual(external.approval_email_last_error, "smtp_connection")
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertTrue(
+            external.events.filter(event_type="APPROVAL_EMAIL_RESENT").exists()
+        )
+
+        # The existing retry action sends the retained, regenerated letter.
+        retry = self.client.post(
+            f"/api/reservations/{external.pk}/resend_approval_email/",
+            {},
+            format="json",
+        )
+        self.assertEqual(retry.status_code, 200, retry.content)
+        external.refresh_from_db()
+        self.assertEqual(
+            external.approval_email_status, Reservation.ApprovalEmailStatus.SENT
+        )
+        self.assertEqual(len(mail.outbox), 1)
 
     def test_approval_is_refused_when_requested_slot_became_unavailable(self):
         request_row = self.create_pending()

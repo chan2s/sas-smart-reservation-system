@@ -62,6 +62,105 @@ def _reservation_link(reservation):
     return f"/reservations/{reservation.id}"
 
 
+def _regenerate_letter_and_resend_email(reservation_id, actor_id):
+    """Refresh the approval letter for a rescheduled reservation, then email it.
+
+    Runs after the reschedule transaction commits so it always reads the final
+    saved schedule. The previous letter is replaced by the existing generation
+    workflow before anything is attached, so an outdated document can never be
+    sent. Every outcome is recorded on the reservation timeline and the
+    reservation remains approved; staff can retry from the reservation page.
+    """
+    from django.contrib.auth import get_user_model
+
+    from reservations.services.approval_documents import generate_approval_documents
+    from reservations.services.workflow import resend_approval_email
+
+    reservation = Reservation.objects.filter(pk=reservation_id).first()
+    if reservation is None:
+        return
+    actor = (
+        get_user_model().objects.filter(pk=actor_id).first() if actor_id else None
+    )
+    schedule = (
+        f"{reservation.date} "
+        f"{reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}"
+    )
+
+    try:
+        generate_approval_documents(reservation, regenerate=True)
+    except Exception as exc:  # noqa: BLE001 - the approval stays committed
+        record_event(
+            reservation,
+            ReservationEvent.EventType.APPROVAL_LETTER_REGENERATED,
+            actor=actor,
+            from_status=reservation.status,
+            to_status=reservation.status,
+            message=(
+                f"Approval letter regeneration failed for the rescheduled "
+                f"schedule ({schedule}): "
+                f"{reservation.generated_approval_error or type(exc).__name__}."
+            ),
+        )
+        return
+    reservation.refresh_from_db()
+    record_event(
+        reservation,
+        ReservationEvent.EventType.APPROVAL_LETTER_REGENERATED,
+        actor=actor,
+        from_status=reservation.status,
+        to_status=reservation.status,
+        message=(
+            f"Approval letter regenerated with the rescheduled date and time "
+            f"({schedule})."
+        ),
+    )
+
+    recipient = _email(reservation)
+    try:
+        status = resend_approval_email(reservation, actor, force=True)
+    except Exception as exc:  # noqa: BLE001 - retain the new letter
+        record_event(
+            reservation,
+            ReservationEvent.EventType.APPROVAL_EMAIL_RESENT,
+            actor=actor,
+            from_status=reservation.status,
+            to_status=reservation.status,
+            message=(
+                f"Approval email with the regenerated letter could not be sent: "
+                f"{type(exc).__name__}."
+            ),
+            recipient_email=recipient,
+        )
+        return
+    reservation.refresh_from_db()
+    if status == Reservation.ApprovalEmailStatus.SENT:
+        message = (
+            "Approval email with the regenerated approval letter was sent to "
+            "the registered representative address."
+        )
+    elif status == Reservation.ApprovalEmailStatus.NO_EMAIL:
+        message = (
+            "Approval email was not sent because no registered representative "
+            "email address is available."
+        )
+    else:
+        reason = reservation.approval_email_last_error or "delivery_failed"
+        message = (
+            f"Approval email with the regenerated letter could not be delivered "
+            f"({reason}). The new letter remains available for retry."
+        )
+    record_event(
+        reservation,
+        ReservationEvent.EventType.APPROVAL_EMAIL_RESENT,
+        actor=actor,
+        from_status=reservation.status,
+        to_status=reservation.status,
+        message=message,
+        recipient_email=recipient,
+    )
+
+
 def _review_guard(reschedule_request, actor):
     """Only GSO staff may decide a request, and never their own."""
     if not getattr(actor, "is_gso_staff", False):
@@ -121,9 +220,18 @@ def approve(reschedule_request, actor, comment=""):
         reservation.date = request_row.requested_date
         reservation.start_time = request_row.requested_start_time
         reservation.end_time = request_row.requested_end_time
-        reservation.save(
-            update_fields=["date", "start_time", "end_time", "updated_at"]
-        )
+        update_fields = ["date", "start_time", "end_time", "updated_at"]
+        if reservation.requester_type == Reservation.RequesterType.EXTERNAL:
+            # The previous approval email described the old schedule. Show it
+            # as pending until the regenerated letter is actually delivered.
+            reservation.approval_email_status = (
+                Reservation.ApprovalEmailStatus.NOT_SENT
+            )
+            reservation.approval_email_last_error = ""
+            update_fields.extend(
+                ["approval_email_status", "approval_email_last_error"]
+            )
+        reservation.save(update_fields=update_fields)
         # Same pricing logic as a fresh reservation: snapshotted line items and
         # the derived required payment are recalculated, never client-supplied.
         snapshot_reservation_fees(reservation)
@@ -183,7 +291,17 @@ def approve(reschedule_request, actor, comment=""):
         )
 
         recipient = _email(reservation)
-        if recipient:
+        if reservation.requester_type == Reservation.RequesterType.EXTERNAL:
+            # The external approval letter carries the schedule. Regenerate it
+            # from the committed reservation and resend it, instead of sending
+            # a separate schedule notice with the old letter.
+            transaction.on_commit(
+                lambda pk=reservation.pk, actor_id=actor.pk: (
+                    _regenerate_letter_and_resend_email(pk, actor_id)
+                ),
+                robust=True,
+            )
+        elif recipient:
             from notifications.email_service import send_reschedule_approved
 
             transaction.on_commit(

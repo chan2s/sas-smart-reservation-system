@@ -12,17 +12,23 @@ const apiState = vi.hoisted(() => ({
   verifyRescheduleOTP: vi.fn(),
 }))
 
-vi.mock('@/lib/api', () => ({
-  endpoints: {
-    trackReservationById: apiState.track,
-    trackPublicReservation: apiState.legacyTrack,
-    uploadPublicApprovalLetter: apiState.upload,
-    publicReservationEditDetails: apiState.editDetails,
-    requestPublicRescheduleOTP: apiState.requestRescheduleOTP,
-    verifyPublicRescheduleOTP: apiState.verifyRescheduleOTP,
-  },
-}))
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return {
+    ...actual,
+    endpoints: {
+      ...actual.endpoints,
+      trackReservationById: apiState.track,
+      trackPublicReservation: apiState.legacyTrack,
+      uploadPublicApprovalLetter: apiState.upload,
+      publicReservationEditDetails: apiState.editDetails,
+      requestPublicRescheduleOTP: apiState.requestRescheduleOTP,
+      verifyPublicRescheduleOTP: apiState.verifyRescheduleOTP,
+    },
+  }
+})
 
+import { ApiError } from '@/lib/api'
 import { ReservationTrackPage } from './ReservationTrackPage'
 
 function renderPage() {
@@ -68,6 +74,46 @@ afterEach(() => {
   apiState.requestRescheduleOTP.mockReset()
   apiState.verifyRescheduleOTP.mockReset()
 })
+
+const approvedForReschedule = {
+  ...result,
+  status: 'APPROVED',
+  status_label: 'Approved',
+  approval_document_status: 'NOT_REQUIRED' as const,
+  approval_document_status_label: 'Not required for this reservation',
+  can_edit: false,
+  reschedule: { can_request: true, request: null },
+}
+
+async function openRescheduleForm() {
+  apiState.track.mockResolvedValue(approvedForReschedule)
+  renderPage()
+  fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Request Reschedule' }))
+}
+
+function fillSchedule({
+  start,
+  end,
+  reason = 'Conflict with another event.',
+}: {
+  start: string
+  end: string
+  reason?: string
+}) {
+  fireEvent.change(screen.getByLabelText('Requested new date'), {
+    target: { value: '2026-12-15' },
+  })
+  fireEvent.change(screen.getByLabelText('Requested start time'), {
+    target: { value: start },
+  })
+  fireEvent.change(screen.getByLabelText('Requested end time'), {
+    target: { value: end },
+  })
+  fireEvent.change(screen.getByLabelText('Reason for the request'), {
+    target: { value: reason },
+  })
+}
 
 describe('ReservationTrackPage', () => {
   it('tracks a direct reservation ID without asking for representative email', async () => {
@@ -224,6 +270,131 @@ describe('ReservationTrackPage', () => {
       ),
     )
     expect(await screen.findByText('Pending Admin Review')).toBeTruthy()
+  })
+
+  it('blocks the initial OTP request when the end time is not after the start time', async () => {
+    await openRescheduleForm()
+
+    fillSchedule({ start: '13:00', end: '13:00' })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+    expect(
+      await screen.findByText('The end time must be after the start time.'),
+    ).toBeTruthy()
+
+    fillSchedule({ start: '13:00', end: '12:00' })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+    expect(
+      await screen.findByText('The end time must be after the start time.'),
+    ).toBeTruthy()
+
+    expect(apiState.requestRescheduleOTP).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Requested end time')).toHaveValue('12:00')
+    expect(screen.getByLabelText('Reason for the request')).toHaveValue(
+      'Conflict with another event.',
+    )
+  })
+
+  it('shows a backend field error beside its field without duplicating it as an alert', async () => {
+    await openRescheduleForm()
+    apiState.requestRescheduleOTP.mockRejectedValue(
+      new ApiError(400, 'Request failed (400)', {
+        requested_end_time: ['The end time must be after the start time.'],
+      }),
+    )
+
+    fillSchedule({ start: '13:00', end: '15:00' })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+
+    expect(
+      await screen.findByText('The end time must be after the start time.'),
+    ).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByLabelText('Requested start time')).toHaveValue('13:00')
+    expect(screen.getByLabelText('Requested end time')).toHaveValue('15:00')
+  })
+
+  it('shows a non-field backend validation error as a form-level alert', async () => {
+    await openRescheduleForm()
+    apiState.requestRescheduleOTP.mockRejectedValue(
+      new ApiError(400, 'Request failed (400)', {
+        detail: 'A reschedule request for this reservation is already awaiting review.',
+      }),
+    )
+
+    fillSchedule({ start: '13:00', end: '15:00' })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'A reschedule request for this reservation is already awaiting review.',
+    )
+  })
+
+  it('resends the OTP with the latest values and blocks an invalid range', async () => {
+    apiState.requestRescheduleOTP.mockResolvedValue({
+      verification_session: 'session-token',
+      expires_at: '2026-11-21T10:05:00+08:00',
+      resend_available_at: '2026-11-21T10:01:00+08:00',
+      email_hint: 'r***@example.com',
+    })
+    await openRescheduleForm()
+
+    fillSchedule({ start: '13:00', end: '15:00' })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+    expect(await screen.findByLabelText('Email verification code')).toBeTruthy()
+    expect(apiState.requestRescheduleOTP).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('Requested end time'), {
+      target: { value: '12:00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send a new code' }))
+    expect(
+      await screen.findByText('The end time must be after the start time.'),
+    ).toBeTruthy()
+    expect(apiState.requestRescheduleOTP).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('Requested end time'), {
+      target: { value: '16:00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send a new code' }))
+    await waitFor(() =>
+      expect(apiState.requestRescheduleOTP).toHaveBeenLastCalledWith(
+        'GSO-2026-00024',
+        {
+          requested_date: '2026-12-15',
+          requested_start_time: '13:00',
+          requested_end_time: '16:00',
+          reason: 'Conflict with another event.',
+        },
+      ),
+    )
+  })
+
+  it('shows a backend field error on resend without losing the OTP session', async () => {
+    apiState.requestRescheduleOTP.mockResolvedValue({
+      verification_session: 'session-token',
+      expires_at: '2026-11-21T10:05:00+08:00',
+      resend_available_at: '2026-11-21T10:01:00+08:00',
+      email_hint: 'r***@example.com',
+    })
+    await openRescheduleForm()
+
+    fillSchedule({ start: '13:00', end: '15:00' })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit request and send code' }))
+    expect(await screen.findByLabelText('Email verification code')).toBeTruthy()
+
+    apiState.requestRescheduleOTP.mockRejectedValue(
+      new ApiError(400, 'Request failed (400)', {
+        requested_end_time: ['The end time must be after the start time.'],
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send a new code' }))
+
+    expect(
+      await screen.findByText('The end time must be after the start time.'),
+    ).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByLabelText('Email verification code')).toBeTruthy()
+    expect(apiState.requestRescheduleOTP).toHaveBeenCalledTimes(2)
   })
 
   it('uploads a selected image and refreshes the displayed status', async () => {

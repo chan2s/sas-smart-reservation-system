@@ -4,11 +4,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, CalendarDays, Check, CircleAlert, MapPin, Search, ShieldCheck, Upload } from 'lucide-react'
 import { format } from 'date-fns'
 import {
+  apiErrorMessage,
   endpoints,
   type PublicRescheduleRequest,
   type PublicReservationTracking,
   type RescheduleRequestPayload,
 } from '@/lib/api'
+import { readFieldErrors } from '@/lib/formErrors'
 import type { ReservationStatus } from '@/lib/types'
 import { StatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -18,6 +20,33 @@ import { Spinner } from '@/components/ui/Misc'
 import { BrandMark } from '@/components/auth/AuthPanel'
 import { ApprovalLetterCapture } from '@/components/reservations/ApprovalLetterCapture'
 import { draftForPublicReservationEdit, saveDraft } from '@/lib/reservationDraft'
+
+/** Reschedule fields rendered inline; any other DRF error key becomes form-level. */
+const RESCHEDULE_ERROR_FIELDS = new Set([
+  'requested_date',
+  'requested_start_time',
+  'requested_end_time',
+  'reason',
+])
+
+/**
+ * Mirrors the server's end-after-start rule so an invalid range never sends
+ * another OTP request. The server remains authoritative for its own messages.
+ */
+const RESCHEDULE_TIME_ERROR = 'The end time must be after the start time.'
+
+function validateRescheduleSchedule(
+  payload: RescheduleRequestPayload,
+): Record<string, string> {
+  if (
+    payload.requested_start_time &&
+    payload.requested_end_time &&
+    payload.requested_end_time <= payload.requested_start_time
+  ) {
+    return { requested_end_time: RESCHEDULE_TIME_ERROR }
+  }
+  return {}
+}
 
 /**
  * Public status view for a guest reservation request.
@@ -41,10 +70,12 @@ export function ReservationTrackPage() {
   const [startingEdit, setStartingEdit] = useState(false)
   const [editError, setEditError] = useState('')
   const [rescheduleOpen, setRescheduleOpen] = useState(false)
-  const [reschedulePayload, setReschedulePayload] = useState<RescheduleRequestPayload | null>(null)
   const [rescheduleSession, setRescheduleSession] = useState('')
   const [rescheduleOtp, setRescheduleOtp] = useState('')
   const [rescheduleError, setRescheduleError] = useState('')
+  const [rescheduleFieldErrors, setRescheduleFieldErrors] = useState<
+    Record<string, string>
+  >({})
   const [rescheduleNotice, setRescheduleNotice] = useState('')
   const [sendingReschedule, setSendingReschedule] = useState(false)
   const [verifyingReschedule, setVerifyingReschedule] = useState(false)
@@ -103,21 +134,29 @@ export function ReservationTrackPage() {
   ) {
     setSendingReschedule(true)
     setRescheduleError('')
+    setRescheduleFieldErrors({})
     setRescheduleNotice('')
     try {
       const response = await endpoints.requestPublicRescheduleOTP(
         reservation.reservation_id,
         payload,
       )
-      setReschedulePayload(payload)
       setRescheduleSession(response.verification_session ?? '')
       setRescheduleOtp('')
       setRescheduleNotice(
         `A verification code was sent to the email address on file${response.email_hint ? ` (${response.email_hint})` : ''}. It expires in 5 minutes.`,
       )
     } catch (error) {
+      const { fields, general } = readFieldErrors(error, RESCHEDULE_ERROR_FIELDS)
+      setRescheduleFieldErrors(fields)
       setRescheduleError(
-        error instanceof Error ? error.message : 'The reschedule request could not be submitted.',
+        general ||
+          (Object.keys(fields).length > 0
+            ? ''
+            : apiErrorMessage(
+                error,
+                'The reschedule request could not be submitted.',
+              )),
       )
     } finally {
       setSendingReschedule(false)
@@ -136,7 +175,6 @@ export function ReservationTrackPage() {
       )
       queryClient.setQueryData(queryKey, result)
       setRescheduleSession('')
-      setReschedulePayload(null)
       setRescheduleOtp('')
       setRescheduleOpen(false)
       setRescheduleNotice(
@@ -265,9 +303,9 @@ export function ReservationTrackPage() {
             editing={startingEdit}
             onRequestReschedule={() => {
               setRescheduleError('')
+              setRescheduleFieldErrors({})
               setRescheduleNotice('')
               setRescheduleSession('')
-              setReschedulePayload(null)
               setRescheduleOpen(true)
             }}
           />
@@ -288,20 +326,24 @@ export function ReservationTrackPage() {
             otp={rescheduleOtp}
             onOtpChange={setRescheduleOtp}
             error={rescheduleError}
+            fieldErrors={rescheduleFieldErrors}
             sending={sendingReschedule}
             verifying={verifyingReschedule}
             onSubmit={(payload) => void submitRescheduleRequest(trackQuery.data!, payload)}
             onVerify={() => void verifyRescheduleOtp(trackQuery.data!)}
-            onResend={() => {
-              if (reschedulePayload) {
-                void submitRescheduleRequest(trackQuery.data!, reschedulePayload)
-              }
-            }}
+            onResend={(payload) =>
+              void submitRescheduleRequest(trackQuery.data!, payload)
+            }
+            onClearFieldError={(field) =>
+              setRescheduleFieldErrors((current) =>
+                current[field] ? { ...current, [field]: '' } : current,
+              )
+            }
             onCancel={() => {
               setRescheduleOpen(false)
               setRescheduleError('')
+              setRescheduleFieldErrors({})
               setRescheduleSession('')
-              setReschedulePayload(null)
             }}
           />
         )}
@@ -561,11 +603,13 @@ function RescheduleForm({
   otp,
   onOtpChange,
   error,
+  fieldErrors,
   sending,
   verifying,
   onSubmit,
   onVerify,
   onResend,
+  onClearFieldError,
   onCancel,
 }: {
   reservation: PublicReservationTracking
@@ -573,27 +617,63 @@ function RescheduleForm({
   otp: string
   onOtpChange: (value: string) => void
   error: string
+  fieldErrors: Record<string, string>
   sending: boolean
   verifying: boolean
   onSubmit: (payload: RescheduleRequestPayload) => void
   onVerify: () => void
-  onResend: () => void
+  onResend: (payload: RescheduleRequestPayload) => void
+  onClearFieldError: (field: string) => void
   onCancel: () => void
 }) {
   const [date, setDate] = useState(reservation.date)
   const [start, setStart] = useState(reservation.start_time.slice(0, 5))
   const [end, setEnd] = useState(reservation.end_time.slice(0, 5))
   const [reason, setReason] = useState('')
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({})
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    onSubmit({
+  function currentPayload(): RescheduleRequestPayload {
+    return {
       requested_date: date,
       requested_start_time: start,
       requested_end_time: end,
       reason: reason.trim(),
-    })
+    }
   }
+
+  /** Stops the request when the range is invalid and shows the message inline. */
+  function scheduleIsInvalid(payload: RescheduleRequestPayload): boolean {
+    const errors = validateRescheduleSchedule(payload)
+    setLocalErrors(errors)
+    return Object.keys(errors).length > 0
+  }
+
+  function change(field: string, setter: (value: string) => void, value: string) {
+    setter(value)
+    setLocalErrors((current) =>
+      current[field] ? { ...current, [field]: '' } : current,
+    )
+    onClearFieldError(field)
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (sessionActive) {
+      if (otp.length === 6) onVerify()
+      return
+    }
+    const payload = currentPayload()
+    if (scheduleIsInvalid(payload)) return
+    onSubmit(payload)
+  }
+
+  function resend() {
+    const payload = currentPayload()
+    if (scheduleIsInvalid(payload)) return
+    onResend(payload)
+  }
+
+  const errorFor = (field: string) => localErrors[field] || fieldErrors[field]
 
   return (
     <Card className="mt-5">
@@ -611,115 +691,152 @@ function RescheduleForm({
         </p>
       </div>
 
-      {!sessionActive ? (
-        <form className="mt-5" onSubmit={submit}>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Requested new date" htmlFor="reschedule-date">
-              <Input
-                id="reschedule-date"
-                type="date"
-                value={date}
-                min={new Date().toISOString().slice(0, 10)}
-                onChange={(event) => setDate(event.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Requested start time" htmlFor="reschedule-start">
-              <Input
-                id="reschedule-start"
-                type="time"
-                value={start}
-                min="08:00"
-                onChange={(event) => setStart(event.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Requested end time" htmlFor="reschedule-end">
-              <Input
-                id="reschedule-end"
-                type="time"
-                value={end}
-                onChange={(event) => setEnd(event.target.value)}
-                required
-              />
-            </Field>
-          </div>
-          <div className="mt-4">
-            <Field label="Reason for the request" htmlFor="reschedule-reason">
-              <Textarea
-                id="reschedule-reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                rows={4}
-                maxLength={2000}
-                placeholder="Explain why you need a different date or time."
-                required
-              />
-            </Field>
-          </div>
-          {error && (
-            <p role="alert" className="mt-3 text-sm text-status-rejected">
-              {error}
-            </p>
-          )}
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-            <Button type="submit" loading={sending} disabled={!reason.trim()}>
-              Submit request and send code
-            </Button>
-            <Button type="button" variant="ghost" onClick={onCancel} disabled={sending}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <form
-          className="mt-5"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onVerify()
-          }}
-        >
-          <Field label="Email verification code" htmlFor="reschedule-otp">
+      <form className="mt-5" onSubmit={submit}>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field
+            label="Requested new date"
+            htmlFor="reschedule-date"
+            error={errorFor('requested_date')}
+          >
             <Input
-              id="reschedule-otp"
-              value={otp}
-              onChange={(event) => onOtpChange(event.target.value.replace(/\D/g, '').slice(0, 6))}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="000000"
-              maxLength={6}
+              id="reschedule-date"
+              type="date"
+              value={date}
+              min={new Date().toISOString().slice(0, 10)}
+              onChange={(event) =>
+                change('requested_date', setDate, event.target.value)
+              }
               required
-              className="font-mono tracking-[0.3em]"
+              aria-invalid={errorFor('requested_date') ? true : undefined}
+              aria-describedby={
+                errorFor('requested_date') ? 'reschedule-date-error' : undefined
+              }
             />
           </Field>
-          <p className="mt-2 text-xs leading-5 text-body">
-            Enter the six-digit code sent to the email address on file. For security, the
-            address and code are validated by the server and the code cannot be reused.
-          </p>
-          {error && (
-            <p role="alert" className="mt-3 text-sm text-status-rejected">
-              {error}
+          <Field
+            label="Requested start time"
+            htmlFor="reschedule-start"
+            error={errorFor('requested_start_time')}
+          >
+            <Input
+              id="reschedule-start"
+              type="time"
+              value={start}
+              min="08:00"
+              onChange={(event) =>
+                change('requested_start_time', setStart, event.target.value)
+              }
+              required
+              aria-invalid={errorFor('requested_start_time') ? true : undefined}
+              aria-describedby={
+                errorFor('requested_start_time')
+                  ? 'reschedule-start-error'
+                  : undefined
+              }
+            />
+          </Field>
+          <Field
+            label="Requested end time"
+            htmlFor="reschedule-end"
+            error={errorFor('requested_end_time')}
+          >
+            <Input
+              id="reschedule-end"
+              type="time"
+              value={end}
+              onChange={(event) =>
+                change('requested_end_time', setEnd, event.target.value)
+              }
+              required
+              aria-invalid={errorFor('requested_end_time') ? true : undefined}
+              aria-describedby={
+                errorFor('requested_end_time') ? 'reschedule-end-error' : undefined
+              }
+            />
+          </Field>
+        </div>
+        <div className="mt-4">
+          <Field
+            label="Reason for the request"
+            htmlFor="reschedule-reason"
+            error={errorFor('reason')}
+          >
+            <Textarea
+              id="reschedule-reason"
+              value={reason}
+              onChange={(event) =>
+                change('reason', setReason, event.target.value)
+              }
+              rows={4}
+              maxLength={2000}
+              placeholder="Explain why you need a different date or time."
+              required
+              aria-invalid={errorFor('reason') ? true : undefined}
+              aria-describedby={
+                errorFor('reason') ? 'reschedule-reason-error' : undefined
+              }
+            />
+          </Field>
+        </div>
+        {sessionActive && (
+          <div className="mt-4">
+            <Field label="Email verification code" htmlFor="reschedule-otp">
+              <Input
+                id="reschedule-otp"
+                value={otp}
+                onChange={(event) =>
+                  onOtpChange(event.target.value.replace(/\D/g, '').slice(0, 6))
+                }
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                maxLength={6}
+                required
+                className="font-mono tracking-[0.3em]"
+              />
+            </Field>
+            <p className="mt-2 text-xs leading-5 text-body">
+              Enter the six-digit code sent to the email address on file. For security, the
+              address and code are validated by the server and the code cannot be reused.
             </p>
-          )}
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          </div>
+        )}
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-status-rejected">
+            {error}
+          </p>
+        )}
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          {sessionActive ? (
             <Button type="submit" loading={verifying} disabled={otp.length !== 6}>
               Verify and submit request
             </Button>
+          ) : (
+            <Button type="submit" loading={sending} disabled={!reason.trim()}>
+              Submit request and send code
+            </Button>
+          )}
+          {sessionActive && (
             <Button
               type="button"
               variant="ghost"
               loading={sending}
-              disabled={sending}
-              onClick={onResend}
+              disabled={sending || verifying || !reason.trim()}
+              onClick={resend}
             >
               Send a new code
             </Button>
-            <Button type="button" variant="ghost" onClick={onCancel}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            disabled={sending || verifying}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
     </Card>
   )
 }

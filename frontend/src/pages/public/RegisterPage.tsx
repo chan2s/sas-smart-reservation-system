@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Check, Eye, EyeOff, ShieldCheck } from 'lucide-react'
-import { ApiError, api, apiErrorMessage } from '@/lib/api'
+import { api, apiErrorMessage } from '@/lib/api'
+import { readFieldErrors } from '@/lib/formErrors'
 import { useInternalOrganizations } from '@/hooks/queries'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Form'
@@ -75,38 +76,6 @@ const RENDERED_ERROR_FIELDS = new Set([
 /** Field key → rendered input id, when the two differ. */
 const ERROR_FIELD_IDS: Record<string, string> = {
   organization_id: 'internal_organization',
-}
-
-/** Splits a DRF 400 body into per-field messages and everything else. */
-function readFieldErrors(error: unknown): {
-  fields: Record<string, string>
-  general: string
-} {
-  if (
-    !(error instanceof ApiError) ||
-    !error.data ||
-    typeof error.data !== 'object' ||
-    Array.isArray(error.data)
-  ) {
-    return { fields: {}, general: '' }
-  }
-
-  const fields: Record<string, string> = {}
-  const general: string[] = []
-
-  for (const [key, value] of Object.entries(error.data as Record<string, unknown>)) {
-    const message =
-      typeof value === 'string'
-        ? value.trim()
-        : Array.isArray(value)
-          ? value.filter((item): item is string => typeof item === 'string').join(' ')
-          : ''
-    if (!message) continue
-    if (RENDERED_ERROR_FIELDS.has(key)) fields[key] = message
-    else general.push(message)
-  }
-
-  return { fields, general: general.join(' ') }
 }
 
 /** Length and “entirely numeric” mirror the configured Django validators. */
@@ -307,7 +276,7 @@ export function RegisterPage() {
       const registeredCode = isExternal ? 'external' : 'success'
       navigate(`/login?registered=${registeredCode}`, { replace: true })
     } catch (err) {
-      const { fields, general } = readFieldErrors(err)
+      const { fields, general } = readFieldErrors(err, RENDERED_ERROR_FIELDS)
       setFieldErrors(fields)
       setError(
         general ||

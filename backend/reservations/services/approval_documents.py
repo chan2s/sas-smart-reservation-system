@@ -597,12 +597,19 @@ def _convert_pdf(docx_path, output_dir):
     return pdf_path
 
 
-def generate_approval_documents(reservation, *, force=False):
-    """Generate and persist the DOCX/PDF once, retaining the reservation on errors."""
+def generate_approval_documents(reservation, *, force=False, regenerate=False):
+    """Generate and persist the DOCX/PDF once, retaining the reservation on errors.
+
+    A generated letter is a record of the schedule it was issued for, so it is
+    never rewritten just because template settings changed later. ``regenerate``
+    is reserved for a schedule change (an approved reschedule), where the
+    previous letter is replaced by one reflecting the new date and time.
+    """
     if reservation.requester_type != Reservation.RequesterType.EXTERNAL:
         return reservation
     if (
-        reservation.generated_approval_status == Reservation.GeneratedApprovalStatus.GENERATED
+        not regenerate
+        and reservation.generated_approval_status == Reservation.GeneratedApprovalStatus.GENERATED
         and reservation.generated_approval_pdf
         and reservation.generated_approval_docx
     ):
