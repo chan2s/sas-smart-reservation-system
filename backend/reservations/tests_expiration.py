@@ -87,7 +87,7 @@ class ExpirationTestCase(TestCase):
             end_time="11:00",
             event_name="Rebooked Event",
             event_type="SEMINAR",
-            organization="SAS",
+            organization="GSO",
             purpose="Replacement schedule",
             expected_participants=20,
             items=[],
@@ -294,7 +294,7 @@ class ExpirationTestCase(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
         self.assertNotEqual(body["reservation_id"], original.reservation_id)
-        self.assertTrue(body["reservation_id"].startswith("SAS-"))
+        self.assertTrue(body["reservation_id"].startswith("GSO-"))
         # The new reservation still needs normal approval — never auto-approved
         # just because an administrator created it from an expired one.
         self.assertEqual(body["status"], "PENDING")

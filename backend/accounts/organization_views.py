@@ -18,7 +18,7 @@ from rest_framework.response import Response
 
 from accounts.models import AuditLog, Organization, User
 from accounts.organization_registry import duplicate_groups
-from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsGsoStaff
 from accounts.serializers import (
     AffiliationUpdateSerializer,
     OrganizationAdminUpdateSerializer,
@@ -88,7 +88,7 @@ class MyAffiliationView(generics.GenericAPIView):
 
         # Once attached to an EXTERNAL organization, a user cannot
         # re-affiliate themselves out of the external restrictions (that would
-        # be a way to bypass the Pending/Rejected/Suspended block). Only SAS
+        # be a way to bypass the Pending/Rejected/Suspended block). Only GSO
         # staff may move a user off an external organization. An internal
         # organization link is a normal managed selection and may be changed.
         if (
@@ -101,7 +101,7 @@ class MyAffiliationView(generics.GenericAPIView):
                 {
                     "detail": (
                         "Your account is linked to an external organization. "
-                        "Contact the SAS Office to change your affiliation."
+                        "Contact the GSO Office to change your affiliation."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -117,7 +117,7 @@ class MyAffiliationView(generics.GenericAPIView):
                     return Response(
                         {
                             "detail": (
-                                "Your organization is suspended. Contact the SAS "
+                                "Your organization is suspended. Contact the GSO "
                                 "Office to reactivate it."
                             )
                         },
@@ -242,7 +242,7 @@ class OrganizationListView(generics.ListAPIView):
     type), ``?search=`` (code / name / contact).
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+    permission_classes = [permissions.IsAuthenticated, IsGsoStaff]
     serializer_class = OrganizationListSerializer
 
     def get_queryset(self):
@@ -293,7 +293,7 @@ class OrganizationDetailView(generics.RetrieveAPIView):
     another organization's users.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+    permission_classes = [permissions.IsAuthenticated, IsGsoStaff]
     serializer_class = OrganizationSerializer
     queryset = Organization.objects.select_related(
         "created_by", "reviewed_by"
@@ -310,7 +310,7 @@ class OrganizationUpdateView(generics.UpdateAPIView):
 
     permission_classes = [
         permissions.IsAuthenticated,
-        IsSasStaff,
+        IsGsoStaff,
         IsAccountApprovedOrReadOnly,
     ]
     serializer_class = OrganizationAdminUpdateSerializer
@@ -324,7 +324,7 @@ class OrganizationUpdateView(generics.UpdateAPIView):
             object_type="organization",
             object_id=organization.pk,
             object_repr=str(organization),
-            detail="Organization details edited by SAS staff",
+            detail="Organization details edited by GSO staff",
             request=self.request,
         )
 
@@ -336,7 +336,7 @@ class OrganizationReservationHistoryView(generics.ListAPIView):
     reservation list uses, so the history can link straight to the record.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+    permission_classes = [permissions.IsAuthenticated, IsGsoStaff]
 
     def get_serializer_class(self):
         from reservations.serializers import ReservationListSerializer
@@ -363,7 +363,7 @@ class OrganizationDuplicateGroupsView(generics.GenericAPIView):
     move historical reservations between organizations.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+    permission_classes = [permissions.IsAuthenticated, IsGsoStaff]
 
     def get(self, request):
         groups = []
@@ -391,7 +391,7 @@ class OrganizationVerifyView(generics.GenericAPIView):
 
     permission_classes = [
         permissions.IsAuthenticated,
-        IsSasStaff,
+        IsGsoStaff,
         IsAccountApprovedOrReadOnly,
     ]
     serializer_class = OrganizationVerificationSerializer

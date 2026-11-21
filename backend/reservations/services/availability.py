@@ -257,7 +257,7 @@ def check_availability(facility_id, target_date, start, end, items=None, exclude
                     "type": "facility",
                     "message": (
                         f"The {facility.name} is not available for reservation. "
-                        "It may have been disabled or archived by the SAS Office."
+                        "It may have been disabled or archived by the GSO Office."
                     ),
                 }
             )

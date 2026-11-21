@@ -121,8 +121,8 @@ class ApprovalLetterManagementWorkflowTests(TestCase):
                 "credentials": "M.P.A.",
                 "designation": "Campus Director",
                 "approval_label": "Approved by:",
-                "sas_staff_display_name": "SAS Administrator",
-                "sas_staff_designation": "UED Staff / SAS Staff",
+                "sas_staff_display_name": "GSO Administrator",
+                "sas_staff_designation": "UED Staff / GSO Staff",
             },
         )
         ApprovalLetterTemplateVersion.objects.all().delete()

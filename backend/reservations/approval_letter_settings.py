@@ -211,9 +211,9 @@ class ApprovalLetterSettingsSerializer(serializers.ModelSerializer):
             "sas_staff_designation", getattr(self.instance, "sas_staff_designation", "")
         )
         if not staff_name.strip():
-            errors["sas_staff_display_name"] = "Enter the SAS/UED staff display name."
+            errors["sas_staff_display_name"] = "Enter the GSO/UED staff display name."
         if not staff_designation.strip():
-            errors["sas_staff_designation"] = "Enter the SAS/UED staff designation."
+            errors["sas_staff_designation"] = "Enter the GSO/UED staff designation."
 
         title = attrs.get("letter_title", getattr(self.instance, "letter_title", ""))
         message = attrs.get("approval_message", getattr(self.instance, "approval_message", ""))
@@ -417,7 +417,7 @@ def preview_approval_letter(request):
         **ApprovalLetterSettingsSerializer(instance).data,
         **serializer.validated_data,
     })
-    with tempfile.TemporaryDirectory(prefix="sas-approval-preview-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="gso-approval-preview-") as temp_dir:
         directory = Path(temp_dir)
         docx_path = directory / f"{reservation.reservation_id}-preview.docx"
         _build_docx(reservation, docx_path, letter_settings=draft)

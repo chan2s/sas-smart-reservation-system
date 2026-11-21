@@ -93,7 +93,7 @@ import { ReservationDetailPage } from './ReservationDetailPage'
 function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDetail {
   return {
     id: 7,
-    reservation_id: 'SAS-2026-00007',
+    reservation_id: 'GSO-2026-00007',
     event_name: 'Science Fair',
     event_type: 'ACADEMIC',
     event_type_label: 'Academic',
@@ -232,7 +232,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('ReservationDetailPage direct editing access', () => {
-  it('offers the no-OTP edit form to authorized SAS staff for eligible reservations', () => {
+  it('offers the no-OTP edit form to authorized GSO staff for eligible reservations', () => {
     state.reservation = reservation({ status: 'PENDING', can_edit: true })
     renderPage()
     expect(screen.getByRole('button', { name: 'Edit reservation' })).toBeTruthy()
@@ -332,7 +332,7 @@ describe('ReservationDetailPage revision request', () => {
     expect(email.readOnly).toBe(true)
 
     const subject = within(dialog).getByLabelText('Email subject') as HTMLInputElement
-    expect(subject.value).toBe('Action Required: Reservation Revision – SAS-2026-00007')
+    expect(subject.value).toBe('Action Required: Reservation Revision – GSO-2026-00007')
     expect(within(dialog).getByLabelText('Message to the requester')).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeTruthy()
     expect(

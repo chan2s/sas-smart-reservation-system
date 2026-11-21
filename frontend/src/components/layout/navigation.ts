@@ -45,7 +45,7 @@ export const staffPrimaryNavigation: NavigationItem[] = [
 ]
 
 /**
- * Primary navigation for a signed-in role. Only administrators and SAS staff
+ * Primary navigation for a signed-in role. Only administrators and GSO staff
  * receive the Analytics entry — requesters never see it.
  */
 export function primaryNavigationFor(isStaff: boolean): NavigationItem[] {
@@ -67,7 +67,7 @@ export const staffNavigation: NavigationItem[] = [
 
 /**
  * Administrator-only surfaces. Rendered only for ``role === 'ADMIN'`` accounts
- * (the same rule the backend APIs enforce); SAS staff never see them.
+ * (the same rule the backend APIs enforce); GSO staff never see them.
  */
 export const adminNavigation: NavigationItem[] = [
   { to: '/admin/approval-letter', label: 'Approval Letter Management', icon: FilePenLine },

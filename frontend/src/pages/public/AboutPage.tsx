@@ -39,7 +39,7 @@ const CAPABILITIES = [
 ]
 
 const PROJECT_FACTS = [
-  { label: 'Project', value: 'SAS RESERVE', icon: <Sparkles className="size-4" aria-hidden /> },
+  { label: 'Project', value: 'GSO RESERVE', icon: <Sparkles className="size-4" aria-hidden /> },
   { label: 'Group', value: 'Group 10', icon: <Layers className="size-4" aria-hidden /> },
   {
     label: 'Institution',
@@ -78,7 +78,7 @@ export function AboutPage() {
       />
 
       {/* ===================================================================
-          Hero — the identity statement of SAS RESERVE
+          Hero — the identity statement of GSO RESERVE
           =================================================================== */}
       <section
         className="relative overflow-hidden rounded-b-[2rem] bg-navy pb-24 pt-36 sm:rounded-b-[3rem] sm:pb-32 sm:pt-44"
@@ -115,7 +115,7 @@ export function AboutPage() {
                 id="about-title"
                 className="mt-6 text-[clamp(2.75rem,6vw,4.75rem)] font-extrabold leading-[0.98] tracking-[-0.035em] text-white"
               >
-                SAS RESERVE
+                GSO RESERVE
               </h1>
             </Reveal>
             <Reveal delay={0.16}>
@@ -125,7 +125,7 @@ export function AboutPage() {
             </Reveal>
             <Reveal delay={0.24}>
               <p className="mt-6 max-w-2xl text-base leading-relaxed text-white/65">
-                SAS Reserve is a web-based platform developed to streamline and modernize the
+                GSO Reserve is a web-based platform developed to streamline and modernize the
                 facility and resource reservation process at Negros Oriental State University –
                 Bayawan-Sta. Catalina Campus (NORSU-BSC).
               </p>
@@ -198,7 +198,7 @@ export function AboutPage() {
             </Reveal>
             <Reveal delay={0.14}>
               <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-body">
-                SAS Reserve is developed as an academic capstone project by Group 10. The project
+                GSO Reserve is developed as an academic capstone project by Group 10. The project
                 aims to improve reservation accessibility, operational efficiency, and resource
                 management at NORSU-BSC through a centralized web-based reservation platform.
               </p>
@@ -262,14 +262,14 @@ export function AboutPage() {
                     Developer · Group 10 Capstone Project
                   </p>
                   <p className="mt-5 max-w-md text-sm leading-relaxed text-body">
-                    Designed and built SAS Reserve as the Group 10 capstone project for
+                    Designed and built GSO Reserve as the Group 10 capstone project for
                     NORSU-BSC.
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 border-t border-line bg-soft px-8 py-4 text-xs text-muted sm:px-10">
                 <Package className="size-3.5" aria-hidden />
-                Project: SAS RESERVE
+                Project: GSO RESERVE
                 <span className="text-faint" aria-hidden>
                   ·
                 </span>
@@ -281,7 +281,7 @@ export function AboutPage() {
       </section>
 
       {/* ===================================================================
-          Return to the landing page / start using SAS RESERVE
+          Return to the landing page / start using GSO RESERVE
           =================================================================== */}
       <section className="relative overflow-hidden bg-navy py-24 sm:py-28">
         <div
@@ -295,7 +295,7 @@ export function AboutPage() {
         <div className="relative z-10 mx-auto max-w-3xl px-5 text-center">
           <Reveal>
             <h2 className="text-[clamp(2rem,4.5vw,3rem)] font-bold leading-[1.08] tracking-tight text-white">
-              Explore SAS RESERVE
+              Explore GSO RESERVE
             </h2>
             <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-white/70">
               Return to the landing page to browse facilities and equipment, or start a
@@ -323,11 +323,11 @@ export function AboutPage() {
 
       <footer className="border-t border-line bg-white" aria-label="Site footer">
         <div className="mx-auto flex max-w-[var(--container-max-wide)] flex-col gap-4 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <Link to="/" aria-label="SAS Reserve home">
+          <Link to="/" aria-label="GSO Reserve home">
             <BrandMark />
           </Link>
           <p className="text-xs text-muted">
-            &copy; {new Date().getFullYear()} SAS RESERVE · Group 10 Capstone Project ·
+            &copy; {new Date().getFullYear()} GSO RESERVE · Group 10 Capstone Project ·
             NORSU-BSC
           </p>
         </div>

@@ -236,7 +236,7 @@ The implementation prevents misuse through design:
 ### API Level
 
 - Not in any public response serializers
-- Available only to staff (IsSasStaff permission)
+- Available only to staff (IsGsoStaff permission)
 - Can be added to staff reservation detail view if needed
 
 ### Admin Interface

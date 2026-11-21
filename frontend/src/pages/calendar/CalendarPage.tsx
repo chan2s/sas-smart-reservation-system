@@ -146,7 +146,7 @@ export function CalendarPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="SAS Calendar"
+        eyebrow="GSO Calendar"
         title="Calendar"
         description="View facility reservations at a glance. Click any date with bookings to see details."
       />
@@ -863,7 +863,7 @@ function ReservationCard({ event, isAdmin }: { event: CalendarEvent; isAdmin: bo
         {event.reservation_id}
       </div>
 
-      {/* Admin-only extra info — the backend only sends these fields to SAS staff */}
+      {/* Admin-only extra info — the backend only sends these fields to GSO staff */}
       {isAdmin && event.is_sas_staff && (
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 border-t border-line/60 pt-2.5 text-xs text-neutral-500">
           {event.requester_type && event.requester_type !== 'CAMPUS' && (

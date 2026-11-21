@@ -245,7 +245,7 @@ def start_scheduler() -> bool:
         thread = threading.Thread(
             target=run_loop,
             args=(owner,),
-            name="sas-reminder-scheduler",
+            name="gso-reminder-scheduler",
             daemon=True,
         )
         thread.start()

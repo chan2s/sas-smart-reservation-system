@@ -39,7 +39,7 @@ FACILITIES = [
         "capacity": 500,
         "location": "Student Center, Ground Floor",
         "rules": [
-            "Outside catering requires prior coordination with SAS",
+            "Outside catering requires prior coordination with GSO",
             "Tables and chairs must be rearranged back to default layout",
             "Waste segregation is strictly enforced",
         ],
@@ -57,7 +57,7 @@ EQUIPMENT_CATEGORIES = [
 ]
 
 class Command(BaseCommand):
-    help = "Create or update the default SAS RESERVE production facilities."
+    help = "Create or update the default GSO RESERVE production facilities."
 
     @transaction.atomic
     def handle(self, *args, **options):

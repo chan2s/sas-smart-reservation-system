@@ -900,7 +900,7 @@ export function ReservationWizardPage() {
             toResubmitPayload(draft, { items: itemsList }),
           )
           clearDraft(publicFlow)
-          toast('Reservation updated and returned to the SAS review queue.')
+          toast('Reservation updated and returned to the GSO review queue.')
           navigate(`/reservations/${reservation.id}`)
         } catch (error) {
           if (error instanceof ApiError && error.status === 409 && error.data) {
@@ -1019,7 +1019,7 @@ export function ReservationWizardPage() {
         await queryClient.invalidateQueries({ queryKey: ['reservations'] })
       }
       setEditOTPSuccess(true)
-      toast('Reservation updated and returned to the SAS review queue.')
+      toast('Reservation updated and returned to the GSO review queue.')
     } catch (error) {
       setEditOTPError(validationMessage(error, 'Unable to verify this code. Please try again.'))
     } finally {
@@ -1079,8 +1079,8 @@ export function ReservationWizardPage() {
             {approved
               ? 'Your reservation has been automatically approved and confirmed. A confirmation email will be sent to your registered email address.'
               : publicFlow
-                ? 'Your request has been submitted for SAS review. Keep your reservation ID for your records.'
-                : 'Your reservation has been submitted for approval. A confirmation email will be sent to your registered email address, and you will be notified once SAS reviews it.'}
+                ? 'Your request has been submitted for GSO review. Keep your reservation ID for your records.'
+                : 'Your reservation has been submitted for approval. A confirmation email will be sent to your registered email address, and you will be notified once GSO reviews it.'}
           </p>
           <div className="mt-4 flex justify-center">
             {approved ? (
@@ -1091,7 +1091,7 @@ export function ReservationWizardPage() {
           </div>
           {publicFlow && submitted.approval_document_status === 'AWAITING' && (
             <p role="status" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-pending/25 bg-status-pending-bg p-4 text-left text-sm leading-6 text-status-pending">
-              Your reservation is awaiting the required event approval letter. SAS cannot approve it until the document is submitted. You can upload it later from the{' '}
+              Your reservation is awaiting the required event approval letter. GSO cannot approve it until the document is submitted. You can upload it later from the{' '}
               <Link
                 to={`/track-reservation?reservation_id=${encodeURIComponent(submitted.reservation_id)}`}
                 className="font-semibold underline underline-offset-2"
@@ -1124,7 +1124,7 @@ export function ReservationWizardPage() {
           <div className="mt-7 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
             {!publicFlow && <Button onClick={() => navigate(`/reservations/${submitted.id}`)}>View reservation</Button>}
             <Button variant="outline" onClick={() => navigate(publicFlow ? '/' : '/reservations')}>
-              {publicFlow ? 'Return to SAS Reserve' : 'Back to reservations'}
+              {publicFlow ? 'Return to GSO Reserve' : 'Back to reservations'}
             </Button>
           </div>
         </Card>
@@ -1150,7 +1150,7 @@ export function ReservationWizardPage() {
               <CheckCircle2 className="mx-auto size-10 text-status-available" aria-hidden />
               <h1 className="mt-4 text-xl font-semibold text-ink">Reservation updated</h1>
               <p className="mt-2 text-sm text-body">
-                Your changes were verified and returned to the SAS review queue.
+                Your changes were verified and returned to the GSO review queue.
               </p>
             </div>
           ) : (
@@ -1245,8 +1245,8 @@ export function ReservationWizardPage() {
         <p className="mt-1.5 text-[15px] text-body">
           {isEditing
             ? isStaff && !publicEditReference
-              ? 'Adjust the details below and save. Changes are validated and returned to the SAS review queue.'
-              : 'Adjust the details below. We will email you a code and apply the changes after verification; the reservation remains subject to SAS review.'
+              ? 'Adjust the details below and save. Changes are validated and returned to the GSO review queue.'
+              : 'Adjust the details below. We will email you a code and apply the changes after verification; the reservation remains subject to GSO review.'
             : isRebook
               ? 'This creates a new reservation that still needs approval. Choose a new date and time — the expired reservation is kept unchanged for history.'
               : 'Reserve a facility and the resources you need for your event.'}
@@ -1510,7 +1510,7 @@ export function ReservationWizardPage() {
             >
               <WifiOff className="mt-0.5 size-4 shrink-0" aria-hidden />
               <span>
-                You&apos;re offline. Availability and submission require the SAS RESERVE
+                You&apos;re offline. Availability and submission require the GSO RESERVE
                 server — nothing you do here is sent, and no reservation is created.
               </span>
             </p>

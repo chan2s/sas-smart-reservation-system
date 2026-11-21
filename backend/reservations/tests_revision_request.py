@@ -96,7 +96,7 @@ class RevisionRequestEmailTests(TestCase):
         self.assertIn(self.reservation.reservation_id, email.body)
         self.assertIn("Research Symposium", email.body)
         self.assertIn("Please adjust the end time to 5:00 PM.", email.body)
-        self.assertIn("coordinate with the SAS Office", email.body)
+        self.assertIn("coordinate with the GSO Office", email.body)
 
         event = ReservationEvent.objects.get(
             reservation=self.reservation,

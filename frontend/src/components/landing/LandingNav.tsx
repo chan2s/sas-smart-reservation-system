@@ -70,7 +70,7 @@ export function LandingNav({
           <Link
             to="/"
             className="rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-faint"
-            aria-label="SAS Reserve — back to top"
+            aria-label="GSO Reserve — back to top"
           >
             <BrandMark onDark />
           </Link>

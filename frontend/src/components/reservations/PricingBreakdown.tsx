@@ -61,7 +61,7 @@ export function PricingBreakdown({
 
       <p className="flex items-start gap-1.5 border-t border-line/70 px-5 py-3 text-xs leading-relaxed text-muted">
         <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        <span>{pricing.note || (external ? 'The SAS Office confirms the final amount when the reservation is approved.' : 'Internal Reservation — No Payment Required.')}</span>
+        <span>{pricing.note || (external ? 'The GSO Office confirms the final amount when the reservation is approved.' : 'Internal Reservation — No Payment Required.')}</span>
       </p>
     </section>
   )

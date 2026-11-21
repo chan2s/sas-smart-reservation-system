@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 /** The one sentence every view-only surface repeats. */
 export const VIEW_ONLY_MESSAGE =
-  'Your account is pending administrator approval. You currently have view-only access to SAS RESERVE.'
+  'Your account is pending administrator approval. You currently have view-only access to GSO RESERVE.'
 
 /**
  * Global, non-blocking banner for a not-approved account.

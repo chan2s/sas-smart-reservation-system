@@ -1,4 +1,4 @@
-"""Generate the SAS RESERVE PWA icons.
+"""Generate the GSO RESERVE PWA icons.
 
 The project ships a generic purple favicon (a Vite/template placeholder), so the
 installable app icons are drawn here from the product's own brand tokens

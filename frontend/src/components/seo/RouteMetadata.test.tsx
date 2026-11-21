@@ -16,7 +16,7 @@ describe('RouteMetadataManager', () => {
     renderAt('/about')
 
     await waitFor(() => {
-      expect(document.title).toBe('About SAS RESERVE | NORSU-BSC')
+      expect(document.title).toBe('About GSO RESERVE | NORSU-BSC')
       expect(document.querySelector('meta[name="robots"]')).toHaveAttribute(
         'content',
         'index,follow',
@@ -27,7 +27,7 @@ describe('RouteMetadataManager', () => {
       )
       expect(document.querySelector('meta[property="og:title"]')).toHaveAttribute(
         'content',
-        'About SAS RESERVE | NORSU-BSC',
+        'About GSO RESERVE | NORSU-BSC',
       )
     })
   })
@@ -36,7 +36,7 @@ describe('RouteMetadataManager', () => {
     renderAt('/reservations/123')
 
     await waitFor(() => {
-      expect(document.title).toBe('Reservation Details | SAS RESERVE')
+      expect(document.title).toBe('Reservation Details | GSO RESERVE')
       expect(document.querySelector('meta[name="robots"]')).toHaveAttribute(
         'content',
         'noindex,nofollow',

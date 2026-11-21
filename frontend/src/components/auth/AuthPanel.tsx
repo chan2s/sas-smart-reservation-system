@@ -1,9 +1,8 @@
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import sasLogo from '@/assets/sas1.jpg'
 
-/** SAS RESERVE brand lockup (icon + wordmark + descriptor). */
+/** GSO RESERVE brand lockup (icon + wordmark + descriptor). */
 export function BrandMark({
   onDark = false,
   className,
@@ -19,7 +18,7 @@ export function BrandMark({
           !onDark && 'ring-1 ring-line',
         )}
       >
-        <img src={sasLogo} alt="SAS Reserve" className="h-full w-full object-contain" />
+        <img src="/pwa-192x192.png" alt="GSO Reserve app icon" className="h-full w-full object-contain" />
       </span>
       <span className="leading-tight select-none">
         <span
@@ -28,7 +27,7 @@ export function BrandMark({
             onDark ? 'text-white' : 'text-ink',
           )}
         >
-          SAS RESERVE
+          GSO RESERVE
         </span>
         <span
           className={cn(
@@ -73,7 +72,7 @@ const DEFAULT_BENEFITS = [
 export function AuthVisualPanel({
   headline,
   benefits = DEFAULT_BENEFITS,
-  footnote = 'Managed by the SAS Office',
+  footnote = 'Managed by the GSO Office',
 }: {
   headline: string
   benefits?: string[]
@@ -82,7 +81,7 @@ export function AuthVisualPanel({
   return (
     <aside
       className="relative hidden overflow-hidden bg-navy text-white lg:flex lg:flex-col lg:justify-between"
-      aria-label="SAS Reserve overview"
+      aria-label="GSO Reserve overview"
     >
       {/* Decorative washes + grid — kept subtle, aria-hidden */}
       <div

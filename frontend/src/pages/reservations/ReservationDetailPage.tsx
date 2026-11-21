@@ -371,7 +371,7 @@ export function ReservationDetailPage() {
     try {
       await api.downloadFile(
         endpoints.approvalDocument(current.id),
-        `SAS-RESERVE-APPROVAL-${current.reservation_id}.pdf`,
+        `GSO-RESERVE-APPROVAL-${current.reservation_id}.pdf`,
       )
     } catch (error) {
       toast(error instanceof ApiError ? error.message : 'Could not download the approval letter.', 'error')
@@ -1188,7 +1188,7 @@ export function ReservationDetailPage() {
                             {reservation.approval_docx_available && (
                               <Button variant="outline" size="sm" icon={<FileText className="size-4" aria-hidden />} onClick={() => void api.downloadFile(
                                 endpoints.approvalDocumentDocx(reservation.id),
-                                `SAS-RESERVE-APPROVAL-${reservation.reservation_id}.docx`,
+                                `GSO-RESERVE-APPROVAL-${reservation.reservation_id}.docx`,
                               ).catch(() => toast('Could not download the DOCX file.', 'error'))}>
                                 Download DOCX
                               </Button>

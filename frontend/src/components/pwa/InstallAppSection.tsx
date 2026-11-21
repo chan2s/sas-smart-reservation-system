@@ -10,10 +10,10 @@ import { cn } from '@/lib/utils'
 const APP_ICON_SRC = '/pwa-192x192.png'
 
 export const INSTALL_DESCRIPTION =
-  'Install SAS RESERVE on your device for quicker access and an app-like experience.'
+  'Install GSO RESERVE on your device for quicker access and an app-like experience.'
 
 /**
- * "Install SAS RESERVE App" section for the user's Settings page.
+ * "Install GSO RESERVE App" section for the user's Settings page.
  *
  * The floating invitation in {@link PwaNotices} is polite: it disappears for
  * seven days once dismissed. This is the explicit, always-available counterpart
@@ -61,7 +61,7 @@ export function InstallAppSection({ className }: { className?: string }) {
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-[17px] font-semibold text-ink">Install SAS RESERVE App</h2>
+            <h2 className="text-[17px] font-semibold text-ink">Install GSO RESERVE App</h2>
             {isInstalled && (
               <Badge tone="emerald">
                 <CheckCircle2 className="size-3.5" aria-hidden />
@@ -81,7 +81,7 @@ export function InstallAppSection({ className }: { className?: string }) {
           <div className="flex items-start gap-2.5">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-status-available" aria-hidden />
             <div>
-              <p className="font-medium text-ink">SAS RESERVE is installed on this device.</p>
+              <p className="font-medium text-ink">GSO RESERVE is installed on this device.</p>
               <p className="mt-0.5 text-xs text-muted">
                 Open it from your home screen, dock, or app list — no browser address bar needed.
               </p>
@@ -90,7 +90,7 @@ export function InstallAppSection({ className }: { className?: string }) {
         ) : showPrompt ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="min-w-0">
-              Add SAS RESERVE to your home screen or desktop for one-tap access.
+              Add GSO RESERVE to your home screen or desktop for one-tap access.
             </p>
             <Button
               className="shrink-0 self-start sm:self-auto"
@@ -105,7 +105,7 @@ export function InstallAppSection({ className }: { className?: string }) {
           <div>
             <p className="flex items-center gap-1.5 font-medium text-ink">
               <Share className="size-4 shrink-0 text-brand" aria-hidden />
-              Add SAS RESERVE to your Home Screen
+              Add GSO RESERVE to your Home Screen
             </p>
             <p className="mt-0.5 text-xs text-muted">
               Safari on iPhone and iPad installs web apps from the Share menu.
@@ -127,7 +127,7 @@ export function InstallAppSection({ className }: { className?: string }) {
               {promptClosed
                 ? 'The browser prompt can only be used once. Reload this page to try again if your browser offers a fresh prompt.'
                 : 'Installation may still be available through your browser menu — for example “Install app” in Chrome, or Apps → “Install this site as an app” in Edge.'}{' '}
-              You can keep using SAS RESERVE in the browser; the app is optional.
+              You can keep using GSO RESERVE in the browser; the app is optional.
             </p>
           </div>
         )}

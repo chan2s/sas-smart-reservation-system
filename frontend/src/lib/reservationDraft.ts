@@ -26,7 +26,7 @@ export interface EventDetailsDraft {
   expectedParticipants: string
   /** Combines the old "Event purpose" and "Description" fields. */
   purpose: string
-  /** Combines the old "Special requirements" and "Notes for SAS staff" fields. */
+  /** Combines the old "Special requirements" and "Notes for GSO staff" fields. */
   staffNotes: string
 }
 
@@ -525,7 +525,7 @@ export function toCreateReservationPayload(
     purpose: draft.details.purpose.trim(),
     description: '',
     expected_participants: Number(draft.details.expectedParticipants) || 0,
-    // "Special requirements" was merged into "Notes for SAS staff".
+    // "Special requirements" was merged into "Notes for GSO staff".
     special_requirements: '',
     notes: draft.details.staffNotes.trim(),
     items,

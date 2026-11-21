@@ -25,9 +25,9 @@ ENTRIES = [
         "keywords": "reservation policy booking rules requirements approval process who can book",
         "visibility": V.PUBLIC,
         "content": (
-            "Anyone with a SAS Reserve account may submit a reservation. All "
-            "requests are reviewed by the SAS Office before approval; "
-            "reservations created directly by an SAS administrator are "
+            "Anyone with a GSO Reserve account may submit a reservation. All "
+            "requests are reviewed by the GSO Office before approval; "
+            "reservations created directly by a GSO administrator are "
             "confirmed immediately. Reservations must be submitted in advance "
             "and fall within the facility's operating hours. Equipment is "
             "reserved together with the facility, and availability of both is "
@@ -42,7 +42,7 @@ ENTRIES = [
         "content": (
             "Reservations can be cancelled from the reservation detail page. "
             "Requesters cannot cancel a reservation scheduled within the next "
-            "2 days (today or tomorrow) — contact the SAS Office for "
+            "2 days (today or tomorrow) — contact the GSO Office for "
             "assistance with those. Completed, rejected, and already-cancelled "
             "reservations cannot be cancelled. Staff and administrators are "
             "not bound by the 2-day window."
@@ -70,8 +70,8 @@ ENTRIES = [
         "visibility": V.AUTHENTICATED,
         "content": (
             "Check-in opens 3 hours before the event start time. Open your "
-            "reservation detail page and use Check in, or let SAS staff scan "
-            "your reservation's QR code. When the event ends, SAS staff "
+            "reservation detail page and use Check in, or let GSO staff scan "
+            "your reservation's QR code. When the event ends, GSO staff "
             "perform the check-out, which includes a short facility "
             "inspection."
         ),
@@ -88,7 +88,7 @@ ENTRIES = [
             "email; external organizations may add their organization name. "
             "Once registered, log in with your username and password to "
             "submit reservations. External guests do not need an account — "
-            "SAS staff can create reservations on their behalf."
+            "GSO staff can create reservations on their behalf."
         ),
     },
     {
@@ -100,20 +100,20 @@ ENTRIES = [
             "To log in: click Login on the home page (or go to /login) and "
             "enter your username and password. You can also sign in with "
             "Google using your school account. If you forgot your password, "
-            "contact the SAS Office to have it reset — the system does not "
+            "contact the GSO Office to have it reset — the system does not "
             "offer self-service password resets. New accounts can log in "
             "immediately after registering."
         ),
     },
     {
         "category": KnowledgeBaseEntry.Category.ANNOUNCEMENT,
-        "title": "Welcome to SAS Reserve",
+        "title": "Welcome to GSO Reserve",
         "keywords": "announcement news welcome advisory new",
         "visibility": V.PUBLIC,
         "content": (
-            "SAS Reserve is now open to campus organizations and external "
+            "GSO Reserve is now open to campus organizations and external "
             "guests. Browse facilities, check availability, and submit "
-            "reservation requests online — the SAS Office reviews every "
+            "reservation requests online — the GSO Office reviews every "
             "request and notifies you by email."
         ),
     },
@@ -123,10 +123,10 @@ ENTRIES = [
         "keywords": "who can use account access requester staff admin external",
         "visibility": V.PUBLIC,
         "content": (
-            "SAS Reserve is for campus users (students and employees with "
+            "GSO Reserve is for campus users (students and employees with "
             "accounts) and external organizations. External requesters do not "
-            "need an account — SAS staff can create reservations on their "
-            "behalf. Administrators and SAS staff manage approvals, "
+            "need an account — GSO staff can create reservations on their "
+            "behalf. Administrators and GSO staff manage approvals, "
             "facilities, and equipment."
         ),
     },
@@ -136,7 +136,7 @@ ENTRIES = [
         "keywords": "after submit pending approval notification email status what happens",
         "visibility": V.AUTHENTICATED,
         "content": (
-            "New reservations enter the Pending queue and the SAS Office is "
+            "New reservations enter the Pending queue and the GSO Office is "
             "notified immediately. You will receive an email and an in-app "
             "notification when your reservation is approved or rejected. You "
             "can track the status any time on the Reservations page or by "
@@ -159,19 +159,19 @@ ENTRIES = [
             "the event. Rooms without a configured rate, such as the "
             "Audio-Visual Room, are free. Internal campus requesters — "
             "students, faculty, employees, and campus organizations — are "
-            "not charged. Rates are configurable by the SAS Office, and the "
+            "not charged. Rates are configurable by the GSO Office, and the "
             "amount shown alongside a recommendation is an estimate until "
             "the reservation is approved."
         ),
     },
     {
         "category": KnowledgeBaseEntry.Category.GENERAL,
-        "title": "About SAS Reserve",
-        "keywords": "about system what is sas reserve purpose",
+        "title": "About GSO Reserve",
+        "keywords": "about system what is gso reserve purpose",
         "visibility": V.PUBLIC,
         "content": (
-            "SAS Reserve is the campus facility and resource reservation "
-            "system operated by the Student Affairs Services (SAS) Office. "
+            "GSO Reserve is the campus facility and resource reservation "
+            "system operated by the General Services Office (GSO). "
             "It manages facility bookings, equipment loans, approvals, "
             "check-ins, and maintenance tracking."
         ),

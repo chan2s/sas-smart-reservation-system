@@ -174,7 +174,7 @@ export function LoginActivityPage() {
       <PageHeader
         eyebrow="Administration"
         title="User login activity"
-        description="Successful sign-ins across SAS RESERVE, most recent first."
+        description="Successful sign-ins across GSO RESERVE, most recent first."
       />
 
       <p className="mt-4 text-xs text-muted">

@@ -93,7 +93,7 @@ class AffiliationApiTests(TestCase):
             {
                 "affiliation": "EXTERNAL_ORGANIZATION",
                 "organization_ref": other.id,
-                "organization": "Student Affairs",
+                "organization": "General Services Office",
             },
             format="json",
         )
@@ -102,7 +102,7 @@ class AffiliationApiTests(TestCase):
         self.assertEqual(self.user.affiliation, "")
         self.assertIsNone(self.user.organization_ref)
         # The free-text field remains editable (unchanged legacy behavior).
-        self.assertEqual(self.user.organization, "Student Affairs")
+        self.assertEqual(self.user.organization, "General Services Office")
 
     # -- Authentication -------------------------------------------------
 

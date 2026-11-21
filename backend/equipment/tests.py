@@ -86,7 +86,7 @@ class EquipmentManagementApiTests(TestCase):
             category=self.category,
             total_quantity=8,
             unit="unit",
-            asset_code="SAS-MIC-001",
+            asset_code="GSO-MIC-001",
         )
         self.facility = Facility.objects.create(
             name="AVR", facility_type=Facility.FacilityType.AVR, capacity=50
@@ -107,8 +107,8 @@ class EquipmentManagementApiTests(TestCase):
             unit="set",
             condition="GOOD",
             status="AVAILABLE",
-            storage_location="SAS Storage Room",
-            asset_code="SAS-AUD-001",
+            storage_location="GSO Storage Room",
+            asset_code="GSO-AUD-001",
             notes="Includes speakers, amplifier and cables.",
         )
         payload.update(overrides)
@@ -156,7 +156,7 @@ class EquipmentManagementApiTests(TestCase):
         self.assertEqual(body["status"], "AVAILABLE")
         self.assertEqual(body["status_label"], "Available")
         self.assertEqual(body["unit"], "set")
-        self.assertEqual(body["asset_code"], "SAS-AUD-001")
+        self.assertEqual(body["asset_code"], "GSO-AUD-001")
         self.assertEqual(body["availability"]["total"], 4)
         self.assertEqual(body["availability"]["available"], 4)
 
@@ -456,7 +456,7 @@ class EquipmentManagementApiTests(TestCase):
         reservation = Reservation.objects.create(
             requester=self.requester,
             event_name="Recognition Program",
-            organization="Student Affairs",
+            organization="General Services Office",
             facility=self.facility,
             date=date(2026, 9, 14),
             start_time=time(9, 0),
@@ -474,7 +474,7 @@ class EquipmentManagementApiTests(TestCase):
         self.assertEqual(rows[0]["reservation_id"], reservation.reservation_id)
         self.assertEqual(rows[0]["event_name"], "Recognition Program")
         # Without a linked organization the snapshot's name is used.
-        self.assertEqual(rows[0]["organization_name"], "Student Affairs")
+        self.assertEqual(rows[0]["organization_name"], "General Services Office")
         self.assertEqual(rows[0]["quantity"], 4)
         self.assertEqual(rows[0]["status"], "APPROVED")
 
@@ -1056,8 +1056,8 @@ class EquipmentGalleryApiTests(TestCase):
                 "unit": "unit",
                 "condition": "GOOD",
                 "status": "AVAILABLE",
-                "storage_location": "SAS Storage Room",
-                "asset_code": "SAS-SGN-001",
+                "storage_location": "GSO Storage Room",
+                "asset_code": "GSO-SGN-001",
                 "notes": "",
             },
             format="multipart",
@@ -1092,8 +1092,8 @@ class EquipmentGalleryApiTests(TestCase):
                 "unit": "unit",
                 "condition": "GOOD",
                 "status": "AVAILABLE",
-                "storage_location": "SAS Storage Room",
-                "asset_code": "SAS-SGN-001",
+                "storage_location": "GSO Storage Room",
+                "asset_code": "GSO-SGN-001",
                 "notes": "Only notes changed",
             },
             format="multipart",
@@ -1176,7 +1176,7 @@ class EquipmentGalleryApiTests(TestCase):
 
 class EquipmentPriceApiTests(TestCase):
     """The admin-configured equipment price: exposed through the existing
-    equipment API, writable only by SAS staff, never negative, and consumed
+    equipment API, writable only by GSO staff, never negative, and consumed
     by reservation pricing."""
 
     def setUp(self):
@@ -1241,7 +1241,7 @@ class EquipmentPriceApiTests(TestCase):
         self.assertEqual(response.json()["price"], "1000.00")
 
     def test_requester_cannot_modify_price(self):
-        """Equipment writes are staff-only (IsSasStaffOrReadOnly), so a
+        """Equipment writes are staff-only (IsGsoStaffOrReadOnly), so a
         requester cannot change a price through the API at all."""
         self._auth(self.requester)
         response = self.client.patch(
@@ -1357,7 +1357,7 @@ class EquipmentIssueReportApiTests(TestCase):
             name="Extension Cord (50 ft)",
             category=self.category,
             total_quantity=4,
-            asset_code="SAS-PWR-011",
+            asset_code="GSO-PWR-011",
         )
 
     def _auth(self, user):

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from docx import Document
+from docx.enum.text import WD_LINE_SPACING
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import TestCase, override_settings
@@ -29,7 +30,7 @@ def fake_pdf(docx_path, output_dir):
     return path
 
 
-@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/sas-external-approval-test")
+@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/gso-external-approval-test")
 class ExternalApprovalDocumentTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_user("letter-admin", password="pass12345", role=User.Role.ADMIN)
@@ -39,8 +40,8 @@ class ExternalApprovalDocumentTests(TestCase):
                 "authorized_signatory_name": "Francis M. Galon",
                 "credentials": "Ph.D.",
                 "designation": "Assistant Campus Director for Administration and Finance",
-                "sas_staff_display_name": "SAS Administrator",
-                "sas_staff_designation": "UED Staff / SAS Staff",
+                "sas_staff_display_name": "GSO Administrator",
+                "sas_staff_designation": "UED Staff / GSO Staff",
             },
         )
         self.requester = User.objects.create_user(
@@ -100,11 +101,11 @@ class ExternalApprovalDocumentTests(TestCase):
 
         message = mail.outbox[0]
         self.assertEqual(message.to, [self.requester.email])
-        self.assertEqual(message.subject, "Reservation Approved — Community Health Forum | SAS RESERVE")
+        self.assertEqual(message.subject, "Reservation Approved — Community Health Forum | GSO RESERVE")
         self.assertIn("Bayawan-Sta. Catalina Campus", message.body)
         self.assertEqual(len(message.attachments), 1)
         filename, attachment, mimetype = message.attachments[0]
-        self.assertEqual(filename, f"SAS-RESERVE-APPROVAL-{approved.reservation_id}.pdf")
+        self.assertEqual(filename, f"GSO-RESERVE-APPROVAL-{approved.reservation_id}.pdf")
         self.assertEqual(mimetype, "application/pdf")
         with approved.generated_approval_pdf.open("rb") as saved_pdf:
             self.assertEqual(attachment, saved_pdf.read())
@@ -125,11 +126,17 @@ class ExternalApprovalDocumentTests(TestCase):
         signatures = doc.tables[-1]
         self.assertEqual(len(signatures.columns), 2)
         self.assertIn("Agreed by the Renter", signatures.cell(0, 0).text)
-        self.assertIn("Mara Santos", signatures.cell(3, 0).text)
-        self.assertIn("SAS Administrator", signatures.cell(3, 1).text)
-        self.assertIn("UED Staff / SAS Staff", signatures.cell(3, 1).text)
-        self.assertIn("Francis M. Galon", signatures.cell(4, 0).text)
-        self.assertIn("Assistant Campus Director", signatures.cell(4, 0).text)
+        self.assertIn("Mara Santos", signatures.cell(1, 0).text)
+        self.assertIn("____", signatures.cell(2, 0).text)
+        self.assertIn("Name & Signature of the Renter", signatures.cell(3, 0).text)
+        self.assertIn("GSO Administrator", signatures.cell(1, 1).text)
+        self.assertIn("____", signatures.cell(2, 1).text)
+        self.assertIn("UED Staff / GSO Staff", signatures.cell(3, 1).text)
+        self.assertNotIn("GSO Administrator", signatures.cell(3, 1).text)
+        self.assertIn("Approved by:", signatures.cell(4, 0).text)
+        self.assertIn("Francis M. Galon", signatures.cell(5, 0).text)
+        self.assertIn("____", signatures.cell(6, 0).text)
+        self.assertIn("Assistant Campus Director", signatures.cell(7, 0).text)
         self.assertTrue(all("{{" not in value and "}}" not in value for value in all_text.splitlines()))
 
     def test_approval_trigger_generates_pdf_with_installed_libreoffice(self):
@@ -165,8 +172,9 @@ class ExternalApprovalDocumentTests(TestCase):
         )
         self.assertIn("NEGROS ORIENTAL STATE UNIVERSITY", header_text)
         self.assertIn("Bayawan-Sta. Catalina Campus", header_text)
-        self.assertIn("SAS RESERVE", header_text)
-        self.assertIn("STUDENT AFFAIRS AND SERVICES", header_text)
+        self.assertIn("GENERAL SERVICES OFFICE", header_text)
+        self.assertNotIn("GSO RESERVE", header_text)
+        self.assertNotIn("SAS RESERVE", header_text)
         self.assertNotIn("VISION", header_text.upper())
         self.assertNotIn("MISSION", header_text.upper())
         header_table = header.tables[0]
@@ -175,13 +183,36 @@ class ExternalApprovalDocumentTests(TestCase):
         self.assertEqual(document.sections[0].footer.paragraphs[0].text, "")
         self.assertEqual(len(document.tables[-1].columns), 2)
         signatures = document.tables[-1]
-        self.assertIn("Mara Santos", signatures.cell(3, 0).text)
-        self.assertIn("SAS Administrator", signatures.cell(3, 1).text)
-        self.assertIn("UED Staff / SAS Staff", signatures.cell(3, 1).text)
-        self.assertIn("Francis M. Galon", signatures.cell(4, 0).text)
-        approver_paragraphs = signatures.cell(4, 0).paragraphs
-        self.assertGreaterEqual(approver_paragraphs[1].paragraph_format.space_before.pt, 18)
-        self.assertGreaterEqual(approver_paragraphs[1].paragraph_format.space_after.pt, 10)
+        self.assertIn("Mara Santos", signatures.cell(1, 0).text)
+        self.assertIn("GSO Administrator", signatures.cell(1, 1).text)
+        self.assertIn("____", signatures.cell(2, 1).text)
+        self.assertIn("UED Staff / GSO Staff", signatures.cell(3, 1).text)
+        self.assertIn("Francis M. Galon", signatures.cell(5, 0).text)
+        # All three signatories share the same name / line / designation rhythm.
+        for name_cell, line_cell, designation_cell in (
+            (signatures.cell(1, 0), signatures.cell(2, 0), signatures.cell(3, 0)),
+            (signatures.cell(1, 1), signatures.cell(2, 1), signatures.cell(3, 1)),
+            (signatures.cell(5, 0), signatures.cell(6, 0), signatures.cell(7, 0)),
+        ):
+            name_format = name_cell.paragraphs[0].paragraph_format
+            line_format = line_cell.paragraphs[0].paragraph_format
+            self.assertEqual(name_cell.paragraphs[0].alignment, 1)
+            self.assertEqual(line_cell.paragraphs[0].alignment, 1)
+            self.assertEqual(designation_cell.paragraphs[0].alignment, 1)
+            self.assertEqual(name_format.space_after.pt, 0)
+            self.assertEqual(line_format.space_before.pt, 0)
+            self.assertEqual(line_format.space_after.pt, 1)
+            # The line sits immediately under the name: no leading is reserved
+            # above the underscore glyph, and the gap is a couple of points.
+            self.assertEqual(name_format.line_spacing.pt, 10)
+            self.assertEqual(name_format.line_spacing_rule, WD_LINE_SPACING.EXACTLY)
+            self.assertEqual(line_format.line_spacing.pt, 2)
+            self.assertEqual(line_format.line_spacing_rule, WD_LINE_SPACING.EXACTLY)
+            self.assertEqual(signatures.cell(2, 0).text, signatures.cell(2, 1).text)
+            self.assertEqual(signatures.cell(2, 0).text, signatures.cell(6, 0).text)
+            self.assertEqual(
+                signatures.cell(3, 0).paragraphs[0].paragraph_format.space_before.pt, 1
+            )
         self.assertEqual(approved.approval_email_status, Reservation.ApprovalEmailStatus.SENT)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].attachments[0][1], pdf_bytes)
@@ -198,7 +229,7 @@ class ExternalApprovalDocumentTests(TestCase):
         settings.authorized_signatory_name = "Updated Signatory"
         settings.credentials = "M.P.A."
         settings.designation = "Updated Official Position"
-        settings.sas_staff_display_name = "Updated SAS Coordinator"
+        settings.sas_staff_display_name = "Updated GSO Coordinator"
         settings.sas_staff_designation = "Updated Staff Role"
         settings.letter_title = "Updated Approval Heading"
         settings.approval_message = "Approved for {{event_name}} at {{facility_name}}."
@@ -236,10 +267,10 @@ class ExternalApprovalDocumentTests(TestCase):
         generate_approval_documents(future)
         with future.generated_approval_docx.open("rb") as stream:
             doc = Document(BytesIO(stream.read()))
-        self.assertIn("Updated Signatory", doc.tables[-1].cell(4, 0).text)
-        self.assertIn("M.P.A.", doc.tables[-1].cell(4, 0).text)
-        self.assertIn("Updated Official Position", doc.tables[-1].cell(4, 0).text)
-        self.assertIn("Updated SAS Coordinator", doc.tables[-1].cell(3, 1).text)
+        self.assertIn("Updated Signatory", doc.tables[-1].cell(5, 0).text)
+        self.assertIn("M.P.A.", doc.tables[-1].cell(5, 0).text)
+        self.assertIn("Updated Official Position", doc.tables[-1].cell(7, 0).text)
+        self.assertIn("Updated GSO Coordinator", doc.tables[-1].cell(1, 1).text)
         self.assertIn("Updated Staff Role", doc.tables[-1].cell(3, 1).text)
         body_text = "\n".join(p.text for p in doc.paragraphs)
         self.assertIn("Updated Approval Heading", body_text)

@@ -42,7 +42,7 @@ const nextSevenDays = Array.from({ length: 7 }, (_, index) => {
 })
 
 /**
- * The facility catalogue — and, for SAS staff, the facility management
+ * The facility catalogue — and, for GSO staff, the facility management
  * interface (add / edit / enable / disable / archive) wired straight to the
  * Django API. Requesters see the same read-only layout without the controls.
  */
@@ -109,7 +109,7 @@ export function FacilitiesPage() {
       <Backdrop />
 
       <PageHeader
-        eyebrow="SAS Facilities"
+        eyebrow="GSO Facilities"
         title="Facilities"
         description={
           isStaff

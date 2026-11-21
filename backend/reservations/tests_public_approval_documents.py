@@ -27,7 +27,7 @@ def png_bytes():
     return buffer.getvalue()
 
 
-@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/sas-reservation-test-media")
+@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/gso-reservation-test-media")
 class PublicApprovalDocumentTests(TestCase):
     def setUp(self):
         cache.clear()
@@ -132,7 +132,7 @@ class PublicApprovalDocumentTests(TestCase):
             self.assertNotIn(private, response.json())
 
         for payload in ({}, {"reservation_id": ""},
-                        {"reservation_id": "SAS-2099-99999"}):
+                        {"reservation_id": "GSO-2099-99999"}):
             denied = self.client.post(TRACK_URL, payload, format="json")
             self.assertEqual(denied.status_code, 404)
 
@@ -315,7 +315,7 @@ class PublicApprovalDocumentTests(TestCase):
         self.assertEqual(reservation.approval_document_status, "NOT_REQUIRED")
         self.assertFalse(reservation.approval_letter_image)
 
-        # SAS can approve it without ever asking for an event approval letter.
+        # GSO can approve it without ever asking for an event approval letter.
         self.client.force_authenticate(self.admin)
         approved = self.client.post(
             f"/api/reservations/{reservation.pk}/approve/", {}, format="json"

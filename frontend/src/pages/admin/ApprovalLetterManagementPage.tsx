@@ -58,7 +58,7 @@ export function ApprovalLetterManagementPage() {
       <PageHeader
         eyebrow="Administration"
         title="Approval Letter Management"
-        description="Manage letter wording, SAS/UED staff details, the authorized approver, previews, and saved versions for future external reservation approval letters."
+        description="Manage letter wording, GSO/UED staff details, the authorized approver, previews, and saved versions for future external reservation approval letters."
       />
       {loading ? (
         <Card className="mt-7">

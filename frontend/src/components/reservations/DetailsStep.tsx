@@ -184,7 +184,7 @@ export function DetailsStep({
     <section aria-label="Event details and resources" className="mx-auto w-full max-w-5xl">
       <h2 className="text-lg font-semibold text-ink">Details &amp; resources</h2>
       <p className="mt-1 text-sm text-body">
-        Tell SAS about your event, then confirm the resources you need.
+        Tell GSO about your event, then confirm the resources you need.
       </p>
       {/* Organization/Office is never typed: the reservation is made on behalf
           of the organization linked to the account (or, for staff, to the
@@ -195,7 +195,7 @@ export function DetailsStep({
         {!reservingAs && (
           <>
             {' '}
-            — add one in your profile so SAS knows which college this is for.
+            — add one in your profile so GSO knows which college this is for.
           </>
         )}
       </p>
@@ -311,7 +311,7 @@ export function DetailsStep({
 
           <div className="sm:col-span-2 border-t border-slate-200 pt-5">
             <h3 className="text-sm font-semibold text-ink">Contact information</h3>
-            <p className="mt-1 text-xs text-muted">Who SAS should contact about this reservation.</p>
+            <p className="mt-1 text-xs text-muted">Who GSO should contact about this reservation.</p>
           </div>
 
           <div className="sm:col-span-2">
@@ -417,7 +417,7 @@ export function DetailsStep({
           </div>
 
           <Field
-            label="Notes for SAS staff (Optional)"
+            label="Notes for GSO staff (Optional)"
             htmlFor="event-staff-notes"
             className="sm:col-span-2"
             hint="Optional details about setup, access, or special requirements."

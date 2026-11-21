@@ -205,7 +205,7 @@ class SecretKeyCheckTests(APITestCase):
 
         with override_settings(SECRET_KEY="short-key"):
             errors = secret_key_length_check(None)
-        self.assertTrue(any(e.id == "sas.W001" for e in errors))
+        self.assertTrue(any(e.id == "gso.W001" for e in errors))
 
     def test_long_key_passes_check(self):
         from accounts.apps import secret_key_length_check

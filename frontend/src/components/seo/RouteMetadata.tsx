@@ -2,9 +2,9 @@ import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 
 const SITE_ORIGIN = 'https://sasreserve.pgsytems.asia'
-const SITE_TITLE = 'SAS RESERVE | NORSU-BSC Facility and Resource Reservation System'
+const SITE_TITLE = 'GSO RESERVE | NORSU-BSC Facility and Resource Reservation System'
 const SITE_DESCRIPTION =
-  'SAS RESERVE is a web-based facility and resource reservation system for Negros Oriental State University – Bayawan-Sta. Catalina Campus (NORSU-BSC), designed to streamline facility reservations and resource management.'
+  'GSO RESERVE is a web-based facility and resource reservation system for Negros Oriental State University – Bayawan-Sta. Catalina Campus (NORSU-BSC), designed to streamline facility reservations and resource management.'
 const SOCIAL_IMAGE = `${SITE_ORIGIN}/pwa-512x512.png`
 
 type RouteMetadata = {
@@ -23,48 +23,48 @@ const indexedRoutes: Record<string, RouteMetadata> = {
     indexable: true,
   },
   '/about': {
-    title: 'About SAS RESERVE | NORSU-BSC',
+    title: 'About GSO RESERVE | NORSU-BSC',
     description:
-      'Learn how SAS RESERVE helps organizations explore campus facilities, submit reservation requests, and manage event resources at NORSU-BSC.',
+      'Learn how GSO RESERVE helps organizations explore campus facilities, submit reservation requests, and manage event resources at NORSU-BSC.',
     keywords:
-      'about SAS RESERVE, NORSU-BSC, campus facilities, event resource management',
+      'about GSO RESERVE, NORSU-BSC, campus facilities, event resource management',
     indexable: true,
   },
 }
 
 const privateRouteTitles: Array<[RegExp, string]> = [
-  [/^\/reserve$/, 'Choose a Reservation Type | SAS RESERVE'],
-  [/^\/reserve\/internal$/, 'Internal Reservation Request | SAS RESERVE'],
-  [/^\/reserve\/external$/, 'External Reservation Request | SAS RESERVE'],
-  [/^\/track-reservation$/, 'Track a Reservation | SAS RESERVE'],
-  [/^\/login$/, 'Sign In | SAS RESERVE'],
-  [/^\/register$/, 'Register | SAS RESERVE'],
-  [/^\/auth\/callback$/, 'Completing Sign In | SAS RESERVE'],
-  [/^\/dashboard$/, 'Dashboard | SAS RESERVE'],
-  [/^\/offline$/, 'Offline Reservations | SAS RESERVE'],
-  [/^\/onboarding\/affiliation$/, 'Organization Affiliation | SAS RESERVE'],
-  [/^\/facilities$/, 'Facilities | SAS RESERVE'],
-  [/^\/facilities\/[^/]+$/, 'Facility Details | SAS RESERVE'],
-  [/^\/facilities\/[^/]+\/resources$/, 'Facility Resources | SAS RESERVE'],
-  [/^\/reservations$/, 'Reservations | SAS RESERVE'],
-  [/^\/reservations\/new$/, 'Create a Reservation | SAS RESERVE'],
-  [/^\/reservations\/[^/]+\/edit$/, 'Edit Reservation | SAS RESERVE'],
-  [/^\/reservations\/[^/]+\/check-in$/, 'Reservation Check-In | SAS RESERVE'],
-  [/^\/reservations\/[^/]+\/check-out$/, 'Reservation Check-Out | SAS RESERVE'],
-  [/^\/reservations\/[^/]+$/, 'Reservation Details | SAS RESERVE'],
-  [/^\/calendar$/, 'Reservation Calendar | SAS RESERVE'],
-  [/^\/equipment$/, 'Equipment | SAS RESERVE'],
-  [/^\/equipment\/[^/]+$/, 'Equipment Details | SAS RESERVE'],
-  [/^\/analytics$/, 'Analytics | SAS RESERVE'],
-  [/^\/reports$/, 'Reports | SAS RESERVE'],
-  [/^\/notifications$/, 'Notifications | SAS RESERVE'],
-  [/^\/settings$/, 'Account Settings | SAS RESERVE'],
-  [/^\/help$/, 'Help | SAS RESERVE'],
-  [/^\/audit-log$/, 'Audit Log | SAS RESERVE'],
-  [/^\/organizations$/, 'Organizations | SAS RESERVE'],
-  [/^\/admin\/users$/, 'User Administration | SAS RESERVE'],
-  [/^\/admin\/approval-letter$/, 'Approval Letter Management | SAS RESERVE'],
-  [/^\/admin\/login-activity$/, 'Login Activity | SAS RESERVE'],
+  [/^\/reserve$/, 'Choose a Reservation Type | GSO RESERVE'],
+  [/^\/reserve\/internal$/, 'Internal Reservation Request | GSO RESERVE'],
+  [/^\/reserve\/external$/, 'External Reservation Request | GSO RESERVE'],
+  [/^\/track-reservation$/, 'Track a Reservation | GSO RESERVE'],
+  [/^\/login$/, 'Sign In | GSO RESERVE'],
+  [/^\/register$/, 'Register | GSO RESERVE'],
+  [/^\/auth\/callback$/, 'Completing Sign In | GSO RESERVE'],
+  [/^\/dashboard$/, 'Dashboard | GSO RESERVE'],
+  [/^\/offline$/, 'Offline Reservations | GSO RESERVE'],
+  [/^\/onboarding\/affiliation$/, 'Organization Affiliation | GSO RESERVE'],
+  [/^\/facilities$/, 'Facilities | GSO RESERVE'],
+  [/^\/facilities\/[^/]+$/, 'Facility Details | GSO RESERVE'],
+  [/^\/facilities\/[^/]+\/resources$/, 'Facility Resources | GSO RESERVE'],
+  [/^\/reservations$/, 'Reservations | GSO RESERVE'],
+  [/^\/reservations\/new$/, 'Create a Reservation | GSO RESERVE'],
+  [/^\/reservations\/[^/]+\/edit$/, 'Edit Reservation | GSO RESERVE'],
+  [/^\/reservations\/[^/]+\/check-in$/, 'Reservation Check-In | GSO RESERVE'],
+  [/^\/reservations\/[^/]+\/check-out$/, 'Reservation Check-Out | GSO RESERVE'],
+  [/^\/reservations\/[^/]+$/, 'Reservation Details | GSO RESERVE'],
+  [/^\/calendar$/, 'Reservation Calendar | GSO RESERVE'],
+  [/^\/equipment$/, 'Equipment | GSO RESERVE'],
+  [/^\/equipment\/[^/]+$/, 'Equipment Details | GSO RESERVE'],
+  [/^\/analytics$/, 'Analytics | GSO RESERVE'],
+  [/^\/reports$/, 'Reports | GSO RESERVE'],
+  [/^\/notifications$/, 'Notifications | GSO RESERVE'],
+  [/^\/settings$/, 'Account Settings | GSO RESERVE'],
+  [/^\/help$/, 'Help | GSO RESERVE'],
+  [/^\/audit-log$/, 'Audit Log | GSO RESERVE'],
+  [/^\/organizations$/, 'Organizations | GSO RESERVE'],
+  [/^\/admin\/users$/, 'User Administration | GSO RESERVE'],
+  [/^\/admin\/approval-letter$/, 'Approval Letter Management | GSO RESERVE'],
+  [/^\/admin\/login-activity$/, 'Login Activity | GSO RESERVE'],
 ]
 
 function routeMetadata(pathname: string): RouteMetadata {
@@ -73,8 +73,8 @@ function routeMetadata(pathname: string): RouteMetadata {
 
   const route = privateRouteTitles.find(([pattern]) => pattern.test(pathname))
   return {
-    title: route?.[1] ?? 'Page Not Found | SAS RESERVE',
-    description: 'SAS RESERVE application page.',
+    title: route?.[1] ?? 'Page Not Found | GSO RESERVE',
+    description: 'GSO RESERVE application page.',
     indexable: false,
   }
 }
@@ -124,7 +124,7 @@ export function RouteMetadataManager() {
     setMeta('name', 'robots', robots)
     setMeta('name', 'googlebot', robots)
     setMeta('property', 'og:type', 'website')
-    setMeta('property', 'og:site_name', 'SAS RESERVE')
+    setMeta('property', 'og:site_name', 'GSO RESERVE')
     setMeta('property', 'og:locale', 'en_US')
     setMeta('property', 'og:title', metadata.title)
     setMeta('property', 'og:description', metadata.description)

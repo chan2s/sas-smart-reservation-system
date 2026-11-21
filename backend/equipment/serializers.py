@@ -111,7 +111,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
     has_history = serializers.SerializerMethodField()
     is_active = serializers.BooleanField(required=False)
     #: Rental pricing is configured only through the equipment endpoints, which
-    #: are staff-only (``IsSasStaffOrReadOnly``): requesters can read the
+    #: are staff-only (``IsGsoStaffOrReadOnly``): requesters can read the
     #: configured rates but can never change them. ``0`` means "not configured",
     #: in which case ``pricing.quote_fees`` falls back to the legacy item price
     #: and then to the per-category ``PricingRule``.

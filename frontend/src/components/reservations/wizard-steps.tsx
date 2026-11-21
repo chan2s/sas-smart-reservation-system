@@ -888,7 +888,7 @@ export function StepReview({
             </div>
           )}
           {details.staffNotes && (
-            <ReviewRow label="Notes for SAS staff" value={details.staffNotes} />
+            <ReviewRow label="Notes for GSO staff" value={details.staffNotes} />
           )}
         </dl>
       </Card>

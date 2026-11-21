@@ -28,7 +28,7 @@ function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof Detail
     onDetailsChange: vi.fn(),
     contact: { name: 'Juan Dela Cruz', phone: '09171234567' },
     onContactChange: vi.fn(),
-    reservingAs: 'Student Affairs Office',
+    reservingAs: 'General Services Office',
     capacity: 100,
     facilityName: 'Audio-Visual Room',
     suggestions: [suggestion],

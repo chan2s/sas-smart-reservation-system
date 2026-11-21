@@ -32,8 +32,8 @@ vi.mock('@/lib/api', () => ({
       credentials: 'Ph.D.',
       designation: 'Campus Director',
       approval_label: 'Approved by:',
-      sas_staff_display_name: 'SAS Administrator',
-      sas_staff_designation: 'UED Staff / SAS Staff',
+      sas_staff_display_name: 'GSO Administrator',
+      sas_staff_designation: 'UED Staff / GSO Staff',
       letter_title: 'RESERVATION APPROVAL LETTER',
       approval_message: 'Approved for {{event_name}} at {{facility_name}}.',
       introductory_paragraphs: '',
@@ -63,8 +63,8 @@ describe('ApprovalLetterManagementPage', () => {
       credentials: 'Ph.D.',
       designation: 'New Position',
       approval_label: 'Approved by:',
-      sas_staff_display_name: 'New SAS Staff Name',
-      sas_staff_designation: 'New SAS Staff Role',
+      sas_staff_display_name: 'New GSO Staff Name',
+      sas_staff_designation: 'New GSO Staff Role',
       letter_title: 'RESERVATION APPROVAL LETTER',
       approval_message: 'Approved for {{event_name}}.',
       introductory_paragraphs: '',
@@ -80,8 +80,8 @@ describe('ApprovalLetterManagementPage', () => {
     expect(await screen.findByRole('heading', { name: 'Approval Letter Management' })).toBeInTheDocument()
     expect(await screen.findByLabelText('Signatory name')).toHaveValue('Configured Signatory')
     fireEvent.change(screen.getByLabelText('Signatory name'), { target: { value: 'New Signatory' } })
-    fireEvent.change(screen.getByLabelText('SAS/UED Staff Display Name'), { target: { value: 'New SAS Staff Name' } })
-    fireEvent.change(screen.getByLabelText('SAS/UED Staff Designation'), { target: { value: 'New SAS Staff Role' } })
+    fireEvent.change(screen.getByLabelText('GSO/UED Staff Display Name'), { target: { value: 'New GSO Staff Name' } })
+    fireEvent.change(screen.getByLabelText('GSO/UED Staff Designation'), { target: { value: 'New GSO Staff Role' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add paragraph' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save new version' }))
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
@@ -89,17 +89,17 @@ describe('ApprovalLetterManagementPage', () => {
       expect.objectContaining({
         authorized_signatory_name: 'New Signatory',
         body_content: expect.objectContaining({ type: 'doc' }),
-        sas_staff_display_name: 'New SAS Staff Name',
-        sas_staff_designation: 'New SAS Staff Role',
+        sas_staff_display_name: 'New GSO Staff Name',
+        sas_staff_designation: 'New GSO Staff Role',
       }),
     ))
 
-    fireEvent.change(screen.getByLabelText('Reservation reference'), { target: { value: 'SAS-2026-00032' } })
+    fireEvent.change(screen.getByLabelText('Reservation reference'), { target: { value: 'GSO-2026-00032' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview current draft' }))
     await waitFor(() => {
       expect(api.postFileUrl).toHaveBeenCalledWith(
         '/api/admin/settings/approval-letter/preview/',
-        expect.objectContaining({ authorized_signatory_name: 'New Signatory', reservation_reference: 'SAS-2026-00032' }),
+        expect.objectContaining({ authorized_signatory_name: 'New Signatory', reservation_reference: 'GSO-2026-00032' }),
       )
       expect(screen.getByTitle('Approval letter PDF preview')).toHaveAttribute('src', 'blob:approval-preview')
     })

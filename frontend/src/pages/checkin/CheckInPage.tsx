@@ -82,7 +82,7 @@ export function CheckInPage() {
           </dl>
 
           <p className="mt-6 rounded-lg bg-soft px-4 py-2.5 text-[13px] text-body">
-            Show this QR code to SAS staff when you arrive.
+            Show this QR code to GSO staff when you arrive.
           </p>
         </Card>
 
@@ -93,7 +93,7 @@ export function CheckInPage() {
           ) : (
             <Card>
               <CardHeader
-                title="For SAS staff"
+                title="For GSO staff"
                 description="Staff scan this code to verify the reservation on arrival."
               />
               <p className="mt-3 flex items-center gap-2 text-sm text-muted">
@@ -185,7 +185,7 @@ function StaffScanner() {
     if (!online) {
       setResult(null)
       setError(
-        "You're offline — a check-in code can only be verified by the SAS RESERVE server.",
+        "You're offline — a check-in code can only be verified by the GSO RESERVE server.",
       )
       return
     }
@@ -220,7 +220,7 @@ function StaffScanner() {
             <WifiOff className="mt-0.5 size-4 shrink-0" aria-hidden />
             <span>
               You&apos;re offline. Check-in and check-out always require a live connection to the
-              SAS RESERVE server.
+              GSO RESERVE server.
             </span>
           </p>
         )}

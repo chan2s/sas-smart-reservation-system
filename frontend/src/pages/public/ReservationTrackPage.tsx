@@ -105,7 +105,7 @@ export function ReservationTrackPage() {
       <header className="sticky top-0 z-30">
         <div className="mx-auto max-w-[1400px] px-3 pt-3 sm:px-6 sm:pt-4">
         <div className="flex min-h-[64px] w-full flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-2xl border border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] px-4 py-2 shadow-float backdrop-blur-lg sm:min-h-[72px] sm:flex-nowrap sm:px-6 sm:py-0">
-          <Link to="/" aria-label="SAS Reserve home" className="rounded-lg focus-ring">
+          <Link to="/" aria-label="GSO Reserve home" className="rounded-lg focus-ring">
             <BrandMark onDark />
           </Link>
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:flex-nowrap sm:gap-2">
@@ -152,7 +152,7 @@ export function ReservationTrackPage() {
                   autoComplete="off"
                   spellCheck={false}
                   required
-                  placeholder="SAS-2026-00024"
+                  placeholder="GSO-2026-00024"
                   className="font-mono text-sm"
                 />
               </Field>
@@ -320,7 +320,7 @@ function TrackingResult({
           {terminal && rejected ? (
             <p className="mt-4 rounded-lg bg-status-rejected-bg p-3.5 text-sm text-status-rejected">
               This request is {reservation.status_label.toLowerCase()}. For follow-up, contact
-              the SAS Office and provide your reservation reference.
+              the GSO Office and provide your reservation reference.
             </p>
           ) : (
             <ol className="mt-5 grid gap-4 sm:grid-cols-3">
@@ -354,7 +354,7 @@ function TrackingResult({
           )}
           <p className="mt-4 text-xs leading-5 text-body">
             {reservation.status === 'PENDING'
-              ? 'The SAS Office has not made a decision yet. You will receive an email when the status changes.'
+              ? 'The GSO Office has not made a decision yet. You will receive an email when the status changes.'
               : reservation.status === 'APPROVED' || reservation.status === 'ACTIVE'
                 ? 'The reservation has been approved. Review the approval email for any next steps.'
                 : terminal && !rejected
@@ -372,7 +372,7 @@ function TrackingResult({
           to="/login"
           className="inline-flex h-8 items-center justify-center rounded-lg border border-line bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-line-strong hover:bg-soft"
         >
-          Sign in to SAS Reserve
+          Sign in to GSO Reserve
         </Link>
         {reservation.can_edit && (
           <Button variant="outline" loading={editing} onClick={onEdit}>

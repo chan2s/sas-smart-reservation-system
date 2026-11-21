@@ -1,4 +1,4 @@
-# SAS RESERVE Pricing System Analysis: Sound System Operator Fee Issue
+# GSO RESERVE Pricing System Analysis: Sound System Operator Fee Issue
 
 ## Executive Summary
 

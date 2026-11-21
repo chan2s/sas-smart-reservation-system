@@ -71,7 +71,7 @@ class ReservationResubmitTests(TestCase):
             end_time="18:00",
             event_name="Orientation",
             event_type="ACADEMIC",
-            organization="Student Affairs",
+            organization="General Services Office",
             purpose="Freshmen orientation",
             expected_participants=50,
             contact_person=self.requester.display_name,
@@ -119,7 +119,7 @@ class ReservationResubmitTests(TestCase):
     def _resubmit(self, payload=None, user=None):
         actor = user or self.requester
         self.client.force_authenticate(actor)
-        if actor.is_sas_staff:
+        if actor.is_gso_staff:
             return self.client.post(
                 f"/api/reservations/{self.reservation.id}/resubmit/",
                 payload or self._resubmit_payload(),
@@ -280,7 +280,7 @@ class ReservationResubmitTests(TestCase):
         # Untouched values survive the revision (identity, affiliation, and
         # legacy free-text the form no longer collects).
         self.assertEqual(reservation.requester, self.requester)
-        self.assertEqual(reservation.organization, "Student Affairs")
+        self.assertEqual(reservation.organization, "General Services Office")
         self.assertEqual(reservation.contact_email, self.requester.email)
         self.assertEqual(reservation.special_requirements, "Legacy requirements")
         self.assertEqual(reservation.description, "Legacy description")
@@ -368,7 +368,7 @@ class ReservationResubmitTests(TestCase):
         self.assertEqual(reservation.status, Reservation.Status.PENDING)
         self.assertEqual(reservation.requester, self.requester)
         self.assertEqual(reservation.requester_type, Reservation.RequesterType.CAMPUS)
-        self.assertEqual(reservation.organization, "Student Affairs")
+        self.assertEqual(reservation.organization, "General Services Office")
         self.assertEqual(reservation.contact_email, self.requester.email)
 
     def test_resubmit_validates_like_a_fresh_submission(self):
@@ -396,7 +396,7 @@ class ReservationResubmitTests(TestCase):
         self.assertEqual(reservation.event_name, "Orientation")
 
     def test_staff_can_resubmit_on_behalf(self):
-        """SAS staff keep their authorized ability to revise a pending reservation."""
+        """GSO staff keep their authorized ability to revise a pending reservation."""
         self._request_changes()
         response = self._resubmit(user=self.admin)
         self.assertEqual(response.status_code, 200, response.content)

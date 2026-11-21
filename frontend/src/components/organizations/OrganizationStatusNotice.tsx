@@ -33,9 +33,9 @@ export const VERIFICATION_MESSAGE: Record<VerificationStatus, string> = {
   APPROVED:
     'Your organization has been approved. You may now submit facility reservations.',
   REJECTED:
-    'Your organization registration was rejected. You cannot reserve a facility. Please contact the SAS Office for assistance.',
+    'Your organization registration was rejected. You cannot reserve a facility. Please contact the GSO Office for assistance.',
   SUSPENDED:
-    'Your organization is currently suspended. Reservations are disabled until the SAS Office reactivates it.',
+    'Your organization is currently suspended. Reservations are disabled until the GSO Office reactivates it.',
 }
 
 const DEFAULT_TITLE: Record<VerificationStatus, string> = {
@@ -103,7 +103,7 @@ export function OrganizationStatusNotice({
         <p className="mt-1 text-xs opacity-90">{VERIFICATION_MESSAGE[status]}</p>
         {status === 'REJECTED' && (
           <p className="mt-1 text-xs opacity-90">
-            Update your details and resubmit, or contact the SAS Office for assistance.
+            Update your details and resubmit, or contact the GSO Office for assistance.
           </p>
         )}
       </div>

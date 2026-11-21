@@ -86,7 +86,7 @@ class RegisterView(generics.CreateAPIView):
         notify_admins(
             Notification.Type.SYSTEM,
             "New account registration",
-            "A new SAS RESERVE account is awaiting administrator review.",
+            "A new GSO RESERVE account is awaiting administrator review.",
             "/admin/users",
             event_key=f"account:{user.pk}:registered",
         )

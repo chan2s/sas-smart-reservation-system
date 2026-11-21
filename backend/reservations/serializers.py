@@ -277,7 +277,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
     can_cancel = serializers.SerializerMethodField()
     cancellation_reason = serializers.SerializerMethodField()
     # Edit/resubmit eligibility, decided on the backend with the SAME rule the
-    # ``resubmit`` endpoint enforces (owner or SAS staff, status PENDING). The
+    # ``resubmit`` endpoint enforces (owner or GSO staff, status PENDING). The
     # frontend only uses it to show or hide the edit affordance.
     can_edit = serializers.SerializerMethodField()
     # Staff-only no-show eligibility, decided on the backend with the SAME rule
@@ -383,7 +383,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         return resolve_requester_email(obj, actor)
 
     def get_payment(self, obj):
-        """Payment amounts and derived state — visible to SAS staff only.
+        """Payment amounts and derived state — visible to GSO staff only.
 
         Internal/campus reservations never carry a payment obligation, so they
         always return ``None``; the feature cannot leak into them through the
@@ -393,7 +393,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         if not (
             request
             and request.user.is_authenticated
-            and request.user.is_sas_staff
+            and request.user.is_gso_staff
             and obj.requester_type == Reservation.RequesterType.EXTERNAL
         ):
             return None
@@ -415,7 +415,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
 
     def get_generated_approval_error(self, obj):
         request = self.context.get("request")
-        return obj.generated_approval_error if request and request.user.is_sas_staff else ""
+        return obj.generated_approval_error if request and request.user.is_gso_staff else ""
 
     def get_approval_document_status(self, obj):
         return event_approval_document_status(obj)
@@ -433,7 +433,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_approval_docx_available(self, obj):
         request = self.context.get("request")
         return bool(
-            request and request.user.is_sas_staff
+            request and request.user.is_gso_staff
             and obj.generated_approval_status == Reservation.GeneratedApprovalStatus.GENERATED
             and obj.generated_approval_docx
             and obj.generated_approval_docx.storage.exists(obj.generated_approval_docx.name)
@@ -479,7 +479,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         user = getattr(self.context.get("request"), "user", None)
         authenticated = bool(user is not None and user.is_authenticated)
         is_owner = authenticated and obj.requester_id == user.id
-        is_staff = authenticated and user.is_sas_staff
+        is_staff = authenticated and user.is_gso_staff
         return (is_owner or is_staff) and obj.status == Reservation.Status.PENDING
 
     def get_can_edit(self, obj):
@@ -513,7 +513,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         """
         data = super().to_representation(instance)
         request = self.context.get("request")
-        is_staff = bool(request and request.user.is_authenticated and request.user.is_sas_staff)
+        is_staff = bool(request and request.user.is_authenticated and request.user.is_gso_staff)
         is_own = bool(
             request
             and request.user.is_authenticated
@@ -522,7 +522,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         if not (is_staff or is_own):
             data["contact_email"] = ""
             data["contact_phone"] = ""
-            # Fee breakdown is private to the requester and SAS staff.
+            # Fee breakdown is private to the requester and GSO staff.
             data["fees"] = []
             data["estimated_total"] = "0.00"
         # Approval-email delivery state is a staff diagnostic: never shown to
@@ -589,7 +589,7 @@ class ReservationDetailSerializer(ReservationListSerializer):
         if not (
             request
             and request.user.is_authenticated
-            and request.user.is_sas_staff
+            and request.user.is_gso_staff
         ):
             return ""
         return str(obj.submission_ip or "")
@@ -847,7 +847,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     # Optional contact mobile number. Deliberately lenient (any value up to 20
     # characters): the requester UI enforces Philippine mobile format, and
-    # legacy/SAS-staff-created reservations may legitimately omit it.
+    # legacy/GSO-staff-created reservations may legitimately omit it.
     contact_phone = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -900,7 +900,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
 
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
-        is_staff = bool(user and user.is_authenticated and user.is_sas_staff)
+        is_staff = bool(user and user.is_authenticated and user.is_gso_staff)
 
         # Public reservation intake is a deliberately narrower path than the
         # authenticated create endpoint. It accepts only a requester type and
@@ -977,7 +977,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         if selected_organization_id is not None:
             if not is_staff:
                 raise serializers.ValidationError(
-                    {"organization_id": "Only SAS staff can select an organization for a reservation."}
+                    {"organization_id": "Only GSO staff can select an organization for a reservation."}
                 )
             requester_type = attrs.get(
                 "requester_type", Reservation.RequesterType.CAMPUS
@@ -1091,9 +1091,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             attrs.pop("approval_letter_image", None)
             if is_staff:
                 # Reservation on behalf of an organization without an account
-                # — unchanged behavior for SAS staff. ``contact_email`` is no
+                # — unchanged behavior for GSO staff. ``contact_email`` is no
                 # longer required: the form does not collect it (email
-                # notifications are removed from SAS RESERVE) and the model
+                # notifications are removed from GSO RESERVE) and the model
                 # field allows blank.
                 if not (attrs.get("organization") or "").strip():
                     raise serializers.ValidationError(
@@ -1133,7 +1133,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 raise serializers.ValidationError(
                     {
                         "requester_type": (
-                            "Only SAS staff can create an external reservation on "
+                            "Only GSO staff can create an external reservation on "
                             "another organization's behalf through the authenticated "
                             "endpoint. External requesters should use the public "
                             "reservation form."
@@ -1154,9 +1154,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 # recorded only as the creator.
                 attrs.pop("requester_id", None)
             elif requester_id:
-                if not (user and user.is_sas_staff):
+                if not (user and user.is_gso_staff):
                     raise serializers.ValidationError(
-                        {"requester_id": "Only SAS staff can create reservations for other users."}
+                        {"requester_id": "Only GSO staff can create reservations for other users."}
                     )
                 try:
                     target = User.objects.get(pk=requester_id)
@@ -1228,7 +1228,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             requester = None
         elif on_behalf_of is not None:
             requester = on_behalf_of
-        elif organization_ref is not None and authenticated and not user.is_sas_staff:
+        elif organization_ref is not None and authenticated and not user.is_gso_staff:
             requester = user
         elif organization_ref is not None:
             # Admin-selected organizations have no individual account owner.
@@ -1270,7 +1270,7 @@ class ReservationResubmitSerializer(
 ):
     """Requester-side revision of a reservation that is awaiting review.
 
-    Drives the ``resubmit`` action: the owner (or SAS staff) edits the event
+    Drives the ``resubmit`` action: the owner (or GSO staff) edits the event
     details, schedule, and resources of a PENDING reservation — the state a
     reservation is in after an administrator requested changes — and it is
     revalidated exactly like a fresh submission (required fields, time rules,

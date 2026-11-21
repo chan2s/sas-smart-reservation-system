@@ -27,7 +27,7 @@ function renderPage() {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/track-reservation?reservation_id=SAS-2026-00024']}>
+      <MemoryRouter initialEntries={['/track-reservation?reservation_id=GSO-2026-00024']}>
         <Routes>
           <Route path="/track-reservation" element={<ReservationTrackPage />} />
           <Route path="/reserve/:organizationType" element={<p>public edit form route</p>} />
@@ -38,7 +38,7 @@ function renderPage() {
 }
 
 const result = {
-  reservation_id: 'SAS-2026-00024',
+  reservation_id: 'GSO-2026-00024',
   status: 'PENDING',
   status_label: 'Pending',
   event_name: 'Community Assembly',
@@ -72,7 +72,7 @@ describe('ReservationTrackPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
 
     await waitFor(() => {
-      expect(apiState.track).toHaveBeenCalledWith('SAS-2026-00024')
+      expect(apiState.track).toHaveBeenCalledWith('GSO-2026-00024')
     })
     expect(await screen.findByText('Community Assembly')).toBeTruthy()
     expect(await screen.findByRole('button', { name: 'Edit Reservation' })).toBeTruthy()
@@ -101,7 +101,7 @@ describe('ReservationTrackPage', () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Edit Reservation' }))
-    await waitFor(() => expect(apiState.editDetails).toHaveBeenCalledWith('SAS-2026-00024'))
+    await waitFor(() => expect(apiState.editDetails).toHaveBeenCalledWith('GSO-2026-00024'))
     expect(await screen.findByText('public edit form route')).toBeTruthy()
   })
 
@@ -159,7 +159,7 @@ describe('ReservationTrackPage', () => {
     fireEvent.change(await screen.findByLabelText('Upload approval letter image'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: 'Submit approval letter' }))
 
-    await waitFor(() => expect(apiState.upload).toHaveBeenCalledWith('SAS-2026-00024', file))
+    await waitFor(() => expect(apiState.upload).toHaveBeenCalledWith('GSO-2026-00024', file))
     expect(await screen.findByText('Approval Letter Submitted')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Take Photo' })).toBeNull()
   })

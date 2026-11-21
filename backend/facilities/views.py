@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.models import AuditLog
-from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaffOrReadOnly
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsGsoStaffOrReadOnly
 
 from equipment.models import FacilityResource
 from equipment.serializers import FacilityResourceSerializer
@@ -24,7 +24,7 @@ class FacilityViewSet(viewsets.ModelViewSet):
         Facility.objects.prefetch_related("operating_hours", "images").all()
     )
     serializer_class = FacilitySerializer
-    permission_classes = [IsSasStaffOrReadOnly, IsAccountApprovedOrReadOnly]
+    permission_classes = [IsGsoStaffOrReadOnly, IsAccountApprovedOrReadOnly]
     pagination_class = None
     search_fields = ("name", "location", "description")
     filterset_fields = ("facility_type", "status", "is_active")
@@ -34,13 +34,13 @@ class FacilityViewSet(viewsets.ModelViewSet):
         params = self.request.query_params
 
         # Archived/disabled facilities must not appear in reservation flows by
-        # default. Only SAS staff may opt in to see them (e.g. to restore one),
+        # default. Only GSO staff may opt in to see them (e.g. to restore one),
         # and only when they explicitly ask — mirroring EquipmentViewSet.
         # Retrieval stays unfiltered so an archived facility's detail page (and
         # its historical reservations) remains reachable.
         if self.action == "list" and (
             params.get("include_inactive") != "true"
-            or not self.request.user.is_sas_staff
+            or not self.request.user.is_gso_staff
         ):
             qs = qs.filter(is_active=True)
 
@@ -223,7 +223,7 @@ class FacilityViewSet(viewsets.ModelViewSet):
         goes through the same validator as the legacy single-image field
         (JPG/PNG/WEBP, at most 5 MB, verified bytes).
 
-        Writes require SAS staff; any authenticated user may read the gallery.
+        Writes require GSO staff; any authenticated user may read the gallery.
         """
         facility = self.get_object()
 

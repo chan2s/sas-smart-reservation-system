@@ -52,7 +52,7 @@ export function ReportsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="SAS Reports"
+        eyebrow="GSO Reports"
         title="Reports"
         description="Generate and export institutional reports from live reservation data."
       />

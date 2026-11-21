@@ -11,7 +11,7 @@ from reservations.models import PricingRule
 
 
 class Command(BaseCommand):
-    help = "Apply the official unified SAS RESERVE rental price table."
+    help = "Apply the official unified GSO RESERVE rental price table."
 
     def add_arguments(self, parser):
         parser.add_argument("--dry-run", action="store_true", help="Preview without writing.")

@@ -430,7 +430,7 @@ class CampusOrganizationDerivationTests(TestCase):
             username="norsu_student",
             password="pass12345",
             role=User.Role.REQUESTER,
-            organization="Student Affairs Office",
+            organization="General Services Office",
         )
         self.staff = User.objects.create_user(
             username="staff", password="pass12345", role=User.Role.STAFF
@@ -473,7 +473,7 @@ class CampusOrganizationDerivationTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(
-            Reservation.objects.get().organization, "Student Affairs Office"
+            Reservation.objects.get().organization, "General Services Office"
         )
 
     def test_campus_user_without_profile_organization_keeps_submitted_value(self):
@@ -510,7 +510,7 @@ class CampusOrganizationDerivationTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         reservation = Reservation.objects.get()
         self.assertEqual(reservation.requester, self.user)
-        self.assertEqual(reservation.organization, "Student Affairs Office")
+        self.assertEqual(reservation.organization, "General Services Office")
 
 
 class InternalOrganizationReservationTests(TestCase):

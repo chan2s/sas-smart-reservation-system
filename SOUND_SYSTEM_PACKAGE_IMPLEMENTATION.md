@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented the Sound System Package feature for the SAS RESERVE equipment management system, treating the existing Sound System as a complete rental package with required operator service rather than individual equipment items.
+Successfully implemented the Sound System Package feature for the GSO RESERVE equipment management system, treating the existing Sound System as a complete rental package with required operator service rather than individual equipment items.
 
 ## Features Implemented
 

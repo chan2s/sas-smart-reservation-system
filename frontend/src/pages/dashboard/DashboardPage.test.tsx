@@ -53,7 +53,7 @@ function alert(overrides: Partial<NoShowAlert> = {}): NoShowAlert {
   return {
     id: 11,
     reservation: 42,
-    reference: 'SAS-2026-00042',
+    reference: 'GSO-2026-00042',
     event_name: 'Leadership Summit',
     facility: 'Reminder Hall',
     facility_id: 3,
@@ -83,7 +83,7 @@ function alert(overrides: Partial<NoShowAlert> = {}): NoShowAlert {
 function review(overrides: Partial<AwaitingNoShowReview> = {}): AwaitingNoShowReview {
   return {
     reservation: 84,
-    reference: 'SAS-2026-00084',
+    reference: 'GSO-2026-00084',
     event_name: 'Alumni Homecoming',
     facility: 'Gymnasium',
     facility_id: 5,
@@ -107,7 +107,7 @@ function reviewRow(index: number): AwaitingNoShowReview {
   const reservation = 2000 + index
   return review({
     reservation,
-    reference: `SAS-2026-${reservation}`,
+    reference: `GSO-2026-${reservation}`,
     event_name: `Review event ${index + 1}`,
     date: `2026-10-${String(10 + index).padStart(2, '0')}`,
     start_time: '09:00',
@@ -121,7 +121,7 @@ function alertRow(index: number): NoShowAlert {
   return alert({
     id: 500 + index,
     reservation,
-    reference: `SAS-2026-${reservation}`,
+    reference: `GSO-2026-${reservation}`,
     event_name: `Alert event ${index + 1}`,
     date: '2026-10-15',
     start_time: `${String(9 + index).padStart(2, '0')}:00`,
@@ -137,7 +137,7 @@ function pagination() {
 
 function visibleReferences(): string[] {
   return screen
-    .queryAllByRole('link', { name: /^SAS-2026-/ })
+    .queryAllByRole('link', { name: /^GSO-2026-/ })
     .map((link) => link.textContent ?? '')
 }
 
@@ -175,7 +175,7 @@ describe('DashboardPage possible no-show section', () => {
       screen.getByText('1 possible no-show · 1 unread · 0 awaiting review'),
     ).toBeTruthy()
     expect(screen.getByText('Possible No-Shows')).toBeTruthy()
-    expect(screen.getByText('SAS-2026-00042')).toBeTruthy()
+    expect(screen.getByText('GSO-2026-00042')).toBeTruthy()
     expect(screen.getByText(/Reminder Hall · Maria Santos/)).toBeTruthy()
     expect(screen.getByText(/Possible no-show — action required/)).toBeTruthy()
     expect(screen.getByText(/Started 18 minutes ago/)).toBeTruthy()
@@ -191,7 +191,7 @@ describe('DashboardPage possible no-show section', () => {
       count: 2,
       results: [
         alert(),
-        alert({ id: 12, reservation: 43, reference: 'SAS-2026-00043', acknowledged: true }),
+        alert({ id: 12, reservation: 43, reference: 'GSO-2026-00043', acknowledged: true }),
       ],
     }
     render(<DashboardPage />)
@@ -213,7 +213,7 @@ describe('DashboardPage possible no-show section', () => {
     expect(
       screen.getByText('1 possible no-show · 1 unread · 1 awaiting review'),
     ).toBeTruthy()
-    expect(screen.getByText('SAS-2026-00084')).toBeTruthy()
+    expect(screen.getByText('GSO-2026-00084')).toBeTruthy()
     expect(screen.getByText(/Alumni Homecoming · Gymnasium · Jose Rizal/)).toBeTruthy()
     expect(screen.getByText(/Oct 22, 2026 · 9:00 AM/)).toBeTruthy()
     expect(screen.getByText(/Ended 1 day ago/)).toBeTruthy()
@@ -223,7 +223,7 @@ describe('DashboardPage possible no-show section', () => {
     expect(markLink.getAttribute('href')).toBe('/reservations/84')
 
     // The possible no-show alert stays in its own group.
-    expect(screen.getByText('SAS-2026-00042')).toBeTruthy()
+    expect(screen.getByText('GSO-2026-00042')).toBeTruthy()
   })
 
   it('explains when a review row can be marked as a no-show', () => {
@@ -260,7 +260,7 @@ describe('DashboardPage possible no-show section', () => {
     expect(
       screen.getByText('No overdue reservations are awaiting a no-show decision.'),
     ).toBeTruthy()
-    expect(screen.queryByText('SAS-2026-00042')).toBeNull()
+    expect(screen.queryByText('GSO-2026-00042')).toBeNull()
   })
 
   it('shows an error state and no fabricated rows when the request fails', () => {
@@ -269,7 +269,7 @@ describe('DashboardPage possible no-show section', () => {
     render(<DashboardPage />)
 
     expect(screen.getByText("Couldn't load possible no-show alerts")).toBeTruthy()
-    expect(screen.queryByText('SAS-2026-00042')).toBeNull()
+    expect(screen.queryByText('GSO-2026-00042')).toBeNull()
   })
 
   it('is never shown to requesters', () => {
@@ -317,9 +317,9 @@ describe('DashboardPage possible no-show section', () => {
     expect((previous as HTMLButtonElement).disabled).toBe(true)
     expect((next as HTMLButtonElement).disabled).toBe(false)
     expect(visibleReferences()).toEqual([
-      'SAS-2026-2000',
-      'SAS-2026-2001',
-      'SAS-2026-2002',
+      'GSO-2026-2000',
+      'GSO-2026-2001',
+      'GSO-2026-2002',
     ])
 
     const seen: string[] = visibleReferences()
@@ -329,16 +329,16 @@ describe('DashboardPage possible no-show section', () => {
     expect((previous as HTMLButtonElement).disabled).toBe(false)
     expect((next as HTMLButtonElement).disabled).toBe(false)
     expect(visibleReferences()).toEqual([
-      'SAS-2026-3000',
-      'SAS-2026-3001',
-      'SAS-2026-3002',
+      'GSO-2026-3000',
+      'GSO-2026-3001',
+      'GSO-2026-3002',
     ])
     seen.push(...visibleReferences())
 
     fireEvent.click(next)
     expect(within(nav).getByText('Page 3 of 3')).toBeTruthy()
     expect((next as HTMLButtonElement).disabled).toBe(true)
-    expect(visibleReferences()).toEqual(['SAS-2026-3003'])
+    expect(visibleReferences()).toEqual(['GSO-2026-3003'])
     seen.push(...visibleReferences())
 
     const expected = [...alerts, ...reviews].map((row) => row.reference)
@@ -368,14 +368,14 @@ describe('DashboardPage possible no-show section', () => {
     expect(screen.getByText('Awaiting No-Show Review')).toBeTruthy()
 
     expect(visibleReferences()).toEqual([
-      'SAS-2026-3000',
-      'SAS-2026-2000',
-      'SAS-2026-2001',
+      'GSO-2026-3000',
+      'GSO-2026-2000',
+      'GSO-2026-2001',
     ])
 
     fireEvent.click(within(nav).getByRole('button', { name: /next/i }))
 
-    expect(visibleReferences()).toEqual(['SAS-2026-3001'])
+    expect(visibleReferences()).toEqual(['GSO-2026-3001'])
     expect(screen.getByText('Nothing from this group on this page.')).toBeTruthy()
     // The alert row keeps its own review action on the next page.
     expect(screen.getByRole('link', { name: /review reservation/i })).toBeTruthy()

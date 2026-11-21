@@ -7,12 +7,12 @@ self.addEventListener('push', (event) => {
     payload = {}
   }
   if (!payload || typeof payload !== 'object') payload = {}
-  const title = typeof payload.title === 'string' ? payload.title : 'SAS RESERVE'
+  const title = typeof payload.title === 'string' ? payload.title : 'GSO RESERVE'
   const options = {
     body: typeof payload.body === 'string' ? payload.body : 'You have an update. Sign in to view it.',
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
-    tag: typeof payload.tag === 'string' ? payload.tag : 'sas-update',
+    tag: typeof payload.tag === 'string' ? payload.tag : 'gso-update',
     data: { url: typeof payload.url === 'string' ? payload.url : '/notifications' },
   }
   event.waitUntil(self.registration.showNotification(title, options))

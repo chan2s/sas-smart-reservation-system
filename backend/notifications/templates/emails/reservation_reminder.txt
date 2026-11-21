@@ -1,11 +1,11 @@
 {% autoescape off %}
-SAS RESERVE
+GSO RESERVE
 Smart Facility and Resource Reservation System
 ========================================
 
 Hello, {{ requester_name }},
 
-This is a reminder that your SAS RESERVE booking is coming up within the next three days.
+This is a reminder that your GSO RESERVE booking is coming up within the next three days.
 
 RESERVATION DETAILS
 -------------------
@@ -20,10 +20,10 @@ CHECK-IN REMINDER
 -----------------
 {{ check_in_instructions }}
 
-View your reservation in SAS RESERVE:
+View your reservation in GSO RESERVE:
 {{ view_url }}
 
-If you can no longer attend, please contact the SAS Office as soon as
+If you can no longer attend, please contact the GSO Office as soon as
 possible so the facility and resources can be released.
 
 ---

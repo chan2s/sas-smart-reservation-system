@@ -197,7 +197,7 @@ export function AffiliationPage() {
       <PageHeader
         eyebrow="Your account"
         title="How are you affiliated with NORSU?"
-        description="Google confirms who you are. This tells SAS RESERVE who you represent when booking facilities."
+        description="Google confirms who you are. This tells GSO RESERVE who you represent when booking facilities."
       />
 
       {isLoading ? (
@@ -270,7 +270,7 @@ export function AffiliationPage() {
                   {existingOrganization?.display_name ?? existingOrganization?.organization_name}.
                   {linkedIsInternal
                     ? ' You may still change which campus organization you belong to.'
-                    : ' Contact the SAS Office if you need to change organizations.'}
+                    : ' Contact the GSO Office if you need to change organizations.'}
                 </p>
               )}
 
@@ -350,7 +350,7 @@ export function AffiliationPage() {
                 <Card className="mt-6">
                   <CardHeader
                     title="Contact information"
-                    description="SAS staff use these details to verify your organization."
+                    description="GSO staff use these details to verify your organization."
                   />
                   <div className="mt-4 grid gap-5 sm:grid-cols-2">
                     <Field label="Representative / Contact person" htmlFor="contact-person">
@@ -466,7 +466,7 @@ export function AffiliationPage() {
 
             {isExternal && !lockedToOrganization && (
               <p className="mt-3 text-xs text-muted">
-                Your organization will be reviewed by the SAS Office. You&apos;ll be able to
+                Your organization will be reviewed by the GSO Office. You&apos;ll be able to
                 submit reservations once it is approved.
               </p>
             )}

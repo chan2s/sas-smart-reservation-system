@@ -34,7 +34,7 @@ export function AnalyticsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="SAS Analytics"
+        eyebrow="GSO Analytics"
         title="Analytics"
         description="Understand how facilities and equipment are being used across the campus."
       />

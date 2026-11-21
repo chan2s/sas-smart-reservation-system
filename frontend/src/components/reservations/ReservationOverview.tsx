@@ -28,7 +28,7 @@ export function ReservationOverview({ details }: { details: BookerLookupDetails 
       <div className="mx-auto w-full max-w-5xl">
         <h2 className="text-lg font-semibold text-ink">Organization Reservation Overview</h2>
         <p className="mt-1 text-sm text-body">
-          Here's a summary of your organization's reservation activity with SAS RESERVE.
+          Here's a summary of your organization's reservation activity with GSO RESERVE.
         </p>
 
         {/* Summary Cards */}

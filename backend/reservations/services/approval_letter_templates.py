@@ -7,7 +7,7 @@ PLACEHOLDER_HELP = {
     "organization_name": "Reservation organization, when provided.",
     "requester_email": "Reservation contact email, then the requester's account email when available.",
     "contact_phone": "Reservation contact phone number, when provided.",
-    "reservation_reference": "SAS RESERVE reservation ID.",
+    "reservation_reference": "GSO RESERVE reservation ID.",
     "facility_name": "Reserved facility name.",
     "event_name": "Reservation event name.",
     "reservation_date": "Reservation date, formatted for the letter.",

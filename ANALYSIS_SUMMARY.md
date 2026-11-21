@@ -2,7 +2,7 @@
 
 ## Overview
 
-A comprehensive analysis of the SAS RESERVE pricing system has identified **three distinct issues** with Sound System operator fee handling that deviate from the NORSU-BSC Rental Agreement:
+A comprehensive analysis of the GSO RESERVE pricing system has identified **three distinct issues** with Sound System operator fee handling that deviate from the NORSU-BSC Rental Agreement:
 
 1. **Pricing Mismatch**: System charges ₱1,500 (equipment ₱1,000 + operator ₱500), but agreement specifies ₱1,000 operator fee only
 2. **Code Duplication**: Operator logic is split across two code paths, with Sound System deliberately skipped from the generic path
@@ -221,4 +221,4 @@ See `SOUND_SYSTEM_OPERATOR_FEE_ANALYSIS.md` for:
 
 ---
 
-Generated: Analysis of SAS RESERVE pricing system for Sound System operator fee compliance
+Generated: Analysis of GSO RESERVE pricing system for Sound System operator fee compliance

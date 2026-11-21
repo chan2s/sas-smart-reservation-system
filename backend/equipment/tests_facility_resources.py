@@ -2,7 +2,7 @@
 
 Covers the write side of the facility <-> equipment relationship:
 
-* only SAS staff may create/edit/remove assignments;
+* only GSO staff may create/edit/remove assignments;
 * a resource can be assigned to more than one facility, never twice to one;
 * the reservation form's read endpoint reflects admin changes dynamically;
 * a resource marked MAINTENANCE/UNAVAILABLE/DAMAGED stops being reservable;

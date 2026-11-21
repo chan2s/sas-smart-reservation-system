@@ -88,7 +88,7 @@ OTP verification now returns HTTP 200 with correct structure:
     "recent_reservations": [
       {
         "id": 1,
-        "reservation_id": "SAS-2026-00001",
+        "reservation_id": "GSO-2026-00001",
         "event_name": "...",
         "purpose": "...",
         "date": "2026-12-01",

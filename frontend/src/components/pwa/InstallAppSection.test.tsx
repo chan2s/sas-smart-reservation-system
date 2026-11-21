@@ -38,7 +38,7 @@ afterEach(() => {
 describe('InstallAppSection (prompt available)', () => {
   it('shows the section title, app icon, description, and install button', () => {
     renderSection({ promptAvailable: true })
-    expect(screen.getByRole('heading', { name: 'Install SAS RESERVE App' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Install GSO RESERVE App' })).toBeInTheDocument()
     expect(screen.getByText(INSTALL_DESCRIPTION)).toBeInTheDocument()
     expect(document.querySelector('img[src="/pwa-192x192.png"]')).not.toBeNull()
     expect(installButton()).toBeInTheDocument()
@@ -115,7 +115,7 @@ describe('InstallAppSection (prompt available)', () => {
 describe('InstallAppSection (installed)', () => {
   it('reports the installed state and shows no button, even in standalone', () => {
     renderSection({ isInstalled: true, promptAvailable: true })
-    expect(screen.getByText('SAS RESERVE is installed on this device.')).toBeInTheDocument()
+    expect(screen.getByText('GSO RESERVE is installed on this device.')).toBeInTheDocument()
     expect(screen.getByText('Installed')).toBeInTheDocument()
     expect(installButton()).toBeNull()
   })
@@ -124,7 +124,7 @@ describe('InstallAppSection (installed)', () => {
 describe('InstallAppSection (manual installation)', () => {
   it('gives iOS Safari Share → Add to Home Screen steps', () => {
     renderSection({ canShowIosInstructions: true })
-    expect(screen.getByText('Add SAS RESERVE to your Home Screen')).toBeInTheDocument()
+    expect(screen.getByText('Add GSO RESERVE to your Home Screen')).toBeInTheDocument()
     expect(screen.getByText(/Share button/i)).toBeInTheDocument()
     expect(screen.getByText(/Add to Home Screen/i)).toBeInTheDocument()
     expect(installButton()).toBeNull()
@@ -140,6 +140,6 @@ describe('InstallAppSection (manual installation)', () => {
 
   it('never blocks the website on installation', () => {
     renderSection()
-    expect(screen.getByText(/You can keep using SAS RESERVE in the browser/)).toBeInTheDocument()
+    expect(screen.getByText(/You can keep using GSO RESERVE in the browser/)).toBeInTheDocument()
   })
 })

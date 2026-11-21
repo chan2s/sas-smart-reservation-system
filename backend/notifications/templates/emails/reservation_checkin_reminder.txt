@@ -1,12 +1,12 @@
 {% autoescape off %}
-SAS RESERVE
+GSO RESERVE
 Smart Facility and Resource Reservation System
-Check-In Reminder - SAS RESERVE
+Check-In Reminder - GSO RESERVE
 ========================================
 
 Hello, {{ requester_name }},
 
-This is a reminder that your SAS RESERVE booking is scheduled soon.
+This is a reminder that your GSO RESERVE booking is scheduled soon.
 Please arrive on time for check-in.
 
 RESERVATION DETAILS
@@ -24,10 +24,10 @@ CHECK-IN REMINDER
 -----------------
 {{ check_in_instructions }}
 
-View your reservation in SAS RESERVE:
+View your reservation in GSO RESERVE:
 {{ view_url }}
 
-If you can no longer attend, please contact the SAS Office as soon as
+If you can no longer attend, please contact the GSO Office as soon as
 possible so the facility and resources can be released.
 
 ---

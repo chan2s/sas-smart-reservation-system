@@ -21,12 +21,12 @@ describe('service worker push handlers', () => {
     const { listeners, self } = loadPushHandlers()
     let completion: Promise<unknown> | undefined
     listeners.get('push')!({
-      data: { json: () => ({ title: 'SAS RESERVE', body: 'New reservation', url: '/reservations/42' }) },
+      data: { json: () => ({ title: 'GSO RESERVE', body: 'New reservation', url: '/reservations/42' }) },
       waitUntil: (promise: Promise<unknown>) => { completion = promise },
     })
 
     await completion
-    expect(self.registration.showNotification).toHaveBeenCalledWith('SAS RESERVE', expect.objectContaining({
+    expect(self.registration.showNotification).toHaveBeenCalledWith('GSO RESERVE', expect.objectContaining({
       body: 'New reservation',
       data: { url: '/reservations/42' },
     }))

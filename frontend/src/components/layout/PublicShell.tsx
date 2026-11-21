@@ -33,7 +33,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       <header className="relative z-10">
         <div className="mx-auto max-w-[1400px] px-3 pt-3 sm:px-6 sm:pt-4">
         <div className="flex h-[64px] w-full items-center justify-between gap-3 rounded-2xl border border-[var(--nav-scrolled-border)] bg-[var(--nav-scrolled-background)] px-4 shadow-float backdrop-blur-lg sm:h-[72px] sm:px-6">
-          <Link to="/" className="rounded-lg focus-ring" aria-label="SAS Reserve home">
+          <Link to="/" className="rounded-lg focus-ring" aria-label="GSO Reserve home">
             <BrandMark onDark />
           </Link>
           <nav aria-label="Primary" className="flex items-center gap-4 sm:gap-7">
@@ -67,7 +67,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       <main className="relative z-10 mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">{children}</main>
       <footer className="relative z-10 border-t border-line bg-surface py-6">
         <p className="text-center text-xs text-muted">
-          Reservations are reviewed by the SAS Office. Submission does not guarantee approval.
+          Reservations are reviewed by the GSO Office. Submission does not guarantee approval.
         </p>
       </footer>
     </div>

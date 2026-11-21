@@ -8,7 +8,7 @@ Design notes:
 * The client secret stays on the server: React only ever talks to
   ``/api/auth/google/`` endpoints and is redirected to Google. The token
   exchange happens here. No secret, access token, or refresh token is ever
-  returned to the browser — the SPA gets SAS RESERVE's own JWT pair.
+  returned to the browser — the SPA gets GSO RESERVE's own JWT pair.
 * Scope is identity-only (openid email profile).
 """
 
@@ -181,7 +181,7 @@ def _link_google_identity(user, sub: str, userinfo: dict):
 
     Uses django-allauth's ``SocialAccount`` table so the ``(provider, uid)``
     pair — Google's stable ``sub`` claim — is the single source of truth for
-    "which SAS RESERVE account is this Google identity?". Only non-sensitive
+    "which GSO RESERVE account is this Google identity?". Only non-sensitive
     identity metadata is stored; no Google tokens are persisted.
     """
     from allauth.socialaccount.models import SocialAccount
@@ -286,7 +286,7 @@ def google_start(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def google_callback(request):
-    """Validate state, exchange the code server-side, issue SAS JWTs.
+    """Validate state, exchange the code server-side, issue GSO JWTs.
 
     Errors redirect back to the React app with ``?google_error=…`` so the UI
     can show a friendly message; raw exceptions are never surfaced.
@@ -502,7 +502,7 @@ def google_callback(request):
                 elif intent != "register":
                     # Login never registers: report it and create nothing.
                     logger.info(
-                        "Google OAuth: no SAS RESERVE account for verified "
+                        "Google OAuth: no GSO RESERVE account for verified "
                         "Google identity (sub=%s). No account was created.",
                         sub,
                     )
@@ -565,14 +565,14 @@ def google_callback(request):
             request=request,
         )
         logger.info(
-            "Google OAuth: created SAS RESERVE account (id=%s) from a verified "
+            "Google OAuth: created GSO RESERVE account (id=%s) from a verified "
             "Google identity; awaiting administrator approval.",
             user.pk,
         )
         notify_admins(
             Notification.Type.SYSTEM,
             "New account registration",
-            "A new SAS RESERVE account is awaiting administrator review.",
+            "A new GSO RESERVE account is awaiting administrator review.",
             "/admin/users",
             event_key=f"account:{user.pk}:registered",
         )

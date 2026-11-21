@@ -17,7 +17,7 @@ import { PwaNotices } from './PwaNotices'
  * copy, controls, availability rules, and politeness delay are pinned here.
  */
 
-const DESCRIPTION = 'Install SAS RESERVE for quick access from your home screen or desktop.'
+const DESCRIPTION = 'Install GSO RESERVE for quick access from your home screen or desktop.'
 
 function renderNotices(overrides: Record<string, unknown> = {}) {
   state.current = {
@@ -53,11 +53,11 @@ afterEach(() => {
 describe('PwaNotices install invitation (native prompt)', () => {
   it('waits politely before appearing', () => {
     renderNotices({ canInstall: true })
-    expect(screen.queryByText('Install SAS RESERVE')).toBeNull()
+    expect(screen.queryByText('Install GSO RESERVE')).toBeNull()
     act(() => {
       vi.advanceTimersByTime(1500)
     })
-    expect(screen.getByText('Install SAS RESERVE')).toBeInTheDocument()
+    expect(screen.getByText('Install GSO RESERVE')).toBeInTheDocument()
   })
 
   it('shows the app icon, the required description, and both actions', () => {
@@ -66,7 +66,7 @@ describe('PwaNotices install invitation (native prompt)', () => {
       vi.advanceTimersByTime(1500)
     })
     expect(screen.getByText(DESCRIPTION)).toBeInTheDocument()
-    expect(screen.getByAltText('SAS RESERVE app icon')).toHaveAttribute('src', '/pwa-192x192.png')
+    expect(screen.getByAltText('GSO RESERVE app icon')).toHaveAttribute('src', '/pwa-192x192.png')
     expect(screen.getByRole('button', { name: 'Install App' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Not now' })).toBeInTheDocument()
   })
@@ -98,7 +98,7 @@ describe('PwaNotices install invitation (native prompt)', () => {
     act(() => {
       vi.advanceTimersByTime(1500)
     })
-    expect(screen.queryByText('Install SAS RESERVE')).toBeNull()
+    expect(screen.queryByText('Install GSO RESERVE')).toBeNull()
   })
 
   it('renders nothing for users who already installed the app', () => {
@@ -106,7 +106,7 @@ describe('PwaNotices install invitation (native prompt)', () => {
     act(() => {
       vi.advanceTimersByTime(1500)
     })
-    expect(screen.queryByText('Install SAS RESERVE')).toBeNull()
+    expect(screen.queryByText('Install GSO RESERVE')).toBeNull()
   })
 })
 

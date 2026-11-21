@@ -163,7 +163,7 @@ class OrdinaryUserRoleTests(APITestCase):
 class ExistingRoleBehaviorTests(APITestCase):
     """Test C: existing role-based permissions continue working."""
 
-    def test_is_sas_staff_is_admin_or_staff(self):
+    def test_is_gso_staff_is_admin_or_staff(self):
         admin = User.objects.create_user(
             username="sa", password=PASSWORD, role=User.Role.ADMIN
         )
@@ -173,9 +173,9 @@ class ExistingRoleBehaviorTests(APITestCase):
         requester = User.objects.create_user(
             username="sr", password=PASSWORD, role=User.Role.REQUESTER
         )
-        self.assertTrue(admin.is_sas_staff)
-        self.assertTrue(staff.is_sas_staff)
-        self.assertFalse(requester.is_sas_staff)
+        self.assertTrue(admin.is_gso_staff)
+        self.assertTrue(staff.is_gso_staff)
+        self.assertFalse(requester.is_gso_staff)
 
     def test_is_admin_is_only_admin(self):
         admin = User.objects.create_user(
@@ -300,7 +300,7 @@ class UserManagementPermissionTests(APITestCase):
         self.assertTrue(User.objects.filter(pk=self.staff.pk).exists())
 
     def test_staff_cannot_list_or_delete(self):
-        """Management is administrator-only — SAS staff are refused."""
+        """Management is administrator-only — GSO staff are refused."""
         client = _client_as(self.staff)
         self.assertEqual(client.get("/api/auth/users/").status_code, 403)
         self.assertEqual(
@@ -590,7 +590,7 @@ class AdminUserCreationTests(APITestCase):
             holder.role, User.Role.ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE
         )
         self.assertFalse(holder.is_admin)
-        self.assertFalse(holder.is_sas_staff)
+        self.assertFalse(holder.is_gso_staff)
 
     def test_admin_cannot_create_a_second_active_position_holder(self):
         first = _create_payload(

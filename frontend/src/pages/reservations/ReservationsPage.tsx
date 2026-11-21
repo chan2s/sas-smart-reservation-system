@@ -79,7 +79,7 @@ export function ReservationsPage() {
     return (
       <div>
         <PageHeader
-          eyebrow="SAS Reservations"
+          eyebrow="GSO Reservations"
           title="Reservations"
           description="Review, approve, and manage every reservation request across the campus."
           actions={
@@ -113,7 +113,7 @@ export function ReservationsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="SAS Reservations"
+        eyebrow="GSO Reservations"
         title="Reservations"
         description="Review, approve, and manage every reservation request across the campus."
         actions={

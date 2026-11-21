@@ -480,7 +480,7 @@ export function EquipmentFormModal({
             id="equipment-asset-code"
             value={values.asset_code}
             onChange={(event) => set('asset_code', event.target.value)}
-            placeholder="e.g. SAS-AUD-001"
+            placeholder="e.g. GSO-AUD-001"
           />
         </Field>
 
@@ -489,7 +489,7 @@ export function EquipmentFormModal({
             id="equipment-location"
             value={values.storage_location}
             onChange={(event) => set('storage_location', event.target.value)}
-            placeholder="e.g. SAS Equipment Room A"
+            placeholder="e.g. GSO Equipment Room A"
           />
         </Field>
 

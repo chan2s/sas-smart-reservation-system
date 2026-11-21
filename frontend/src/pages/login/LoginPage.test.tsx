@@ -37,7 +37,7 @@ vi.mock('@/components/chatbot/ChatWidget', () => ({
 import { LoginPage } from './LoginPage'
 
 const DEACTIVATED_MESSAGE =
-  'This account has been deactivated. Please contact the SAS Office to restore access.'
+  'This account has been deactivated. Please contact the GSO Office to restore access.'
 
 afterEach(cleanup)
 

@@ -25,7 +25,7 @@ Windows Task Scheduler (every 5 minutes), "Program/script"::
 
 "Start in"::
 
-    C:\\Users\\Cristian\\SAS Smart Facility and Resource Reservation System\\backend
+    C:\\Users\\Cristian\\GSO Smart Facility and Resource Reservation System\\backend
 
 Linux crontab::
 

@@ -128,7 +128,7 @@ All Phase 1 requirements have been implemented and integrated. This verification
 
 - ✅ **Duplicate detection notice** — Alert box shows if `duplicate_groups().count > 0` with link to investigate
 
-- ✅ **Design conventions** — Follows existing SAS Reserve admin dashboard:
+- ✅ **Design conventions** — Follows existing GSO Reserve admin dashboard:
   - Card-based layout with list on left, detail on right
   - Consistent badge styling (tone mapping for status)
   - Icon usage (Building2, Users, Phone, Mail, MapPin, History, etc.)
@@ -145,7 +145,7 @@ All Phase 1 requirements have been implemented and integrated. This verification
   - Records audit log entry
 
 - ✅ **Organization listing for staff** — `/api/auth/organizations/` GET endpoint:
-  - Staff-only permission (IsSasStaff)
+  - Staff-only permission (IsGsoStaff)
   - Filters: ?status=, ?type=, ?search=, ?is_active=, ?page=
   - Serializer: `OrganizationListSerializer` (brief + member count + reservation count)
 

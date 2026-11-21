@@ -1,9 +1,9 @@
 """django-allauth adapters: role safety + identity-based account linking.
 
 Security rules enforced here:
-* Google login NEVER grants Admin or SAS Staff. New social accounts always
+* Google login NEVER grants Admin or GSO Staff. New social accounts always
   land as plain REQUESTER users.
-* A Google identity is associated with a SAS RESERVE account only by the
+* A Google identity is associated with a GSO RESERVE account only by the
   first-party callback (accounts.oauth_views), which binds Google's stable
   ``sub`` claim via the SocialAccount table. Email addresses are NOT a
   credential: matching an existing account by email never silently links the
@@ -25,8 +25,8 @@ class AllauthAccountAdapter(DefaultAccountAdapter):
         return True
 
 
-class SasSocialAccountAdapter(DefaultSocialAccountAdapter):
-    """Google sign-in behavior for SAS RESERVE."""
+class GsoSocialAccountAdapter(DefaultSocialAccountAdapter):
+    """Google sign-in behavior for GSO RESERVE."""
 
     def is_open_for_signup(self, request, sociallogin):
         return True
@@ -53,7 +53,7 @@ class SasSocialAccountAdapter(DefaultSocialAccountAdapter):
         """Never auto-link a social identity to an existing local account.
 
         Email addresses are not a credential. A Google identity is associated
-        with a SAS RESERVE account only by the first-party callback
+        with a GSO RESERVE account only by the first-party callback
         (accounts.oauth_views), which binds Google's stable ``sub`` claim and
         refuses to link email/password accounts. If allauth's own social-login
         entry point is ever used, matching an existing account sends the user

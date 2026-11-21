@@ -120,7 +120,7 @@ const cardVisible = () =>
     const button = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Install App')
     if (!button) return false
     const card = button.closest('[role="status"]')
-    return Boolean(card && card.textContent.includes('Install SAS RESERVE'))
+    return Boolean(card && card.textContent.includes('Install GSO RESERVE'))
   })()`)
 
 const waitMs = (ms) => evaluate(`new Promise((resolve) => setTimeout(resolve, ${ms}))`)
@@ -129,7 +129,7 @@ const waitMs = (ms) => evaluate(`new Promise((resolve) => setTimeout(resolve, ${
 const manifest = await evaluate(`fetch('/manifest.webmanifest').then((r) => r.json())`)
 check(
   'manifest is linked and parseable',
-  manifest.name === 'SAS RESERVE' &&
+  manifest.name === 'GSO RESERVE' &&
     Boolean(manifest.short_name) &&
     manifest.display === 'standalone' &&
     Boolean(manifest.start_url) &&
@@ -173,13 +173,13 @@ const cardText = await evaluate(
 check('install card appears after the prompt event', Boolean(cardText), cardText.slice(0, 80))
 check(
   'card carries the required description',
-  cardText.includes('Install SAS RESERVE for quick access from your home screen or desktop.'),
+  cardText.includes('Install GSO RESERVE for quick access from your home screen or desktop.'),
 )
 check(
   'card shows the app icon and both actions',
   await evaluate(
     `(() => {
-      const img = document.querySelector('img[alt="SAS RESERVE app icon"]')
+      const img = document.querySelector('img[alt="GSO RESERVE app icon"]')
       const install = [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Install App')
       const dismiss = [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Not now')
       return Boolean(img) && install && dismiss

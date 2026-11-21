@@ -457,7 +457,7 @@ export function RegisterPage() {
                 <Field
                   label="I am registering as"
                   htmlFor="affiliation"
-                  hint="External organizations are verified by the SAS Office before they can reserve."
+                  hint="External organizations are verified by the GSO Office before they can reserve."
                 >
                   <Select
                     id="affiliation"
@@ -645,7 +645,7 @@ export function RegisterPage() {
                     <Field
                       label="Purpose of requesting NORSU facilities"
                       htmlFor="purpose"
-                      hint="Optional — helps SAS verify your organization."
+                      hint="Optional — helps GSO verify your organization."
                     >
                       <Input
                         id="purpose"
@@ -779,7 +779,7 @@ export function RegisterPage() {
               {isExternal && (
                 <p className="rounded-lg border border-status-pending/25 bg-status-pending-bg px-3 py-2 text-xs text-status-pending">
                   After registering you will be asked to sign in. Your organization will be
-                  reviewed by the SAS Office, and you can reserve facilities once it is approved.
+                  reviewed by the GSO Office, and you can reserve facilities once it is approved.
                 </p>
               )}
 
@@ -833,7 +833,7 @@ export function RegisterPage() {
 
             <p className="mt-8 flex items-center justify-center gap-1.5 text-xs text-muted">
               <ShieldCheck className="size-3.5" aria-hidden />
-              Managed by the SAS Office — contact staff for account access
+              Managed by the GSO Office — contact staff for account access
             </p>
           </div>
         </div>

@@ -1,8 +1,8 @@
-# SAS RESERVE Pricing System Analysis — Complete Index
+# GSO RESERVE Pricing System Analysis — Complete Index
 
 ## Overview
 
-This analysis examines the Sound System operator fee implementation in the SAS RESERVE pricing system against the NORSU-BSC Rental Agreement requirements. Three document files have been generated with progressively increasing detail.
+This analysis examines the Sound System operator fee implementation in the GSO RESERVE pricing system against the NORSU-BSC Rental Agreement requirements. Three document files have been generated with progressively increasing detail.
 
 ---
 

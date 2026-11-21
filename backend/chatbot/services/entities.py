@@ -41,12 +41,15 @@ _DATE_DAY_MONTH_RE = re.compile(
 _TIME_RE = re.compile(
     r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|noon|midnight)?\b"
 )
-# Reservation IDs look like SAS-2026-00012 (this deployment's format) but
-# older data may use other short prefixes (e.g. RSV-2026-0003) — accept both.
+# Reservation IDs look like GSO-2026-00012 (this deployment's format).
+# Historical records may carry the retired SAS- prefix or another short
+# prefix (e.g. RSV-2026-0003), so lookups accept both.
 _RESERVATION_ID_RE = re.compile(
     r"\b([A-Z]{2,4}-\d{4}-\d{1,5})\b", re.IGNORECASE
 )
-_PARTIAL_ID_RE = re.compile(r"\bSAS-?\d{0,4}-?\d{0,5}\b")
+_PARTIAL_ID_RE = re.compile(
+    r"\b(?:GSO|SAS)-?\d{0,4}-?\d{0,5}\b", re.IGNORECASE
+)
 _DURATION_RE = re.compile(r"\b(\d+)\s*(hours?|hrs?|h)\b|\b(\d+)\s*(minutes?|mins?)\b")
 # "for 50 people", "50 participants", "capacity 50"
 _PARTICIPANTS_RE = re.compile(

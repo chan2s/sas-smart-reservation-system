@@ -87,7 +87,7 @@ check(
   'manifest served from the frontend origin',
   manifestResponse.status === 200 &&
     /manifest/.test(manifestResponse.type ?? '') &&
-    manifestResponse.body.name === 'SAS RESERVE',
+    manifestResponse.body.name === 'GSO RESERVE',
   `status=${manifestResponse.status} type=${manifestResponse.type}`,
 )
 
@@ -150,7 +150,7 @@ const nativeOffered = await evaluate('window.__bipFired === true')
 await sleep(2500) // 1.5s politeness delay + render
 const bannerVisible = await evaluate(`(() => {
   const button = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Install App')
-  return Boolean(button && button.closest('[role="status"]').textContent.includes('Install SAS RESERVE'))
+  return Boolean(button && button.closest('[role="status"]').textContent.includes('Install GSO RESERVE'))
 })()`)
 check(
   'Chromium fired a real beforeinstallprompt on localhost:5173',

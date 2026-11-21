@@ -24,7 +24,7 @@ const mediaRule = rules.find((rule) => rule.handler === 'CacheFirst')
 // Workbox passes the real Request; jsdom's Request does not populate
 // `destination`, so the predicate is given the same shape explicitly.
 const context = (pathname: string, destination = '') => ({
-  url: new URL(`https://sas-reserve-api.onrender.com${pathname}`),
+  url: new URL(`https://gso-reserve-api.onrender.com${pathname}`),
   request: { destination } as Request,
 })
 

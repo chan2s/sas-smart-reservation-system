@@ -30,7 +30,7 @@ def user_authentication_rule(user) -> bool:
     return user is not None
 
 
-class SasJWTAuthentication(JWTAuthentication):
+class GsoJWTAuthentication(JWTAuthentication):
     def get_user(self, validated_token):
         try:
             user = super().get_user(validated_token)

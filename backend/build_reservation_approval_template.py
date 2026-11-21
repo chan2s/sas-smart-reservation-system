@@ -94,7 +94,7 @@ style(p.add_run("Bayawan-Sta. Catalina Campus"), 9.2, color=MUTED)
 p = brand.add_paragraph()
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 p.paragraph_format.space_after = Pt(1)
-style(p.add_run("STUDENT AFFAIRS AND SERVICES  |  SAS RESERVE"), 8.2, bold=True, color=BLUE)
+style(p.add_run("GENERAL SERVICES OFFICE"), 8.2, bold=True, color=BLUE)
 
 # Replace the default empty paragraph above the header table with one compact line.
 for p in list(header.paragraphs):

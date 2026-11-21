@@ -191,7 +191,7 @@ export function OrganizationsPage() {
         title={isInternalScope ? 'Internal organizations' : 'External organizations'}
         description={
           isInternalScope
-            ? 'The campus colleges and offices managed by SAS RESERVE. These are internal requesters and never pay external-organization fees.'
+            ? 'The campus colleges and offices managed by GSO RESERVE. These are internal requesters and never pay external-organization fees.'
             : 'Review registrations from organizations outside NORSU. Only approved organizations may submit facility reservations.'
         }
       />

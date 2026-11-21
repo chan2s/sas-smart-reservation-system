@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal'
  * renders this constant rather than trusting an error string.
  */
 export const DEACTIVATED_ACCOUNT_MESSAGE =
-  'This account has been deactivated. Please contact the SAS Office to restore access.'
+  'This account has been deactivated. Please contact the GSO Office to restore access.'
 
 /**
  * Modal shown when a sign-in is refused because an administrator deactivated

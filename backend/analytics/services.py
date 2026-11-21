@@ -63,7 +63,7 @@ def _dashboard_lists(user, today) -> dict:
     not the browser's clock, and so lists reflect the full database rather
     than page 1 of the paginated reservation list. Scope mirrors summary().
     """
-    is_staff = user is None or user.is_sas_staff
+    is_staff = user is None or user.is_gso_staff
     base = Reservation.objects.select_related("facility", "requester")
     if not is_staff:
         base = base.filter(requester=user)
@@ -158,7 +158,7 @@ def summary(user=None) -> dict:
 
     expire_overdue_reservations()
 
-    is_staff = user is None or user.is_sas_staff
+    is_staff = user is None or user.is_gso_staff
     today = timezone.localdate()
     all_reservations = Reservation.objects.all()
     if not is_staff:
@@ -202,7 +202,7 @@ def summary(user=None) -> dict:
 def requester_breakdown(days: int = 365) -> dict:
     """Campus vs external usage, including per-facility external activity.
 
-    Helps SAS understand how much its facilities serve outside organizations.
+    Helps GSO understand how much its facilities serve outside organizations.
     """
     start = timezone.localdate() - timedelta(days=days)
     qs = Reservation.objects.filter(date__gte=start)

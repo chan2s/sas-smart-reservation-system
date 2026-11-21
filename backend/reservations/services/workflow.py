@@ -497,7 +497,7 @@ def reject_reservation(reservation, actor, reason):
         status="REJECTED",
         status_label="Rejected",
         message=f"Your reservation was rejected. Reason: {reason}",
-        next_action="Contact the SAS Office if you have questions.",
+        next_action="Contact the GSO Office if you have questions.",
     )
     return reservation
 
@@ -518,7 +518,7 @@ def resubmit_reservation(reservation, actor, message=""):
         )
     default_message = (
         "Reservation updated and resubmitted."
-        if getattr(actor, "is_sas_staff", False)
+        if getattr(actor, "is_gso_staff", False)
         else "Reservation updated and resubmitted by requester."
     )
     updated_event = record_event(
@@ -625,7 +625,7 @@ def cancellation_eligibility(reservation, user):
     * ``"cancellation_window"`` — requester (non-staff) cancelling a
       reservation whose event date is today or tomorrow
     """
-    staff = bool(user is not None and getattr(user, "is_sas_staff", False))
+    staff = bool(user is not None and getattr(user, "is_gso_staff", False))
     user_id = getattr(user, "id", None)
     is_owner = (
         user_id is not None
@@ -669,7 +669,7 @@ def cancellation_eligibility(reservation, user):
 
 
 def cancel_reservation(reservation, actor, reason=""):
-    """Cancel a reservation (by its own requester or by SAS staff).
+    """Cancel a reservation (by its own requester or by GSO staff).
 
     Enforced via ``cancellation_eligibility``: terminal statuses (COMPLETED,
     CANCELLED, REJECTED, EXPIRED, NO_SHOW) can never be cancelled, an event
@@ -735,7 +735,7 @@ def cancel_reservation(reservation, actor, reason=""):
             notify_staff(
                 Notification.Type.RESERVATION,
                 "Reservation cancelled",
-                f"{locked.event_name} on {locked.date} was cancelled by SAS staff.",
+                f"{locked.event_name} on {locked.date} was cancelled by GSO staff.",
                 _reservation_link(locked),
                 exclude_user=actor,
                 event_key=f"reservation:{locked.pk}:cancelled-staff",
@@ -751,7 +751,7 @@ def cancel_reservation(reservation, actor, reason=""):
         status="CANCELLED",
         status_label="Cancelled",
         message=f"Your reservation was cancelled by {cancelled_by}.",
-        next_action="Contact the SAS Office if you need to reschedule.",
+        next_action="Contact the GSO Office if you need to reschedule.",
     )
     return reservation
 
@@ -766,7 +766,7 @@ def no_show_eligibility(reservation, user=None, now=None):
     ``"status"``, ``"checked_in"``, ``"already_marked"``,
     ``"date_not_passed"``.
 
-    Rules: only SAS staff may perform the action; only an APPROVED reservation
+    Rules: only GSO staff may perform the action; only an APPROVED reservation
     that was never checked in is eligible (an ACTIVE/COMPLETED one was
     attended); and the reservation's CALENDAR DATE must be at least one day in
     the past, in the project's configured timezone. Eligibility therefore
@@ -775,7 +775,7 @@ def no_show_eligibility(reservation, user=None, now=None):
     eligible on Oct 20 regardless of its start time). Cancelled, rejected,
     expired, completed, and already-marked reservations are never eligible.
     """
-    if user is not None and not getattr(user, "is_sas_staff", False):
+    if user is not None and not getattr(user, "is_gso_staff", False):
         return False, "not_permitted", ""
     if reservation.status == Reservation.Status.NO_SHOW:
         return (
@@ -822,7 +822,7 @@ def mark_no_show(reservation, actor, now=None):
     ``transaction.on_commit`` so it only runs after the no-show transition has
     actually committed, and a failure is logged without undoing the status change.
     """
-    if not getattr(actor, "is_sas_staff", False):
+    if not getattr(actor, "is_gso_staff", False):
         raise PermissionDenied(
             "Only administrators can mark a reservation as a no-show."
         )
@@ -961,7 +961,7 @@ def check_in_reservation(reservation, actor, override=False):
                 "Early check-in override performed by an administrator before "
                 "the standard 3-hour window."
                 if override_used
-                else "Requester checked in with SAS staff."
+                else "Requester checked in with GSO staff."
             ),
         )
         AuditLog.record(

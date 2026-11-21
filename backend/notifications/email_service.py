@@ -1,5 +1,5 @@
 """
-Email notification service for SAS RESERVE.
+Email notification service for GSO RESERVE.
 
 Handles sending email notifications for reservation status changes.
 Uses Django's email infrastructure with environment-based SMTP configuration.
@@ -26,7 +26,7 @@ from django.template.loader import render_to_string
 
 logger = logging.getLogger(__name__)
 
-SAS_RESERVE_SITE_NAME = "SAS RESERVE"
+SITE_NAME = "GSO RESERVE"
 
 #: Hostnames reachable only from a developer's machine. A link built from one
 #: of these in a deployment is a misconfiguration, not a usable link.
@@ -54,12 +54,12 @@ def get_public_frontend_url() -> str:
     if not base or parsed.scheme not in ("http", "https") or not host:
         logger.error(
             "PUBLIC_FRONTEND_URL is not an absolute http(s) URL (%r); email "
-            "notifications cannot link to SAS RESERVE. Set it to the public "
+            "notifications cannot link to GSO RESERVE. Set it to the public "
             "origin of the deployed frontend.",
             base,
         )
         raise ImproperlyConfigured(
-            "PUBLIC_FRONTEND_URL must be the public origin of the SAS RESERVE "
+            "PUBLIC_FRONTEND_URL must be the public origin of the GSO RESERVE "
             "frontend, e.g. https://reserve.example.edu."
         )
 
@@ -97,21 +97,21 @@ def build_reservation_url(reservation) -> str:
     return build_frontend_url(f"reservations/{reservation.pk}")
 
 
-REMINDER_SUBJECT = "Reminder: Your SAS RESERVE Booking Is Coming Up"
+REMINDER_SUBJECT = "Reminder: Your GSO RESERVE Booking Is Coming Up"
 
-BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
+BOOKING_CONFIRMATION_SUBJECT = "GSO RESERVE - Booking Confirmation"
 
 CHECK_IN_INSTRUCTIONS = (
     "Please check in at the facility at least 3 hours before your event start "
     "time. Present your reservation reference number and a valid ID at the "
-    "SAS Office or check-in desk."
+    "GSO Office or check-in desk."
 )
 
 #: Email subjects used across reservation notifications.
-APPROVAL_SUBJECT = "Reservation Approved - SAS RESERVE"
-REMINDER_SUBJECT = "Check-In Reminder - SAS RESERVE"
-NO_SHOW_SUBJECT = "Reservation No-Show Notice - SAS RESERVE"
-BOOKING_CONFIRMATION_SUBJECT = "SAS RESERVE - Booking Confirmation"
+APPROVAL_SUBJECT = "Reservation Approved - GSO RESERVE"
+REMINDER_SUBJECT = "Check-In Reminder - GSO RESERVE"
+NO_SHOW_SUBJECT = "Reservation No-Show Notice - GSO RESERVE"
+BOOKING_CONFIRMATION_SUBJECT = "GSO RESERVE - Booking Confirmation"
 
 #: Default subject of an administrator's revision request. The claim reference
 #: makes the email easy to find in a requester's inbox.
@@ -119,7 +119,7 @@ REVISION_REQUEST_SUBJECT = "Action Required: Reservation Revision – {reservati
 
 #: Closing instruction shown in a revision-request email.
 REVISION_REQUEST_NEXT_ACTION = (
-    "Please coordinate with the SAS Office regarding the requested modifications."
+    "Please coordinate with the GSO Office regarding the requested modifications."
 )
 
 
@@ -151,7 +151,7 @@ def send_reservation_email(
             subject=subject,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[recipient_email],
         )
@@ -185,7 +185,7 @@ def send_reservation_edit_otp(reservation, recipient_email: str, otp: str) -> bo
         f"Verify reservation changes - {reservation.reservation_id}",
         "reservation_edit_otp",
         {
-            "site_name": SAS_RESERVE_SITE_NAME,
+            "site_name": SITE_NAME,
             "reservation_id": reservation.reservation_id,
             "otp": otp,
             "expires_minutes": 5,
@@ -197,10 +197,10 @@ def send_booker_lookup_otp(recipient_email: str, otp: str, phone_hint: str = "")
     """Send the code that authorises a returning-booker detail lookup."""
     return send_reservation_email(
         recipient_email,
-        "Verify your returning booker details - SAS RESERVE",
+        "Verify your returning booker details - GSO RESERVE",
         "booker_lookup_otp",
         {
-            "site_name": SAS_RESERVE_SITE_NAME,
+            "site_name": SITE_NAME,
             "otp": otp,
             "expires_minutes": 10,
             "phone_hint": phone_hint,
@@ -215,7 +215,7 @@ def send_reservation_modified(reservation, recipient_email: str) -> bool:
         f"Reservation updated - {reservation.reservation_id}",
         "reservation_modified",
         {
-            "site_name": SAS_RESERVE_SITE_NAME,
+            "site_name": SITE_NAME,
             "reservation_id": reservation.reservation_id,
             "event_name": reservation.event_name,
             "facility": reservation.facility.name,
@@ -349,7 +349,7 @@ def build_reservation_context(
         f"{item.quantity}x {item.equipment.name}" for item in reservation.items.all()
     ]
     return {
-        "site_name": SAS_RESERVE_SITE_NAME,
+        "site_name": SITE_NAME,
         "requester_name": requester_name,
         "reservation_id": reservation.reservation_id,
         "event_name": reservation.event_name,
@@ -390,9 +390,9 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
     except ImproperlyConfigured:
         return False, "configuration"
     if actor and getattr(actor, "pk", None):
-        context["approved_by"] = actor.display_name or "SAS Office"
+        context["approved_by"] = actor.display_name or "GSO Office"
     else:
-        context["approved_by"] = "SAS Office"
+        context["approved_by"] = "GSO Office"
 
     try:
         html_message = render_to_string("emails/reservation_approved.html", context)
@@ -414,7 +414,7 @@ def send_reservation_approved(reservation, actor) -> tuple[bool, Optional[str]]:
             subject=APPROVAL_SUBJECT,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[email],
         )
@@ -484,25 +484,25 @@ def send_external_reservation_approval(reservation) -> tuple[bool, Optional[str]
             reservation.requester.display_name if reservation.requester_id
             else reservation.contact_person or reservation.organization or "Requester"
         )
-        subject = f"Reservation Approved — {reservation.event_name} | SAS RESERVE"
+        subject = f"Reservation Approved — {reservation.event_name} | GSO RESERVE"
         body = (
             f"Dear {requester_name},\n\n"
-            "We are pleased to inform you that your external facility reservation request has been approved by the SAS Office of Negros Oriental State University - Bayawan-Sta. Catalina Campus.\n\n"
+            "We are pleased to inform you that your external facility reservation request has been approved by the General Services Office (GSO) of Negros Oriental State University - Bayawan-Sta. Catalina Campus.\n\n"
             "Please find your official reservation approval letter attached to this email.\n\n"
             "The attached document contains your approved reservation details and the required signature sections.\n\n"
             "Please download and print the document to obtain the necessary signatures.\n\n"
-            "You may also access and download your approval letter directly through your SAS RESERVE account.\n\n"
+            "You may also access and download your approval letter directly through your GSO RESERVE account.\n\n"
             "Thank you for choosing NORSU-BSC.\n\n"
-            "Sincerely,\n\nNORSU-BSC SAS Office\nSAS RESERVE"
+            "Sincerely,\n\nNORSU-BSC General Services Office\nGSO RESERVE"
         )
         message = EmailMultiAlternatives(
             subject=subject,
             body=body,
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"),
+            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"),
             to=[email],
         )
         message.attach(
-            f"SAS-RESERVE-APPROVAL-{reservation.reservation_id}.pdf",
+            f"GSO-RESERVE-APPROVAL-{reservation.reservation_id}.pdf",
             pdf,
             "application/pdf",
         )
@@ -561,7 +561,7 @@ def send_reservation_revision_request(
             "requested_by": (
                 actor.display_name
                 if actor and getattr(actor, "display_name", "")
-                else "SAS Office"
+                else "GSO Office"
             ),
         }
     )
@@ -586,7 +586,7 @@ def send_reservation_revision_request(
             subject=safe_subject,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[email],
         )
@@ -633,7 +633,7 @@ def send_reservation_checkin_reminder(
 
     reservation. The message includes the scheduled start time and the existing
     check-in instructions (3-hour window; present the reservation reference and a
-    valid ID at the SAS Office or check-in desk). It does not invent new
+    valid ID at the GSO Office or check-in desk). It does not invent new
     check-in procedures.
 
     Returns ``(success, error_category)`` with the same categories as
@@ -687,7 +687,7 @@ def send_reservation_checkin_reminder(
             subject=REMINDER_SUBJECT,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[email],
         )
@@ -760,14 +760,14 @@ def send_reservation_no_show_notice(
                 "allowed period."
             ),
             next_action=(
-                "If you believe this was recorded in error, please contact the SAS Office "
+                "If you believe this was recorded in error, please contact the GSO Office "
                 "as soon as possible."
             ),
         )
     except ImproperlyConfigured:
         return False, "configuration"
     context["marked_by"] = (
-        actor.display_name if actor and getattr(actor, "pk", None) else "SAS Office"
+        actor.display_name if actor and getattr(actor, "pk", None) else "GSO Office"
     )
 
     try:
@@ -790,7 +790,7 @@ def send_reservation_no_show_notice(
             subject=NO_SHOW_SUBJECT,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[email],
         )
@@ -868,7 +868,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
         )
         next_action = (
             "No further action is needed right now. You can check your "
-            "reservation status in SAS RESERVE at any time."
+            "reservation status in GSO RESERVE at any time."
         )
     else:
         message = (
@@ -876,7 +876,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
             f'status "{status_label}".'
         )
         next_action = (
-            "You can check your reservation status in SAS RESERVE at any time."
+            "You can check your reservation status in GSO RESERVE at any time."
         )
 
     try:
@@ -927,7 +927,7 @@ def send_booking_confirmation(reservation) -> tuple[bool, Optional[str]]:
             subject=BOOKING_CONFIRMATION_SUBJECT,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[email],
         )
@@ -1023,7 +1023,7 @@ def send_reservation_reminder(reservation) -> tuple[bool, Optional[str]]:
             subject=REMINDER_SUBJECT,
             body=plain_message,
             from_email=getattr(
-                settings, "DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@example.com>"
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
             ),
             to=[email],
         )
@@ -1115,7 +1115,7 @@ def send_reservation_notification(
 
     Args:
         user_email: The requester's email address.
-        reservation_id: The reservation ID (e.g., SAS-2024-00001).
+        reservation_id: The reservation ID (e.g., GSO-2024-00001).
         event_name: Name of the event.
         facility_name: Name of the facility.
         date: Event date (YYYY-MM-DD format).
@@ -1129,7 +1129,7 @@ def send_reservation_notification(
     Returns:
         True if email was sent successfully.
     """
-    subject = f"SAS RESERVE - Reservation {status_label}"
+    subject = f"GSO RESERVE - Reservation {status_label}"
 
     context = {
         "reservation_id": reservation_id,
@@ -1142,7 +1142,7 @@ def send_reservation_notification(
         "status_label": status_label,
         "message": message,
         "next_action": next_action,
-        "site_name": SAS_RESERVE_SITE_NAME,
+        "site_name": SITE_NAME,
     }
 
     return send_reservation_email(
@@ -1200,7 +1200,7 @@ def send_reservation_rejected(
         status="REJECTED",
         status_label="Rejected",
         message=f"Your reservation was rejected. Reason: {reason}",
-        next_action="Contact the SAS Office if you have questions.",
+        next_action="Contact the GSO Office if you have questions.",
     )
 
 
@@ -1226,5 +1226,5 @@ def send_reservation_cancelled(
         status="CANCELLED",
         status_label="Cancelled",
         message=f"Your reservation was cancelled by {cancelled_by}.",
-        next_action="Contact the SAS Office if you need to reschedule.",
+        next_action="Contact the GSO Office if you need to reschedule.",
     )

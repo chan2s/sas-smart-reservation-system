@@ -15,7 +15,7 @@ const PLACEHOLDERS: Array<[string, string]> = [
   ['{{organization_name}}', 'Reservation organization, when provided.'],
   ['{{requester_email}}', 'Reservation contact email or the requester account email.'],
   ['{{contact_phone}}', 'Reservation contact phone number, when provided.'],
-  ['{{reservation_reference}}', 'SAS RESERVE reservation ID.'],
+  ['{{reservation_reference}}', 'GSO RESERVE reservation ID.'],
   ['{{facility_name}}', 'Reserved facility name.'],
   ['{{event_name}}', 'Reservation event name.'],
   ['{{reservation_date}}', 'Reservation date, formatted for the letter.'],
@@ -179,14 +179,14 @@ export function ApprovalLetterManagementSection({ value, onChange, disabled, onS
 
         <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
           <div className="sm:col-span-2">
-          <h4 className="text-sm font-semibold text-ink">SAS/UED staff signature</h4>
+          <h4 className="text-sm font-semibold text-ink">GSO/UED staff signature</h4>
           <p className="mt-1 text-xs text-muted">These values appear on the right side of the renter signature area on future approval letters.</p>
           </div>
-        <Field label="SAS/UED Staff Display Name" htmlFor="sas-staff-display-name" required>
-          <Input id="sas-staff-display-name" required maxLength={160} value={value.sas_staff_display_name} disabled={disabled} onChange={(event) => update('sas_staff_display_name', event.target.value)} />
+        <Field label="GSO/UED Staff Display Name" htmlFor="gso-staff-display-name" required>
+          <Input id="gso-staff-display-name" required maxLength={160} value={value.sas_staff_display_name} disabled={disabled} onChange={(event) => update('sas_staff_display_name', event.target.value)} />
         </Field>
-        <Field label="SAS/UED Staff Designation" htmlFor="sas-staff-designation" required>
-          <Input id="sas-staff-designation" required maxLength={120} value={value.sas_staff_designation} disabled={disabled} onChange={(event) => update('sas_staff_designation', event.target.value)} />
+        <Field label="GSO/UED Staff Designation" htmlFor="gso-staff-designation" required>
+          <Input id="gso-staff-designation" required maxLength={120} value={value.sas_staff_designation} disabled={disabled} onChange={(event) => update('sas_staff_designation', event.target.value)} />
         </Field>
         </div>
 
@@ -203,7 +203,7 @@ export function ApprovalLetterManagementSection({ value, onChange, disabled, onS
         <p className="mt-1 text-xs text-muted">Choose an approved external reservation. Its personal details appear only in this preview and are never saved to the reusable template.</p>
         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
           <Field label="Reservation reference" htmlFor="preview-reservation" required hint="Preview renders the selected reservation through DOCX and LibreOffice. It does not save the draft, send email, or change status." className="flex-1">
-            <Input id="preview-reservation" required value={previewReference} disabled={disabled} onChange={(event) => setPreviewReference(event.target.value)} placeholder="SAS-2026-00032" />
+            <Input id="preview-reservation" required value={previewReference} disabled={disabled} onChange={(event) => setPreviewReference(event.target.value)} placeholder="GSO-2026-00032" />
           </Field>
           <Button type="button" variant="outline" loading={previewing} disabled={disabled || !previewReference.trim()} onClick={() => void preview()}>
             Preview current draft

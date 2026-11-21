@@ -174,7 +174,7 @@ def user_reservations(user, limit: int = 10) -> list[Reservation]:
 
 def find_reservation_by_id(user, reservation_id: str) -> Reservation | None:
     qs = Reservation.objects.select_related("facility", "requester")
-    if not user.is_sas_staff:
+    if not user.is_gso_staff:
         qs = qs.filter(requester=user)
     return qs.filter(reservation_id=reservation_id).first()
 
@@ -240,7 +240,7 @@ def cancellation_policy_excerpt() -> str:
     # events within 2 days; staff are exempt. Keep the wording in one place.
     return (
         "reservations scheduled within the next 2 days (today or tomorrow) "
-        "cannot be cancelled by requesters; contact the SAS Office for "
+        "cannot be cancelled by requesters; contact the GSO Office for "
         "assistance."
     )
 

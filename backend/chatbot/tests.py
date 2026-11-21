@@ -35,7 +35,7 @@ class IntentDetectionTests(TestCase):
         self.assertEqual(detect_intent("I want to cancel my reservation").intent, Intent.CANCEL_RESERVATION)
 
     def test_view_reservation(self):
-        self.assertEqual(detect_intent("Where is my reservation SAS-2026-00012?").intent, Intent.VIEW_RESERVATION)
+        self.assertEqual(detect_intent("Where is my reservation GSO-2026-00012?").intent, Intent.VIEW_RESERVATION)
 
     def test_out_of_scope(self):
         self.assertEqual(detect_intent("What is the capital of France?").intent, Intent.UNKNOWN)
@@ -60,8 +60,8 @@ class EntityExtractionTests(TestCase):
         self.assertEqual(entities.date, expected)
 
     def test_reservation_id(self):
-        entities = extract_entities("Where is my reservation SAS-2026-00012?")
-        self.assertEqual(entities.reservation_id, "SAS-2026-00012")
+        entities = extract_entities("Where is my reservation GSO-2026-00012?")
+        self.assertEqual(entities.reservation_id, "GSO-2026-00012")
 
     def test_24h_time(self):
         entities = extract_entities("Is the AVR available 2026-09-20 at 14:00?")
@@ -643,7 +643,7 @@ class SuggestionTests(TestCase):
             "What is the cancellation policy?",
             "What facilities are available?",
             "Is the Suggestion Hall available tomorrow at 2 PM?",
-            "What is SAS Reserve?",
+            "What is GSO Reserve?",
             "How does the reservation process work?",
         ):
             with self.subTest(question=question):

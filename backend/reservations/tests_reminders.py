@@ -116,7 +116,7 @@ class ReminderTestCase(TestCase):
         message = mail.outbox[0]
         self.assertEqual(
             message.subject,
-            "Check-In Reminder - SAS RESERVE",
+            "Check-In Reminder - GSO RESERVE",
         )
         self.assertEqual(message.to, [self.requester.email])
         self.assertIn("Maria Santos", message.body)
@@ -128,10 +128,10 @@ class ReminderTestCase(TestCase):
         self.assertIn("11:00 AM", message.body)
         self.assertIn("within the next three days", message.body)
         self.assertIn("3 hours before", message.body)
-        self.assertIn("SAS RESERVE", message.body)
+        self.assertIn("GSO RESERVE", message.body)
 
         html = message.alternatives[0][0]
-        self.assertIn("SAS RESERVE", html)
+        self.assertIn("GSO RESERVE", html)
         self.assertIn("Reminder Hall", html)
         self.assertIn("2x Projector", html)
 

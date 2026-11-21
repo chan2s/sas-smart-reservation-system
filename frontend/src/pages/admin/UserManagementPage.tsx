@@ -359,7 +359,7 @@ export function UserManagementPage() {
             >
               <option value="">All roles</option>
               <option value="ADMIN">Administrator</option>
-              <option value="STAFF">SAS Staff</option>
+              <option value="STAFF">GSO Staff</option>
               <option value="REQUESTER">Requester</option>
             </Select>
           </Field>
@@ -650,7 +650,7 @@ export function UserManagementPage() {
         title={formMode === 'create' ? 'Add user' : 'Edit user'}
         description={
           formMode === 'create'
-            ? 'Create an account and choose the role it should have in SAS RESERVE.'
+            ? 'Create an account and choose the role it should have in GSO RESERVE.'
             : 'Update the account profile or application role.'
         }
         size="md"
@@ -746,7 +746,7 @@ export function UserManagementPage() {
               }
             >
               <option value="REQUESTER">Requester</option>
-              <option value="STAFF">SAS Staff</option>
+              <option value="STAFF">GSO Staff</option>
               <option value="ADMIN">Administrator</option>
               <option value="ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE">
                 Assistant Campus Director for Administration and Finance

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Configurable check-in reminder window for SAS RESERVE.
+Configurable check-in reminder window for GSO RESERVE.
 
 Used by the reservation-notification sweep to decide when an approved,
 not-yet-checked-in, not-yet-started reservation is due for its check-in

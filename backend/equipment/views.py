@@ -14,8 +14,8 @@ from notifications.models import Notification
 from notifications.services import notify_staff
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
-    IsSasStaff,
-    IsSasStaffOrReadOnly,
+    IsGsoStaff,
+    IsGsoStaffOrReadOnly,
 )
 
 from .models import (
@@ -66,7 +66,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         .all()
     )
     serializer_class = EquipmentSerializer
-    permission_classes = [IsSasStaffOrReadOnly, IsAccountApprovedOrReadOnly]
+    permission_classes = [IsGsoStaffOrReadOnly, IsAccountApprovedOrReadOnly]
     pagination_class = None
     search_fields = ("name", "description", "storage_location", "asset_code", "category__name")
 
@@ -82,9 +82,9 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         params = self.request.query_params
 
         # Archived equipment must not appear in reservation flows by default.
-        # Only SAS staff may opt in to see archived lines (e.g. to restore
+        # Only GSO staff may opt in to see archived lines (e.g. to restore
         # them), and only when they explicitly ask.
-        if params.get("include_inactive") != "true" or not self.request.user.is_sas_staff:
+        if params.get("include_inactive") != "true" or not self.request.user.is_gso_staff:
             qs = qs.filter(is_active=True)
 
         if params.get("category"):
@@ -203,7 +203,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         goes through the same validator as the legacy single-image field
         (JPG/PNG/WEBP, at most 5 MB, verified bytes).
 
-        Writes require SAS staff; any authenticated user may read the gallery.
+        Writes require GSO staff; any authenticated user may read the gallery.
         """
         equipment = self.get_object()
 
@@ -446,7 +446,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         """GET: maintenance records. POST: mark N units under maintenance.
 
         Creating a maintenance record is a staff operation (the viewset's
-        ``IsSasStaffOrReadOnly`` permission applies: safe methods are readable
+        ``IsGsoStaffOrReadOnly`` permission applies: safe methods are readable
         by any authenticated user, writes require staff). Each record takes a
         ``quantity`` of units out of service; when every unit is covered the
         item's status flips to MAINTENANCE automatically.
@@ -547,7 +547,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 # Match the previous ``get_object()`` visibility rule: archived
                 # equipment is hidden from requesters but reportable by staff.
                 if equipment is None or (
-                    not equipment.is_active and not request.user.is_sas_staff
+                    not equipment.is_active and not request.user.is_gso_staff
                 ):
                     return Response(
                         {"detail": "Not found."},
@@ -609,7 +609,7 @@ class FacilityResourceViewSet(viewsets.ModelViewSet):
     (facility-scoped), while this endpoint lets administrators assign, edit, and
     remove resources for a facility without touching code or the database.
 
-    Writes require SAS staff; reads require authentication. Deleting an
+    Writes require GSO staff; reads require authentication. Deleting an
     assignment never touches reservation history, because reservations
     reference ``Equipment``, not the assignment row.
     """
@@ -619,7 +619,7 @@ class FacilityResourceViewSet(viewsets.ModelViewSet):
         .prefetch_related("equipment__equipment_images")
         .all()
     )
-    permission_classes = [IsSasStaffOrReadOnly, IsAccountApprovedOrReadOnly]
+    permission_classes = [IsGsoStaffOrReadOnly, IsAccountApprovedOrReadOnly]
     pagination_class = None
     search_fields = ("equipment__name", "facility__name", "description")
 
@@ -708,7 +708,7 @@ class MaintenanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly],
+        permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],
     )
     def resolve(self, request, pk=None):
         record = self.get_object()

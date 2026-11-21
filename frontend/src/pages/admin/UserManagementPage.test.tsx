@@ -251,11 +251,11 @@ describe('UserManagementPage', () => {
 
   it('does not offer deactivation for the signed-in administrator', async () => {
     apiState.adminUsers.mockResolvedValue(
-      respond([account({ id: 99, username: 'me', display_name: 'SAS Admin', role: 'ADMIN', role_label: 'Administrator', is_protected: true })]),
+      respond([account({ id: 99, username: 'me', display_name: 'GSO Admin', role: 'ADMIN', role_label: 'Administrator', is_protected: true })]),
     )
 
     renderPage()
-    await waitFor(() => expect(screen.getAllByText('SAS Admin').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByText('GSO Admin').length).toBeGreaterThan(0))
 
     const button = rowAction('You cannot deactivate your own account')
     expect(button).toBeDisabled()
@@ -333,7 +333,7 @@ describe('UserManagementPage', () => {
       first_name: 'Mariel',
       display_name: 'Mariel Santos',
       role: 'STAFF',
-      role_label: 'SAS Staff',
+      role_label: 'GSO Staff',
     })
 
     renderPage()
@@ -365,7 +365,7 @@ describe('UserManagementPage', () => {
         account({
           id: 99,
           username: 'me',
-          display_name: 'SAS Admin',
+          display_name: 'GSO Admin',
           role: 'ADMIN',
           role_label: 'Administrator',
           is_protected: true,
@@ -374,9 +374,9 @@ describe('UserManagementPage', () => {
     )
 
     renderPage()
-    await waitFor(() => expect(screen.getAllByText('SAS Admin').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByText('GSO Admin').length).toBeGreaterThan(0))
 
-    fireEvent.click(rowAction('Edit SAS Admin'))
+    fireEvent.click(rowAction('Edit GSO Admin'))
     expect(screen.getByLabelText('Role', { selector: 'select#user-role' })).toBeDisabled()
     expect(screen.getByText(/role is protected/i)).toBeInTheDocument()
   })

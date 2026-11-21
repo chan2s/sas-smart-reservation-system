@@ -21,7 +21,7 @@ User = get_user_model()
 
 username = "admin"
 password = "admin1234"
-email = "admin@sasreserve.local"
+email = "admin@gsoreserve.local"
 
 user, created = User.objects.get_or_create(
     username=username,

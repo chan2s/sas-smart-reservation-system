@@ -64,7 +64,7 @@ function notification(overrides: Partial<Notification> = {}): Notification {
     type: 'RESERVATION',
     type_label: 'Reservation',
     title: 'Reservation submitted',
-    message: 'SAS-2026-00042 is awaiting approval.',
+    message: 'GSO-2026-00042 is awaiting approval.',
     link: '/reservations/42',
     read: false,
     created_at: '2026-10-23T10:00:00+08:00',
@@ -94,12 +94,12 @@ beforeEach(() => {
       notification({
         id: 19,
         source: 'possible_no_show',
-        title: 'Possible no-show: SAS-2026-00019',
+        title: 'Possible no-show: GSO-2026-00019',
         message: 'Leadership Summit at Alert Hall; requester: Maria Santos; Started 18 minutes ago. No check-in recorded.',
         type_label: 'Possible no-show — action required',
         stage: 'NO_SHOW_RISK',
         stage_label: 'Possible no-show — action required',
-        reference: 'SAS-2026-00019',
+        reference: 'GSO-2026-00019',
         read: true,
         link: '/reservations/19',
       }),
@@ -132,11 +132,11 @@ describe('Header notification center', () => {
     openBell()
     expect(screen.getByText('Notifications')).toBeTruthy()
     expect(screen.getByText('Reservation submitted')).toBeTruthy()
-    expect(screen.getByText('Possible no-show: SAS-2026-00019')).toBeTruthy()
+    expect(screen.getByText('Possible no-show: GSO-2026-00019')).toBeTruthy()
     expect(screen.getByText('Unread')).toBeTruthy()
     expect(screen.getByText('Read')).toBeTruthy()
     const unreadRow = screen.getByText('Reservation submitted').closest('li')!
-    const readRow = screen.getByText('Possible no-show: SAS-2026-00019').closest('li')!
+    const readRow = screen.getByText('Possible no-show: GSO-2026-00019').closest('li')!
     expect(unreadRow.compareDocumentPosition(readRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 

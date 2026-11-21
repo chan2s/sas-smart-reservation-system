@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sas-reserve-production
+  group: gso-reserve-production
   cancel-in-progress: false
 
 jobs:
@@ -55,13 +55,13 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: sas_test
-          POSTGRES_USER: sas_test
-          POSTGRES_PASSWORD: sas_test
+          POSTGRES_DB: gso_test
+          POSTGRES_USER: gso_test
+          POSTGRES_PASSWORD: gso_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U sas_test -d sas_test"
+          --health-cmd "pg_isready -U gso_test -d gso_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -70,13 +70,13 @@ jobs:
       DJANGO_DEBUG: "false"
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
       EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
-      PUBLIC_FRONTEND_URL: https://sas-reserve.test
+      PUBLIC_FRONTEND_URL: https://gso-reserve.test
       ALLOW_DEV_TUNNELS: "true"
       DATABASE_URL: ""
       DB_CONNECTION: pgsql
-      DB_DATABASE: sas_test
-      DB_USERNAME: sas_test
-      DB_PASSWORD: sas_test
+      DB_DATABASE: gso_test
+      DB_USERNAME: gso_test
+      DB_PASSWORD: gso_test
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
     steps:

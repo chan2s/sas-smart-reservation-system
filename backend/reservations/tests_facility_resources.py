@@ -126,7 +126,7 @@ class FacilityResourceTestCase(TestCase):
             "end_time": "11:00",
             "event_name": "Orientation",
             "event_type": "ACADEMIC",
-            "organization": "Student Affairs",
+            "organization": "General Services Office",
             "purpose": "Freshmen orientation",
             "expected_participants": 50,
             "items": items,

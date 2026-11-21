@@ -95,7 +95,7 @@ export function DashboardPage() {
       <Backdrop />
 
       <PageHeader
-        eyebrow="SAS Reservation Management"
+        eyebrow="GSO Reservation Management"
         title="Manage your campus resources"
         description="Monitor reservations, facilities, equipment, and upcoming events from one centralized workspace."
         actions={
@@ -247,7 +247,7 @@ export function DashboardPage() {
       </div>
 
       {/* Bottom row: upcoming reservations (+ utilization for staff — the
-          analytics endpoint is SAS-staff-only, so requesters get the full
+          analytics endpoint is GSO-staff-only, so requesters get the full
           width for the table instead of a permanently empty panel) */}
       <div className="mt-5 grid gap-5 lg:grid-cols-5 [&>*]:min-w-0">
         <Card

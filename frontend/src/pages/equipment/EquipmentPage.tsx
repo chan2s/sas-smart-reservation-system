@@ -127,7 +127,7 @@ export function EquipmentPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="SAS Equipment"
+        eyebrow="GSO Equipment"
         title="Equipment"
         description="Manage and monitor all equipment and resources available for reservation."
         actions={
@@ -224,7 +224,7 @@ export function EquipmentPage() {
                 ? 'Try adjusting your search or filters.'
                 : isStaff
                   ? 'Add your first piece of equipment to build the reservation inventory.'
-                  : 'Equipment will appear here once SAS adds it to the inventory.'
+                  : 'Equipment will appear here once GSO adds it to the inventory.'
             }
             action={
               isStaff && !isViewOnly && !(search || categoryFilter || statusFilter !== 'ALL') ? (

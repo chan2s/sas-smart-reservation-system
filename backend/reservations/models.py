@@ -245,7 +245,7 @@ class PricingRule(models.Model):
     """One staff-editable official rental rate for the unified catalog.
 
     Prices used to be invisible to the codebase; keeping them here means the
-    SAS Office can change a rate in Django admin without touching any source
+    GSO Office can change a rate in Django admin without touching any source
     code or the frontend. One row describes one chargeable thing:
 
     * ``FACILITY`` — a flat fee for a facility *type* (e.g. Gymnasium
@@ -951,7 +951,7 @@ class Reservation(models.Model):
 
     def _next_reservation_id(self) -> str:
         year = self.date.year if self.date else None
-        prefix = f"SAS-{year}" if year else "SAS"
+        prefix = f"GSO-{year}" if year else "GSO"
         last = (
             Reservation.objects.filter(reservation_id__startswith=prefix)
             .order_by("-reservation_id")

@@ -41,7 +41,7 @@ export function NotificationsPage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
-        eyebrow="SAS Notifications"
+        eyebrow="GSO Notifications"
         title="Notifications"
         description="Reservation, facility, equipment, and administrator alert updates."
         actions={

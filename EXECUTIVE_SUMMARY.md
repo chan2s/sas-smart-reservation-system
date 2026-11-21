@@ -5,7 +5,7 @@
 ---
 
 ## What Was Built
-**Organization Reservation History Modal** — A new feature in the SAS RESERVE returning-booker workflow that displays after OTP verification, showing:
+**Organization Reservation History Modal** — A new feature in the GSO RESERVE returning-booker workflow that displays after OTP verification, showing:
 - Organization summary statistics (Total, Pending, Approved, Completed, Rejected)
 - Recent reservation history (last 5 completed/historical reservations)
 - Pending reservations (all pending and approved reservations awaiting action)

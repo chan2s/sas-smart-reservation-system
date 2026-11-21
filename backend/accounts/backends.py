@@ -1,6 +1,6 @@
-"""Authentication backend for the SAS RESERVE account-approval policy.
+"""Authentication backend for the GSO RESERVE account-approval policy.
 
-SAS RESERVE reuses Django's built-in ``is_active`` flag as the authoritative
+GSO RESERVE reuses Django's built-in ``is_active`` flag as the authoritative
 *account-approval* condition: an administrator clearing it revokes approval.
 A not-approved account is not removed from the system — it is restricted to
 view-only access by ``accounts.permissions.IsAccountApprovedOrReadOnly``.

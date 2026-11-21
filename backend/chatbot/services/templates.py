@@ -7,14 +7,14 @@ configuration, knowledge-base content, or business rules — never invented.
 # --- Greeting / help ---------------------------------------------------------
 
 WELCOME = (
-    "Hello! I'm the SAS Reserve assistant. I can answer questions about "
+    "Hello! I'm the GSO Reserve assistant. I can answer questions about "
     "facility availability, your reservations, facility schedules and rules, "
     "equipment, and reservation policies. Ask me something, or type \"help\" "
     "to see everything I can do."
 )
 
 WELCOME_PUBLIC = (
-    "Hello! I'm the SAS Reserve assistant. I can answer questions about "
+    "Hello! I'm the GSO Reserve assistant. I can answer questions about "
     "facilities, availability, schedules, policies, and how to register or "
     "log in. Sign in to also ask about your own reservations. Type \"help\" "
     "to see everything I can do."
@@ -24,7 +24,7 @@ WELCOME_PUBLIC = (
 # it never advertises personal-data questions a guest cannot use.
 HELP_PUBLIC = (
     "Here is what I can help with:\n"
-    "• About — \"What is SAS Reserve?\" or \"Who can use the system?\"\n"
+    "• About — \"What is GSO Reserve?\" or \"Who can use the system?\"\n"
     "• Facilities — \"What facilities can be reserved?\", \"Tell me about the "
     "Gymnasium\", \"What are the rules for the Cafeteria?\"\n"
     "• Availability — \"What facilities are available on Friday?\", \"Is the "
@@ -51,7 +51,7 @@ HELP = (
     "• Availability — \"Is the Audio-Visual Room available tomorrow at 2 PM?\" "
     "or \"What facilities are available on Friday?\"\n"
     "• Your reservations — \"Show my reservations\", \"What are my upcoming "
-    "reservations?\" or \"Where is my reservation SAS-2026-00012?\"\n"
+    "reservations?\" or \"Where is my reservation GSO-2026-00012?\"\n"
     "• Facilities — \"Tell me about the Gymnasium\", \"What are the rules for the "
     "Cafeteria?\", \"What time does the AVR open on Monday?\"\n"
     "• Equipment — \"How many wireless microphones are available today?\"\n"
@@ -158,7 +158,7 @@ RESERVATION_FOUND = (
 
 RESERVATION_NOT_FOUND = (
     "I couldn't find a reservation matching those details. Check the "
-    "reservation ID (format SAS-YYYY-#####) or ask \"show my reservations\"."
+    "reservation ID (format GSO-YYYY-#####) or ask \"show my reservations\"."
 )
 
 RESERVATION_FORBIDDEN = (
@@ -167,7 +167,7 @@ RESERVATION_FORBIDDEN = (
 
 RESERVATION_ID_INCOMPLETE = (
     "That reservation ID looks incomplete. Reservation IDs look like "
-    "SAS-2026-00012 — could you double-check it?"
+    "GSO-2026-00012 — could you double-check it?"
 )
 
 # --- Equipment ---------------------------------------------------------------
@@ -216,7 +216,7 @@ REGISTRATION_GUIDE = (
 LOGIN_GUIDE = (
     "To log in: click \"Login\" on the home page (or go to /login) and enter "
     "your username and password. You can also sign in with Google using your "
-    "school account. If you forgot your password, contact the SAS Office to "
+    "school account. If you forgot your password, contact the GSO Office to "
     "have it reset — the system does not offer self-service password resets."
 )
 
@@ -233,7 +233,7 @@ CANCEL_RESERVATION_GUIDE = (
 CANCEL_GUIDE_NO_MATCH = (
     "I can't cancel reservations, and I couldn't find a matching reservation "
     "in your records. Open /reservations to see your bookings, or tell me the "
-    "reservation ID (SAS-YYYY-#####) and I'll look it up."
+    "reservation ID (GSO-YYYY-#####) and I'll look it up."
 )
 
 # --- Fallbacks ---------------------------------------------------------------

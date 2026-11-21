@@ -1,6 +1,6 @@
 {% autoescape off %}
-SAS RESERVE
-Reservation Approved - SAS RESERVE
+GSO RESERVE
+Reservation Approved - GSO RESERVE
 ========================================
 
 Hello, {{ requester_name }},
@@ -25,10 +25,10 @@ NEXT STEPS
 ----------
 {{ next_action }}
 
-View your reservation in SAS RESERVE:
+View your reservation in GSO RESERVE:
 {{ view_url }}
 
 ---
 This is an automated notification from {{ site_name }}.
-If you have questions, please contact the SAS Office.
+If you have questions, please contact the GSO Office.
 {% endautoescape %}

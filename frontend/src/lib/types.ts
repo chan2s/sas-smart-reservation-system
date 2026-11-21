@@ -376,7 +376,7 @@ export interface FacilityPayload {
 /** Reservability level computed from the schedule + item status. */
 export type AvailabilityLevel = 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE'
 
-/** Item-level operational status (set by SAS staff, not schedule-derived). */
+/** Item-level operational status (set by GSO staff, not schedule-derived). */
 export type EquipmentStatus = 'AVAILABLE' | 'MAINTENANCE' | 'UNAVAILABLE' | 'RETIRED'
 
 export type EquipmentCondition = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED'
@@ -422,7 +422,7 @@ export interface Equipment {
   description: string
   total_quantity: number
   unit: string
-  /** Per-unit price configured by the SAS Office ("1000.00"). "0.00" = free / no item override. */
+  /** Per-unit price configured by the GSO Office ("1000.00"). "0.00" = free / no item override. */
   price: string
   /** Authoritative pricing method used by the backend reservation quote. */
   pricing_method: EquipmentPricingMethod
@@ -797,7 +797,7 @@ export interface ReservationSummary {
   cancellation_reason: string | null
   /**
    * Server-computed: may the current user edit and resubmit this reservation?
-   * (Owner or SAS staff, and the reservation is still awaiting review — the
+   * (Owner or GSO staff, and the reservation is still awaiting review — the
    * same rule the resubmit endpoint enforces.)
    */
   can_edit: boolean

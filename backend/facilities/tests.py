@@ -2,7 +2,7 @@
 
 Covers the end-to-end admin flow:
 
-* only SAS staff may create / edit / disable / archive / delete facilities;
+* only GSO staff may create / edit / disable / archive / delete facilities;
 * new facilities appear in the API (and therefore in the reservation form);
 * disabling a facility hides it from requesters and blocks new reservations;
 * re-enabling it makes it reservable again;

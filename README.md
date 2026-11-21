@@ -1,4 +1,4 @@
-# SAS Reserve — Smart Facility & Resource Reservation System
+# GSO RESERVE: A Smart Web-Based Facility and Resource Reservation System for NORSU-BSC
 
 A web-based facility and resource reservation system for NORSU-BSC, built with Django REST Framework and React.
 
@@ -167,7 +167,7 @@ docker compose down
 | Container runtime | Docker |
 | Compose version | Docker Compose v5.6.0 |
 
-The intended goal is to deploy SAS Reserve on the remote Ubuntu server and make the application accessible through port `4816`.
+The intended goal is to deploy GSO Reserve on the remote Ubuntu server and make the application accessible through port `4816`.
 
 ### Step 1: Check network connectivity
 
@@ -284,9 +284,9 @@ Do not attempt to bypass this restriction, change Docker socket permissions, or 
 
 Before proceeding, confirm the following with the administrator:
 
-1. The authorized account or deployment process that will manage the SAS Reserve containers.
+1. The authorized account or deployment process that will manage the GSO Reserve containers.
 2. Whether Docker Compose deployment is permitted on this server.
-3. Whether port `4816` is assigned to SAS Reserve.
+3. Whether port `4816` is assigned to GSO Reserve.
 4. Whether the relevant firewall and network rules permit access to that port.
 5. Which production database and persistent storage should be used.
 6. Whether an existing service already uses the intended port.
@@ -416,7 +416,7 @@ Web Push production checklist in Section 9 to verify the rebuilt host.
 | Remote Docker daemon access for `sas` | Blocked by permissions |
 | `sudo` access for `sas` | Not permitted |
 | Remote application on port 4816 | Not verified as available |
-| SAS Reserve deployed remotely | Not completed |
+| GSO Reserve deployed remotely | Not completed |
 | Production configuration | Requires preparation and verification |
 
 ### Historical blocker
@@ -478,7 +478,7 @@ EMAIL_USE_TLS=true
 EMAIL_USE_SSL=false
 EMAIL_HOST_USER=your-address@gmail.com
 EMAIL_HOST_PASSWORD=your-google-app-password
-DEFAULT_FROM_EMAIL=SAS RESERVE <your-address@gmail.com>
+DEFAULT_FROM_EMAIL=GSO RESERVE <your-address@gmail.com>
 ```
 
 Delivery is recorded on the reservation (`reminder_email_sent_at`), so a
@@ -512,7 +512,7 @@ still be scheduled with the host's cron (or a Render cron job):
 
 ```cron
 # Move unapproved reservations to EXPIRED once their event starts.
-*/10 * * * * cd /path/to/backend && /path/to/python manage.py expire_reservations >> /var/log/sas-expire.log 2>&1
+*/10 * * * * cd /path/to/backend && /path/to/python manage.py expire_reservations >> /var/log/gso-expire.log 2>&1
 ```
 
 ---
@@ -619,8 +619,8 @@ service hosts are accepted, and production subscriptions must use HTTPS.
 |---|---|
 | Windows: Google Chrome | Use a current browser version, allow site notifications, and keep Windows notifications enabled. |
 | Windows: Microsoft Edge | Use a current browser version, allow site notifications, and keep Windows notifications enabled. |
-| Android: Google Chrome | Allow notifications in Chrome; install SAS RESERVE as a PWA for app-like access. |
-| iPhone/iPad | Requires iOS/iPadOS 16.4 or later. Add SAS RESERVE to the Home Screen, open the installed app, enable notifications there, and allow OS notifications. |
+| Android: Google Chrome | Allow notifications in Chrome; install GSO RESERVE as a PWA for app-like access. |
+| iPhone/iPad | Requires iOS/iPadOS 16.4 or later. Add GSO RESERVE to the Home Screen, open the installed app, enable notifications there, and allow OS notifications. |
 
 Browser, push-service, and OS policies can limit delivery or background activity.
 Push cannot arrive while the device has no internet connection or when browser

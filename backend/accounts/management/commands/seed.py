@@ -71,7 +71,7 @@ FACILITIES = [
         "built_in_seats": 300,
         "built_ins": ["tables"],
         "rules": [
-            "Outside catering requires prior coordination with SAS",
+            "Outside catering requires prior coordination with GSO",
             "Tables and chairs must be rearranged back to default layout",
             "Waste segregation is strictly enforced",
         ],
@@ -141,10 +141,10 @@ class Command(BaseCommand):
                 username="admin",
                 email="admin@school.edu",
                 password="admin1234",
-                first_name="SAS",
+                first_name="GSO",
                 last_name="Administrator",
                 role=User.Role.ADMIN,
-                organization="SAS Office",
+                organization="GSO Office",
             )
             self.stdout.write("  + admin (Administrator)")
         if not User.objects.filter(username="staff").exists():
@@ -152,12 +152,12 @@ class Command(BaseCommand):
                 username="staff",
                 email="staff@school.edu",
                 password="staff1234",
-                first_name="SAS",
+                first_name="GSO",
                 last_name="Staff",
                 role=User.Role.STAFF,
-                organization="SAS Office",
+                organization="GSO Office",
             )
-            self.stdout.write("  + staff (SAS Staff)")
+            self.stdout.write("  + staff (GSO Staff)")
         if not User.objects.filter(username="requester").exists():
             User.objects.create_user(
                 username="requester",
@@ -166,7 +166,7 @@ class Command(BaseCommand):
                 first_name="Sample",
                 last_name="Requester",
                 role=User.Role.REQUESTER,
-                organization="Student Affairs",
+                organization="General Services Office",
             )
             self.stdout.write("  + requester (Requester)")
 
@@ -388,7 +388,7 @@ class Command(BaseCommand):
                 continue
             reservation = Reservation.objects.create(
                 requester=requester,
-                organization="Student Affairs",
+                organization="General Services Office",
                 event_name=data["event_name"],
                 facility=data["facility"],
                 date=data["date"],

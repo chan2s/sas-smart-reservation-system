@@ -177,7 +177,7 @@ function RequireApproved({
   return children
 }
 
-/** Blocks access for requesters; only administrators and SAS staff pass. */
+/** Blocks access for requesters; only administrators and GSO staff pass. */
 function RequireStaff({ children }: { children: ReactNode }) {
   const { user, loading, isStaff } = useAuth()
   if (loading) {
@@ -194,7 +194,7 @@ function RequireStaff({ children }: { children: ReactNode }) {
 
 /**
  * Administrator-only guard for user management and login activity. Mirrors the
- * backend's ``IsAdmin`` permission — SAS staff are redirected just like any
+ * backend's ``IsAdmin`` permission — GSO staff are redirected just like any
  * other non-administrator, so hiding the nav is never the only protection.
  */
 function RequireAdmin({ children }: { children: ReactNode }) {

@@ -1,7 +1,7 @@
 # Organization Reservation History Feature — Complete Summary
 
 ## Overview
-Successfully implemented and debugged the **Organization Reservation History & Pending Reservations** feature for SAS RESERVE's Returning Booker OTP verification workflow. Feature displays after successful OTP verification, showing organization summary statistics, recent reservation history, and pending reservations with full isolation between sections.
+Successfully implemented and debugged the **Organization Reservation History & Pending Reservations** feature for GSO RESERVE's Returning Booker OTP verification workflow. Feature displays after successful OTP verification, showing organization summary statistics, recent reservation history, and pending reservations with full isolation between sections.
 
 ---
 

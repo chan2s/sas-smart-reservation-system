@@ -221,7 +221,7 @@ async function refreshAccessToken(): Promise<boolean> {
             // The session is unrecoverable. Broadcast so the auth provider can
             // drop the stale user instead of leaving a "zombie" logged-in
             // session where every request fails behind a normal-looking UI.
-            window.dispatchEvent(new Event('sas:auth-expired'))
+            window.dispatchEvent(new Event('gso:auth-expired'))
           }
           return false
         }
@@ -699,7 +699,7 @@ export const endpoints = {
     )
   },
   facility: (id: number) => api.get<Facility>(`/api/facilities/${id}/`),
-  // --- Admin facility management (SAS staff only) --------------------
+  // --- Admin facility management (GSO staff only) --------------------
   createFacility: (payload: FacilityPayload | FormData) =>
     payload instanceof FormData
       ? api.postForm<Facility>('/api/facilities/', payload)

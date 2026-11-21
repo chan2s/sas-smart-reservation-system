@@ -7,7 +7,7 @@ import { needsAffiliationOnboarding } from '@/lib/utils'
 
 /**
  * Landing point of the Google OAuth flow. The backend redirects here with
- * the SAS RESERVE JWT pair in the URL fragment. The AuthProvider bootstrap
+ * the GSO RESERVE JWT pair in the URL fragment. The AuthProvider bootstrap
  * consumes the fragment on mount and loads the authenticated user; this page
  * shows progress and then routes to the correct destination for the user's
  * existing role (requesters and staff both land on /dashboard, which renders

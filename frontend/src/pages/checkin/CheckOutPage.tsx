@@ -230,7 +230,7 @@ export function CheckOutPage() {
                 id="checkout-notes"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
-                placeholder="Any observations for SAS staff…"
+                placeholder="Any observations for GSO staff…"
                 className="min-h-[40px]"
               />
             </Field>

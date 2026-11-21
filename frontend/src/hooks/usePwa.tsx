@@ -72,7 +72,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     // The dev service worker registers without precaching anything, so the
     // "opens offline" claim is only true for production builds.
     if (offlineReady && !import.meta.env.DEV) {
-      toast('SAS RESERVE is ready to open without a connection.', 'info')
+      toast('GSO RESERVE is ready to open without a connection.', 'info')
     }
   }, [offlineReady, toast])
 
@@ -84,7 +84,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
 
   const promptInstall = useCallback(async () => {
     const outcome = await triggerInstallPrompt()
-    if (outcome === 'accepted') toast('Installing SAS RESERVE…', 'success')
+    if (outcome === 'accepted') toast('Installing GSO RESERVE…', 'success')
     return outcome
   }, [toast])
 

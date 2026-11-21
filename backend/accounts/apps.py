@@ -22,7 +22,7 @@ def secret_key_length_check(app_configs, **kwargs):
                 "defaults to it).",
                 hint="Set a long random DJANGO_SECRET_KEY in backend/.env "
                 "(e.g. python -c \"import secrets; print(secrets.token_urlsafe(64))\").",
-                id="sas.W001",
+                id="gso.W001",
             )
         )
     return errors

@@ -17,7 +17,7 @@ export function OfflineBanner() {
   if (online) return null
 
   const heading = browserOnline
-    ? "Can't reach SAS RESERVE — showing saved information."
+    ? "Can't reach GSO RESERVE — showing saved information."
     : "You're offline — showing saved information."
 
   const backupLabel = hasBackup && lastSyncedAt

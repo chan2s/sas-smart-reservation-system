@@ -16,7 +16,7 @@ from django.core.files import File
 from django.utils import timezone
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
@@ -403,7 +403,7 @@ def _build_docx(reservation, target, *, letter_settings=None):
     template_values = placeholder_values(reservation, letter_settings)
     document.core_properties.title = f"Reservation Approval - {reservation.reservation_id}"
     document.core_properties.subject = "External reservation approval"
-    document.core_properties.author = "Negros Oriental State University — SAS RESERVE"
+    document.core_properties.author = "Negros Oriental State University — GSO RESERVE"
 
     section = document.sections[0]
     section.page_width = Inches(8.5)
@@ -422,7 +422,10 @@ def _build_docx(reservation, target, *, letter_settings=None):
         letter_settings.body_content,
     )
 
-    signatures = document.add_table(rows=5, cols=2)
+    # Every signatory shares one layout: name, signature line, then designation.
+    # Rows 0-3 hold the side-by-side renter and GSO staff blocks (label, name,
+    # line, designation) and rows 4-7 hold the approving official, centered.
+    signatures = document.add_table(rows=8, cols=2)
     signatures.autofit = False
     signatures.columns[0].width = Inches(3.55)
     signatures.columns[1].width = Inches(3.55)
@@ -441,72 +444,88 @@ def _build_docx(reservation, target, *, letter_settings=None):
                 paragraph.paragraph_format.keep_with_next = True
                 paragraph.paragraph_format.keep_together = True
 
-    renter, staff = signatures.rows[0].cells
-    renter.paragraphs[0].paragraph_format.space_after = Pt(1)
+    signature_line = "________________________________"
+
+    def _signature_role(name_cell, line_cell, designation_cell, name_text, designation_text, credentials_text=""):
+        name_p = name_cell.paragraphs[0]
+        name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        name_p.paragraph_format.space_before = Pt(8)
+        name_p.paragraph_format.space_after = Pt(0)
+        # Exact line spacing removes the extra leading the built-in style adds
+        # around an 8.5pt name, which otherwise opens a gap above the line.
+        name_p.paragraph_format.line_spacing = Pt(10)
+        name_p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        name_p.paragraph_format.keep_together = True
+        _style_run(name_p.add_run(name_text), size=8.5, bold=True, color=NAVY)
+        if credentials_text:
+            name_p.add_run("\n")
+            _style_run(name_p.add_run(credentials_text), size=8.3, color=TEXT)
+
+        line_p = line_cell.paragraphs[0]
+        line_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        line_p.paragraph_format.space_before = Pt(0)
+        line_p.paragraph_format.space_after = Pt(1)
+        # The underscore glyph sits on the baseline, so a normal 8pt line box
+        # would reserve ~7pt of empty ascent above it. Exact spacing keeps the
+        # line immediately below the name without clipping the underscore.
+        line_p.paragraph_format.line_spacing = Pt(2)
+        line_p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        line_p.paragraph_format.keep_together = True
+        _style_run(line_p.add_run(signature_line), size=8, color=MUTED)
+
+        designation_p = designation_cell.paragraphs[0]
+        designation_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        designation_p.paragraph_format.space_before = Pt(1)
+        designation_p.paragraph_format.space_after = Pt(0)
+        designation_p.paragraph_format.line_spacing = Pt(9.5)
+        designation_p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        designation_p.paragraph_format.keep_together = True
+        _style_run(designation_p.add_run(designation_text), size=7.8, color=MUTED)
+
+    renter = signatures.rows[0].cells[0]
+    renter.paragraphs[0].paragraph_format.space_after = Pt(0)
     _style_run(renter.paragraphs[0].add_run("Agreed by the Renter:"), size=8.5, bold=True, color=BLUE)
-    for cell in signatures.rows[1].cells:
-        p = cell.paragraphs[0]
-        p.paragraph_format.space_after = Pt(0)
-        p.add_run(" ").font.size = Pt(35)
-    for cell in signatures.rows[2].cells:
-        p = cell.paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_after = Pt(1)
-        _style_run(p.add_run("________________________________"), size=8, color=MUTED)
 
-    renter_p = signatures.rows[3].cells[0].paragraphs[0]
-    renter_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    renter_p.paragraph_format.keep_together = True
-    _style_run(renter_p.add_run(_name(reservation)), size=8.5, bold=True, color=NAVY)
-    _style_run(renter_p.add_run("\nName & Signature of the Renter"), size=7.8, color=MUTED)
+    # Renter: the name is resolved from the reservation, never hardcoded.
+    _signature_role(
+        signatures.rows[1].cells[0],
+        signatures.rows[2].cells[0],
+        signatures.rows[3].cells[0],
+        _name(reservation),
+        "Name & Signature of the Renter",
+    )
+    _signature_role(
+        signatures.rows[1].cells[1],
+        signatures.rows[2].cells[1],
+        signatures.rows[3].cells[1],
+        letter_settings.sas_staff_display_name or "",
+        letter_settings.sas_staff_designation or "",
+    )
 
-    staff_p = signatures.rows[3].cells[1].paragraphs[0]
-    staff_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    staff_p.paragraph_format.keep_together = True
-    if letter_settings.sas_staff_display_name:
-        _style_run(staff_p.add_run(letter_settings.sas_staff_display_name), size=8.5, bold=True, color=NAVY)
-        staff_p.add_run("\n")
-    if letter_settings.sas_staff_designation:
-        _style_run(staff_p.add_run(letter_settings.sas_staff_designation), size=7.8, color=MUTED)
-
-    approver = signatures.rows[4].cells[0].merge(signatures.rows[4].cells[1])
-    signatory_settings = letter_settings
-    approver_p = approver.paragraphs[0]
-    approver_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    approver_p.paragraph_format.space_before = Pt(8)
-    approver_p.paragraph_format.space_after = Pt(0)
-    approver_p.paragraph_format.keep_together = True
-    approver_p.paragraph_format.keep_with_next = True
-    _style_run(approver_p.add_run(resolve_template_text(
-        signatory_settings.approval_label, template_values,
+    approver_cells = [
+        signatures.rows[index].cells[0].merge(signatures.rows[index].cells[1])
+        for index in range(4, 8)
+    ]
+    approver_label = approver_cells[0].paragraphs[0]
+    approver_label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    approver_label.paragraph_format.space_before = Pt(10)
+    approver_label.paragraph_format.space_after = Pt(0)
+    approver_label.paragraph_format.keep_together = True
+    approver_label.paragraph_format.keep_with_next = True
+    _style_run(approver_label.add_run(resolve_template_text(
+        letter_settings.approval_label, template_values,
     )), size=8.5, bold=True, color=BLUE)
 
-    signature_space = approver.add_paragraph()
-    signature_space.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    signature_space.paragraph_format.space_before = Pt(18)
-    signature_space.paragraph_format.space_after = Pt(10)
-    signature_space.paragraph_format.keep_together = True
-    signature_space.paragraph_format.keep_with_next = True
-    _style_run(signature_space.add_run("________________________________"), size=8, color=MUTED)
-
-    name_paragraph = approver.add_paragraph()
-    name_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    name_paragraph.paragraph_format.space_before = Pt(0)
-    name_paragraph.paragraph_format.space_after = Pt(0)
-    name_paragraph.paragraph_format.keep_together = True
-    _style_run(name_paragraph.add_run(resolve_template_text(
-        "{{signatory_name}}", template_values,
-    )), size=9, bold=True, color=NAVY)
-    if signatory_settings and signatory_settings.credentials:
-        name_paragraph.add_run("\n")
-        _style_run(name_paragraph.add_run(resolve_template_text(
-            "{{signatory_credentials}}", template_values,
-        )), size=8.3, color=TEXT)
-    if signatory_settings and signatory_settings.designation:
-        name_paragraph.add_run("\n")
-        _style_run(name_paragraph.add_run(resolve_template_text(
-            "{{signatory_designation}}", template_values,
-        )), size=8.3, color=MUTED)
+    _signature_role(
+        approver_cells[1],
+        approver_cells[2],
+        approver_cells[3],
+        resolve_template_text("{{signatory_name}}", template_values),
+        resolve_template_text("{{signatory_designation}}", template_values)
+        if letter_settings.designation else "",
+        resolve_template_text("{{signatory_credentials}}", template_values)
+        if letter_settings.credentials else "",
+    )
 
     document.save(target)
 
@@ -518,7 +537,7 @@ def _convert_pdf(docx_path, output_dir):
     # A unique user profile prevents LibreOffice's profile lock from making
     # concurrent requests block or attach to another conversion process.
     # TemporaryDirectory removes the profile on success, timeout, and errors.
-    with tempfile.TemporaryDirectory(prefix="sas-libreoffice-profile-") as profile_dir:
+    with tempfile.TemporaryDirectory(prefix="gso-libreoffice-profile-") as profile_dir:
         profile_url = Path(profile_dir).resolve().as_uri()
         command = [
             executable,
@@ -591,7 +610,7 @@ def generate_approval_documents(reservation, *, force=False):
     try:
         old_docx_name = reservation.generated_approval_docx.name if reservation.generated_approval_docx else ""
         old_pdf_name = reservation.generated_approval_pdf.name if reservation.generated_approval_pdf else ""
-        with tempfile.TemporaryDirectory(prefix="sas-approval-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="gso-approval-") as temporary:
             tempdir = Path(temporary)
             docx_path = tempdir / f"{reservation.reservation_id}.docx"
             _build_docx(reservation, docx_path)

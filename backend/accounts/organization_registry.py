@@ -164,7 +164,7 @@ def duplicate_groups():
     unique constraint, so the only remaining ambiguity is the same name used
     for different types. Those groups are surfaced for staff review rather
     than merged automatically: merging would move historical reservations and
-    change an organization's declared type, both of which are the SAS Office's
+    change an organization's declared type, both of which are the GSO Office's
     decision, not an automatic migration's.
     """
     from django.db.models import Count
@@ -234,7 +234,7 @@ def link_reservation_organization(
     External reservations are the ones that can arrive with only a free-text
     organization name. A first successful submission creates the record (with
     the representative and phone/email supplied) in the PENDING state: it is a
-    real registry entry but still needs the normal SAS review before its
+    real registry entry but still needs the normal GSO review before its
     members can book under it. Internal reservations already carry a validated
     managed organization, so they are only timestamped.
 

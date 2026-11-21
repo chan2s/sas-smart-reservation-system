@@ -41,7 +41,7 @@ let entryId = 0
 // Non-personalized starter questions for public visitors. Never phrased
 // with "I/my/me/mine" — a visitor may not have an account at all.
 const PUBLIC_SUGGESTIONS = [
-  'What is SAS Reserve?',
+  'What is GSO Reserve?',
   'What facilities can be reserved?',
   'How does the reservation process work?',
   'What are the reservation rules?',
@@ -183,7 +183,7 @@ export function ChatWidget() {
             'inset-x-3 bottom-16 top-16 sm:inset-x-auto sm:bottom-6 sm:right-6 sm:top-auto sm:h-[560px] sm:w-[380px]',
           )}
           role="dialog"
-          aria-label="SAS Reserve assistant"
+          aria-label="GSO Reserve assistant"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-line bg-surface px-4 py-3">
@@ -192,7 +192,7 @@ export function ChatWidget() {
                 <Bot className="size-5" aria-hidden />
               </span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink">SAS Reserve Assistant</p>
+                <p className="truncate text-sm font-semibold text-ink">GSO Reserve Assistant</p>
                 <p className="text-[11px] text-muted">Answers from live system data</p>
               </div>
             </div>
@@ -265,7 +265,7 @@ export function ChatWidget() {
                 <div className="rounded-2xl rounded-tl-sm border border-line bg-soft px-3.5 py-3 text-sm text-ink">
                   {user
                     ? 'Hi! Ask me about facility availability, your reservations, schedules, equipment, or policies. I answer only from this system\'s data.'
-                    : 'Hi! Ask me about SAS Reserve — facilities, availability, schedules, equipment, or policies. Sign in to also ask about your own reservations.'}
+                    : 'Hi! Ask me about GSO Reserve — facilities, availability, schedules, equipment, or policies. Sign in to also ask about your own reservations.'}
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1">
                   {suggestions.map((suggestion) => (
@@ -387,7 +387,7 @@ export function ChatWidget() {
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={onKeyDown}
                 rows={1}
-                placeholder={user ? 'Ask about facilities, reservations…' : 'Ask about SAS Reserve…'}
+                placeholder={user ? 'Ask about facilities, reservations…' : 'Ask about GSO Reserve…'}
                 className="max-h-28 min-h-10 w-full resize-none rounded-lg border border-line bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/10"
                 aria-label="Message"
               />

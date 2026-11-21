@@ -60,7 +60,7 @@ function NoticeShell({
       <div className="flex items-start gap-3 p-3.5">
         <img
           src={APP_ICON_SRC}
-          alt="SAS RESERVE app icon"
+          alt="GSO RESERVE app icon"
           width={44}
           height={44}
           className="size-11 shrink-0 rounded-xl border border-line"
@@ -136,9 +136,9 @@ function InstallNotice() {
 
   return (
     <NoticeShell onDismiss={dismissInstall}>
-      <p className="text-sm font-semibold text-ink">Install SAS RESERVE</p>
+      <p className="text-sm font-semibold text-ink">Install GSO RESERVE</p>
       <p className="mt-0.5 text-xs text-body">
-        Install SAS RESERVE for quick access from your home screen or desktop.
+        Install GSO RESERVE for quick access from your home screen or desktop.
       </p>
       <div className="mt-2.5 flex items-center gap-2">
         <button
@@ -170,9 +170,9 @@ function IosInstallNotice() {
 
   return (
     <NoticeShell onDismiss={dismissIosInstructions}>
-      <p className="text-sm font-semibold text-ink">Install SAS RESERVE</p>
+      <p className="text-sm font-semibold text-ink">Install GSO RESERVE</p>
       <p className="mt-0.5 text-xs text-body">
-        Install SAS RESERVE for quick access from your home screen or desktop.
+        Install GSO RESERVE for quick access from your home screen or desktop.
       </p>
       <ol className="mt-2 list-decimal space-y-0.5 pl-4 text-xs text-body">
         <li>Tap the Share button in the browser toolbar.</li>

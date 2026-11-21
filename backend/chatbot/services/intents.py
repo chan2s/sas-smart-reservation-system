@@ -101,7 +101,7 @@ _RULES: tuple[IntentRule, ...] = (
     # --- Reservation lookups -------------------------------------------------
     IntentRule(
         Intent.VIEW_RESERVATION,
-        (("reservation", "sas-"), ("reservation", "rsv-"), ("my reservation",), ("reservation status",), ("where is my",), ("details for", "reservation"), ("reservation", "details")),
+        (("reservation", "gso-"), ("reservation", "sas-"), ("reservation", "rsv-"), ("my reservation",), ("reservation status",), ("where is my",), ("details for", "reservation"), ("reservation", "details")),
         weight=88,
     ),
     IntentRule(
@@ -122,7 +122,7 @@ _RULES: tuple[IntentRule, ...] = (
     IntentRule(
         Intent.CANCEL_RESERVATION,
         (("cancel", "reservation"), ("cancel", "booking"), ("cancel", "my"),),
-        # Above VIEW_RESERVATION: "cancel my reservation SAS-..." must be a
+        # Above VIEW_RESERVATION: "cancel my reservation GSO-..." must be a
         # cancellation request, not a lookup — "cancel" is the strong signal.
         weight=89,
     ),
@@ -186,14 +186,14 @@ class IntentMatch:
 
 
 def _normalize(message: str) -> str:
-    """Lowercase and strip punctuation except hyphens (SAS-2026-00012)."""
+    """Lowercase and strip punctuation except hyphens (GSO-2026-00012)."""
     return re.sub(r"[^\w\s-]", " ", message.lower())
 
 
 def _keyword_matches(keyword: str, normalized: str) -> bool:
     """Match a rule keyword against the normalized message.
 
-    Multi-word phrases and ID prefixes ("sas-") stay substring-based, but
+    Multi-word phrases and ID prefixes ("gso-", and legacy "sas-") stay substring-based, but
     single words require a word boundary — otherwise "cancel" would also
     match inside "cancelled" and steal MY_CANCELLED_RESERVATIONS questions
     ("show my cancelled reservations") as cancellation *requests*.

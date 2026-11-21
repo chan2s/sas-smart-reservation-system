@@ -1,6 +1,6 @@
-SAS RESERVE - Reservation changes submitted
+GSO RESERVE - Reservation changes submitted
 
-Reservation {{ reservation_id }} was updated after email verification. It remains subject to SAS review.
+Reservation {{ reservation_id }} was updated after email verification. It remains subject to GSO review.
 
 Event: {{ event_name }}
 Facility: {{ facility }}

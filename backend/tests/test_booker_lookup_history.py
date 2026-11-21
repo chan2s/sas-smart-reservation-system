@@ -54,7 +54,7 @@ class BooterLookupHistoryTests(TestCase):
 
         # Pending reservation
         pending = Reservation.objects.create(
-            reservation_id="SAS-2026-00001",
+            reservation_id="GSO-2026-00001",
             facility=self.facility,
             organization_ref=self.organization,
             organization="Test Organization",
@@ -73,7 +73,7 @@ class BooterLookupHistoryTests(TestCase):
 
         # Approved reservation
         approved = Reservation.objects.create(
-            reservation_id="SAS-2026-00002",
+            reservation_id="GSO-2026-00002",
             facility=self.facility,
             organization_ref=self.organization,
             organization="Test Organization",
@@ -92,7 +92,7 @@ class BooterLookupHistoryTests(TestCase):
 
         # Completed reservation
         completed = Reservation.objects.create(
-            reservation_id="SAS-2026-00003",
+            reservation_id="GSO-2026-00003",
             facility=self.facility,
             organization_ref=self.organization,
             organization="Test Organization",
@@ -211,7 +211,7 @@ class BooterLookupHistoryTests(TestCase):
 
         for idx, status in enumerate(statuses_to_count):
             Reservation.objects.create(
-                reservation_id=f"SAS-2026-0000{idx}",
+                reservation_id=f"GSO-2026-0000{idx}",
                 facility=self.facility,
                 organization_ref=self.organization,
                 organization="Test Organization",
@@ -249,7 +249,7 @@ class BooterLookupHistoryTests(TestCase):
         # Create reservations with staggered creation times
         for i in range(3):
             Reservation.objects.create(
-                reservation_id=f"SAS-2026-000{i}",
+                reservation_id=f"GSO-2026-000{i}",
                 facility=self.facility,
                 organization_ref=self.organization,
                 organization="Test Organization",

@@ -1,7 +1,7 @@
 """Administrator-only user management and login activity endpoints.
 
 Both surfaces are restricted to ``IsAdmin`` (the ``role == "ADMIN"`` accounts).
-Ordinary users — including SAS staff — receive 403 and can never read another
+Ordinary users — including GSO staff — receive 403 and can never read another
 account's identity, login history, or status through the API. The React UI
 hides these pages for non-administrators as well, but the backend is the
 authority.

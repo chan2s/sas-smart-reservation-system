@@ -128,7 +128,7 @@ check(
 // 2. Online: shell renders, no offline banner.
 await sleep(1500)
 const onlineText = await evaluate('document.body.innerText')
-check('shell renders in production', onlineText.includes('SAS'), `${onlineText.length} chars`)
+check('shell renders in production', onlineText.includes('GSO'), `${onlineText.length} chars`)
 check('no offline banner while online', !onlineText.includes("You're offline"))
 
 // 3. Connectivity lost: banner appears.
@@ -143,7 +143,7 @@ const offlineText = await evaluate('document.body.innerText')
 check('navigator.onLine reflects the outage', await evaluate('navigator.onLine') === false)
 check(
   'offline banner appears',
-  offlineText.includes("You're offline") || offlineText.includes("Can't reach SAS RESERVE"),
+  offlineText.includes("You're offline") || offlineText.includes("Can't reach GSO RESERVE"),
   offlineText.slice(0, 120).replace(/\n/g, ' | '),
 )
 check(
@@ -156,10 +156,10 @@ check('banner offers the saved-information view', offlineText.includes('View sav
 await send('Page.reload', { ignoreCache: true })
 await sleep(3500)
 const reloaded = await evaluate('document.body.innerText')
-check('shell still opens offline (served by the worker)', reloaded.includes('SAS'), `${reloaded.length} chars`)
+check('shell still opens offline (served by the worker)', reloaded.includes('GSO'), `${reloaded.length} chars`)
 check(
   'offline banner present after the offline reload',
-  reloaded.includes("You're offline") || reloaded.includes("Can't reach SAS RESERVE"),
+  reloaded.includes("You're offline") || reloaded.includes("Can't reach GSO RESERVE"),
 )
 
 // 5. Reconnect: banner clears.

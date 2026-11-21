@@ -127,7 +127,7 @@ def notify(user, notification_type, title, message="", link="", event_key=None):
 
 
 def notify_staff(notification_type, title, message="", link="", exclude_user=None, event_key=None):
-    """Notify administrators and SAS staff, optionally excluding the actor."""
+    """Notify administrators and GSO staff, optionally excluding the actor."""
     recipients = User.objects.filter(
         role__in=[User.Role.ADMIN, User.Role.STAFF],
         is_active=True,
@@ -274,10 +274,10 @@ def send_push_to_user(user_id, notification_type, link="", event_key=None):
             # Push is a wake-up and authenticated deep link, never a copy of the
             # in-app message (which may contain private workflow details).
             payload = json.dumps({
-                "title": "SAS RESERVE",
+                "title": "GSO RESERVE",
                 "body": "You have an update. Sign in to view it.",
                 "url": notification_path(link),
-                "tag": f"sas-{event_key}" if event_key else "sas-update",
+                "tag": f"gso-{event_key}" if event_key else "gso-update",
             })
             try:
                 logger.info(

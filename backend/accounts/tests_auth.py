@@ -207,8 +207,8 @@ class GoogleOAuthSecurityTests(APITestCase):
             "GOOGLE_CLIENT_SECRET": "test-secret",
             "DEBUG": False,
             "ALLOW_DEV_TUNNELS": False,
-            "PUBLIC_FRONTEND_URL": "https://sas.example.com",
-            "GOOGLE_REDIRECT_URI": "https://sas.example.com/api/auth/google/callback/",
+            "PUBLIC_FRONTEND_URL": "https://gso.example.com",
+            "GOOGLE_REDIRECT_URI": "https://gso.example.com/api/auth/google/callback/",
         }
         with override_settings(**overrides):
             response = self.client.get(
@@ -219,7 +219,7 @@ class GoogleOAuthSecurityTests(APITestCase):
         params = parse_qs(urlparse(response.data["authorize_url"]).query)
         self.assertEqual(
             params["redirect_uri"][0],
-            "https://sas.example.com/api/auth/google/callback/",
+            "https://gso.example.com/api/auth/google/callback/",
         )
 
     def test_tunnel_hostname_change_does_not_change_redirect_uri(self):
@@ -266,10 +266,10 @@ class GoogleOAuthSecurityTests(APITestCase):
         """The social adapter forces REQUESTER for any social signup."""
         from django.contrib.auth import get_user_model
 
-        from accounts.adapters import SasSocialAccountAdapter
+        from accounts.adapters import GsoSocialAccountAdapter
 
         User = get_user_model()
-        adapter = SasSocialAccountAdapter()
+        adapter = GsoSocialAccountAdapter()
 
         class FakeSocialLogin:
             def __init__(self):

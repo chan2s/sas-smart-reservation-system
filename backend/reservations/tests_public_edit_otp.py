@@ -28,7 +28,7 @@ class PublicReservationEditOTPTests(TestCase):
         self.chairs = Equipment.objects.create(
             name="Public edit chair", category=category, total_quantity=100
         )
-        self.reservation = self.make_guest("SAS-PUBLIC-EDIT-1")
+        self.reservation = self.make_guest("GSO-PUBLIC-EDIT-1")
 
     def make_guest(self, reference):
         reservation = Reservation.objects.create(
@@ -195,7 +195,7 @@ class PublicReservationEditOTPTests(TestCase):
         self.assertEqual(self.reservation.event_name, "Community Meeting")
 
     def test_verification_session_cannot_be_used_for_another_reservation(self):
-        other = self.make_guest("SAS-PUBLIC-EDIT-2")
+        other = self.make_guest("GSO-PUBLIC-EDIT-2")
         response, sent = self.request_otp()
         session = response.json()["verification_session"]
         mismatch = self.verify(other.reservation_id, session, sent["code"])

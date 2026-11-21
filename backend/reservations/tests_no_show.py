@@ -121,7 +121,7 @@ class NoShowTestCase(TestCase):
             ).exists()
         )
 
-    def test_sas_staff_can_mark_no_show(self):
+    def test_gso_staff_can_mark_no_show(self):
         reservation = self.make_reservation()
         response = self.mark_no_show(reservation, user=self.staff)
         self.assertEqual(response.status_code, 200, response.data)

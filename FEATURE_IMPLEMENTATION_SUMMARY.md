@@ -150,7 +150,7 @@ pending_reservations?: Array<{
 - Expandable reservation rows for detailed information
 - Loading and empty states handled gracefully
 - No animations; minimal visual elements per design requirements
-- Follows SAS RESERVE design system (typography, spacing, border radius, colors)
+- Follows GSO RESERVE design system (typography, spacing, border radius, colors)
 
 ### 3. **Updated ReturningBookerLookup Component**
 **File:** `frontend/src/pages/reservations/ReservationWizardPage.tsx`

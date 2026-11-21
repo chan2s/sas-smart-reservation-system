@@ -323,7 +323,7 @@ export function EquipmentDetailPage() {
           <Card>
             <CardHeader
               title="Inspection"
-              description="SAS staff record the state of this equipment before and after every use."
+              description="GSO staff record the state of this equipment before and after every use."
             />
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl border border-line p-4">

@@ -23,7 +23,7 @@ export const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   // It is never auto-linked; the user must sign in with their own credentials.
   email_registered:
     'An account with this email already exists. Please log in with your existing credentials instead.',
-  // "Log in with Google" verified an identity that has no SAS RESERVE
+  // "Log in with Google" verified an identity that has no GSO RESERVE
   // account. Logging in never registers — the user must register first.
   no_account_found:
     'No account found for this Google account. Please register first.',

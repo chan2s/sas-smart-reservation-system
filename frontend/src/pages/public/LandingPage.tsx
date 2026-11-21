@@ -440,7 +440,7 @@ export function LandingPage() {
             </Reveal>
             <Reveal delay={0.16}>
               <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-body">
-                SAS RESERVE brings facility reservations, shared equipment, availability, and
+                GSO RESERVE brings facility reservations, shared equipment, availability, and
                 event planning together in one centralized platform.
               </p>
             </Reveal>
@@ -863,12 +863,12 @@ export function LandingPage() {
           </div>
           <div className="max-w-3xl lg:col-span-8">
             <StaggeredHeading
-              lines={['SAS RESERVE, in brief.']}
+              lines={['GSO RESERVE, in brief.']}
               className="text-[clamp(2rem,3.6vw,3rem)] leading-[1.1]"
             />
             <Reveal delay={0.1}>
               <p className="mt-7 text-lg leading-relaxed text-body">
-                SAS RESERVE is a Smart Facility &amp; Resource Reservation System designed to
+                GSO RESERVE is a Smart Facility &amp; Resource Reservation System designed to
                 simplify campus event planning and centralized management of facilities and shared
                 resources. Facilities are physical spaces; resources are the equipment your event
                 depends on — both managed through one secure account.
@@ -895,7 +895,7 @@ export function LandingPage() {
                 to="/about"
                 className="group mt-8 inline-flex items-center gap-2 text-sm font-semibold text-brand transition-colors hover:text-brand-dark"
               >
-                More about SAS RESERVE
+                More about GSO RESERVE
                 <ArrowRight
                   className="size-4 transition-transform duration-300 group-hover:translate-x-0.5"
                   aria-hidden
@@ -928,7 +928,7 @@ export function LandingPage() {
               Ready to plan your next event?
             </h2>
             <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-white/70">
-              Choose an organization type, select a facility, and submit your request for SAS review.
+              Choose an organization type, select a facility, and submit your request for GSO review.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Link
@@ -1019,7 +1019,7 @@ export function LandingPage() {
           </div>
 
           <div className="mt-14 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-8 text-xs text-muted">
-            <p>&copy; {new Date().getFullYear()} SAS RESERVE. Managed by the SAS Office.</p>
+            <p>&copy; {new Date().getFullYear()} GSO RESERVE. Managed by the GSO Office.</p>
             <p className="flex items-center gap-1.5">
               <LayoutDashboard className="size-3.5" aria-hidden />
               Built for campus event management

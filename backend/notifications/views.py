@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsAccountApprovedOrReadOnly, IsSasStaff
+from accounts.permissions import IsAccountApprovedOrReadOnly, IsGsoStaff
 from config.frontend import request_origin
 
 from . import no_show_alerts as alerts_service
@@ -140,7 +140,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         Staff receive persisted notifications plus active possible-no-show
         records from the same source used by the dashboard.
         """
-        if not getattr(request.user, "is_sas_staff", False):
+        if not getattr(request.user, "is_gso_staff", False):
             return super().list(request, *args, **kwargs)
 
         # Alert evaluation is idempotent. Let a database failure reach the API
@@ -209,7 +209,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         """
         count = Notification.objects.filter(user=request.user, read=False).count()
         alert_count = 0
-        if getattr(request.user, "is_sas_staff", False):
+        if getattr(request.user, "is_gso_staff", False):
             alerts_service.refresh_alerts()
             alert_count = alerts_service.unread_count()
         return Response(
@@ -223,7 +223,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=["post"])
     def mark_all_read(self, request):
         Notification.objects.filter(user=request.user, read=False).update(read=True)
-        if getattr(request.user, "is_sas_staff", False):
+        if getattr(request.user, "is_gso_staff", False):
             alerts_service.acknowledge_all(request.user)
         return Response({"count": 0})
 
@@ -244,7 +244,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 @api_view(["GET"])
-@permission_classes([IsSasStaff])
+@permission_classes([IsGsoStaff])
 def no_show_alert_list(request):
     """Active possible-no-show alerts plus overdue reservations to review.
 
@@ -279,7 +279,7 @@ def no_show_alert_list(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsSasStaff])
+@permission_classes([IsGsoStaff])
 def no_show_alert_acknowledge(request, alert_id):
     """Mark one active alert as read."""
     alert = get_object_or_404(PossibleNoShowAlert, pk=alert_id, resolved_at__isnull=True)
@@ -288,7 +288,7 @@ def no_show_alert_acknowledge(request, alert_id):
 
 
 @api_view(["POST"])
-@permission_classes([IsSasStaff])
+@permission_classes([IsGsoStaff])
 def no_show_alert_acknowledge_all(request):
     """Mark every active alert as read."""
     acknowledged = alerts_service.acknowledge_all(request.user)

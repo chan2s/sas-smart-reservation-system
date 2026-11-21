@@ -49,7 +49,7 @@ describe('AboutPage', () => {
   it('presents the project, capstone details, and developer credit', () => {
     renderAbout()
 
-    expect(screen.getByRole('heading', { level: 1, name: 'SAS RESERVE' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'GSO RESERVE' })).toBeInTheDocument()
     expect(
       screen.getByText(
         'A Smart Web-Based Facility and Resource Reservation System for NORSU-BSC',
@@ -57,7 +57,7 @@ describe('AboutPage', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(
-        'SAS Reserve is developed as an academic capstone project by Group 10. The project aims to improve reservation accessibility, operational efficiency, and resource management at NORSU-BSC through a centralized web-based reservation platform.',
+        'GSO Reserve is developed as an academic capstone project by Group 10. The project aims to improve reservation accessibility, operational efficiency, and resource management at NORSU-BSC through a centralized web-based reservation platform.',
       ),
     ).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Our Capstone Project' })).toBeInTheDocument()

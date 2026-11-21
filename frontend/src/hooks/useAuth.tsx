@@ -74,8 +74,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       wipeOfflineBackup()
       setUser(null)
     }
-    window.addEventListener('sas:auth-expired', onExpired)
-    return () => window.removeEventListener('sas:auth-expired', onExpired)
+    window.addEventListener('gso:auth-expired', onExpired)
+    return () => window.removeEventListener('gso:auth-expired', onExpired)
   }, [])
 
   const login = useCallback(async (username: string, password: string) => {

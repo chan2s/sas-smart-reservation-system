@@ -73,7 +73,7 @@ class ApprovalEmailFlowTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         message = mail.outbox[0]
         self.assertEqual(message.to, [self.requester.email])
-        self.assertEqual(message.subject, "Reservation Approved - SAS RESERVE")
+        self.assertEqual(message.subject, "Reservation Approved - GSO RESERVE")
         self.assertIn(reservation.reservation_id, message.body)
         self.assertIn("Email Test AVR", message.body)
         self.assertIn(

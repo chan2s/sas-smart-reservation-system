@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/Misc'
 
 /**
- * SAS RESERVE table design system.
+ * GSO RESERVE table design system.
  *
  * ONE implementation of the administrative data-table pattern, reused by every
  * table in the app so headers, rows, zebra striping, hover, badges, actions,

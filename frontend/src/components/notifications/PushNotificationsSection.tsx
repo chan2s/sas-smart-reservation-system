@@ -103,9 +103,9 @@ export function PushNotificationsSection() {
           <Button size="sm" loading={busy} onClick={() => void enable()}>Enable notifications</Button>
         ) : null}
       </div>
-      {!supported && <p className="mt-3 text-sm text-body">This browser does not support Web Push. Try a current version of Chrome or Edge, or install SAS RESERVE on a supported device.</p>}
-      {isAppleMobile && !installed && <p className="mt-3 text-sm text-body">On iPhone or iPad, Web Push is available from iOS/iPadOS 16.4 onward only after SAS RESERVE is added to the Home Screen. Open the installed app to enable notifications.</p>}
-      {permission === 'denied' && <p className="mt-3 text-sm text-body">Notifications are blocked by your browser. Open this site’s browser settings, allow notifications, then return here and enable them. On iPhone or iPad, add SAS RESERVE to the Home Screen and enable notifications for the installed app.</p>}
+      {!supported && <p className="mt-3 text-sm text-body">This browser does not support Web Push. Try a current version of Chrome or Edge, or install GSO RESERVE on a supported device.</p>}
+      {isAppleMobile && !installed && <p className="mt-3 text-sm text-body">On iPhone or iPad, Web Push is available from iOS/iPadOS 16.4 onward only after GSO RESERVE is added to the Home Screen. Open the installed app to enable notifications.</p>}
+      {permission === 'denied' && <p className="mt-3 text-sm text-body">Notifications are blocked by your browser. Open this site’s browser settings, allow notifications, then return here and enable them. On iPhone or iPad, add GSO RESERVE to the Home Screen and enable notifications for the installed app.</p>}
       {supported && permission !== 'denied' && <p className="mt-3 text-xs text-muted">Current device: {currentSubscribed ? currentDevice ? currentDevice.active ? 'registered and enabled' : 'registered but disabled' : 'browser subscription is not linked to this account' : 'not registered'}. You can disable this device without affecting your other devices. Internet access and operating system notification settings are also required.</p>}
       {devices.length > 0 && <div className="mt-5 border-t border-line pt-4">
         <h4 className="text-sm font-semibold text-ink">Registered devices</h4>

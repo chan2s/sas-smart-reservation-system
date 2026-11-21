@@ -12,7 +12,7 @@ that prefer an external cron job or a one-off manual check.
 
 Example crontab entry (Asia/Manila server time):
 
-    0 * * * * cd /path/to/backend && /path/to/python manage.py send_reservation_reminders >> /var/log/sas-reserve-reminders.log 2>&1
+    0 * * * * cd /path/to/backend && /path/to/python manage.py send_reservation_reminders >> /var/log/gso-reserve-reminders.log 2>&1
 """
 
 from django.core.management.base import BaseCommand

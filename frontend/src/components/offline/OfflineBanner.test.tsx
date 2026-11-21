@@ -47,7 +47,7 @@ describe('OfflineBanner', () => {
 
   it('says the backend is unreachable even when the browser reports online', () => {
     renderBanner({ browserOnline: true })
-    expect(screen.getByRole('status').textContent).toContain("Can't reach SAS RESERVE")
+    expect(screen.getByRole('status').textContent).toContain("Can't reach GSO RESERVE")
   })
 
   it('labels the data as a local backup with its last update time', () => {

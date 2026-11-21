@@ -225,7 +225,7 @@ pending = reservations.filter(
     "recent_reservations": [
       {
         "id": 1,
-        "reservation_id": "SAS-2026-00001",
+        "reservation_id": "GSO-2026-00001",
         "event_name": "Annual Meeting",
         "purpose": "Business meeting",
         "date": "2026-12-01",
@@ -238,7 +238,7 @@ pending = reservations.filter(
     "pending_reservations": [
       {
         "id": 1,
-        "reservation_id": "SAS-2026-00001",
+        "reservation_id": "GSO-2026-00001",
         "event_name": "Annual Meeting",
         "date": "2026-12-01",
         "created_at": "2026-11-17T14:30:00Z",

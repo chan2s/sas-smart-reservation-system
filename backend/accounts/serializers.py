@@ -204,7 +204,7 @@ def ensure_unique_organization(name, organization_type, *, exclude_id=None):
     database constraint uses. Registration deliberately does NOT attach the
     new user to someone else's existing record — that would let a visitor
     claim another organization's history — so the duplicate is reported and
-    the SAS Office performs the linking.
+    the GSO Office performs the linking.
     """
     existing = find_organization(name, organization_type)
     if existing is not None and existing.pk != exclude_id:
@@ -212,7 +212,7 @@ def ensure_unique_organization(name, organization_type, *, exclude_id=None):
             {
                 "organization_name": (
                     "An organization with this name and type is already "
-                    "registered. Contact the SAS Office to be linked to the "
+                    "registered. Contact the GSO Office to be linked to the "
                     "existing record."
                 )
             }

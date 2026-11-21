@@ -17,7 +17,7 @@ from rest_framework.response import Response
 from accounts.organization_registry import link_reservation_organization
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
-    IsSasStaff,
+    IsGsoStaff,
 )
 from accounts.throttling import (
     BookerLookupThrottle,
@@ -73,7 +73,7 @@ def _record_rebook_lineage(request, reservation):
         return
     event_type = (
         ReservationEvent.EventType.REBOOKED
-        if request.user.is_sas_staff
+        if request.user.is_gso_staff
         else ReservationEvent.EventType.NEW_SCHEDULE_REQUESTED
     )
     workflow.record_event(
@@ -92,7 +92,7 @@ def _record_rebook_lineage(request, reservation):
 def _trusted_requester_type(request, requested) -> str:
     """Decide the pricing context from trusted data, never a client flag.
 
-    External-organization pricing applies to SAS staff (who create external
+    External-organization pricing applies to GSO staff (who create external
     reservations on an organization's behalf) and to members of an approved
     external organization booking for their own organization. Everyone else
     is treated as an internal campus requester, whose reservations are free.
@@ -102,7 +102,7 @@ def _trusted_requester_type(request, requested) -> str:
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return Reservation.RequesterType.CAMPUS
-    if requested == Reservation.RequesterType.EXTERNAL and user.is_sas_staff:
+    if requested == Reservation.RequesterType.EXTERNAL and user.is_gso_staff:
         return Reservation.RequesterType.EXTERNAL
     # Everyone else is decided by the authenticated profile: only a member of
     # an external, approved, active organization is priced as external.
@@ -479,9 +479,9 @@ def public_reservation_upload_approval_letter(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsSasStaff])
+@permission_classes([IsGsoStaff])
 def reservation_approval_letter_image(request, pk):
-    """Stream a requester-uploaded image only to authorized SAS staff."""
+    """Stream a requester-uploaded image only to authorized GSO staff."""
     reservation = Reservation.objects.filter(pk=pk).first()
     if reservation is None or not reservation.has_approval_letter_document:
         return Response({"detail": "Approval letter image not found."}, status=404)
@@ -804,7 +804,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
     A not-approved account may list and read reservations it is authorized to
     see, but every write — create, resubmit, cancel, check-in/out, approval —
     is a state change refused by ``IsAccountApprovedOrReadOnly`` (and, for the
-    staff-only actions, by ``IsSasStaff`` on top).
+    staff-only actions, by ``IsGsoStaff`` on top).
     """
     permission_classes = [IsAuthenticated, IsAccountApprovedOrReadOnly]
 
@@ -834,7 +834,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         ).prefetch_related("items__equipment__category", "events")
         user = self.request.user
 
-        if not user.is_sas_staff:
+        if not user.is_gso_staff:
             qs = qs.filter(requester=user)
 
         params = self.request.query_params
@@ -918,8 +918,8 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ReservationEvent.EventType.CREATED,
             actor=request.user,
             message=(
-                "Reservation created by SAS administrator."
-                if request.user.is_sas_staff
+                "Reservation created by GSO administrator."
+                if request.user.is_gso_staff
                 else "Reservation submitted for approval."
             ),
         )
@@ -979,7 +979,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @action(detail=False, methods=["get"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=False, methods=["get"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def users(self, request):
         """Campus-user directory for admin "reserve on behalf of" search.
 
@@ -1022,7 +1022,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         """Per-status reservation counts for tab badges."""
         expiration.expire_overdue_reservations()
         qs = Reservation.objects.all()
-        if not request.user.is_sas_staff:
+        if not request.user.is_gso_staff:
             qs = qs.filter(requester=request.user)
         statuses = dict(Reservation.Status.choices)
         result = {"ALL": qs.count()}
@@ -1066,7 +1066,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             )
         return super().destroy(request, *args, **kwargs)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def approve(self, request, pk=None):
         reservation = self.get_object()
         # Payment never blocks approval, but an outstanding balance must be
@@ -1103,7 +1103,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
     def upload_approval_letter_image(self, request, pk=None):
         """Upload the required requester image while a reservation is pending."""
         reservation = self.get_object()
-        if not request.user.is_sas_staff and reservation.requester_id != request.user.id:
+        if not request.user.is_gso_staff and reservation.requester_id != request.user.id:
             return Response({"detail": "You cannot update this reservation."}, status=403)
         if reservation.status != Reservation.Status.PENDING:
             return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
@@ -1133,7 +1133,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         )
         return Response(ReservationDetailSerializer(reservation, context={"request": request}).data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def retry_approval_email(self, request, pk=None):
         """Re-send the approval notification email for an approved reservation.
 
@@ -1166,7 +1166,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             }
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def retry_approval_document(self, request, pk=None):
         """Retry external letter generation without changing reservation status."""
         reservation = self.get_object()
@@ -1193,7 +1193,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             reservation.refresh_from_db()
         return Response(ReservationDetailSerializer(reservation, context={"request": request}).data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def resend_approval_email(self, request, pk=None):
         """Explicit staff resend; each intentional attempt is recorded."""
         reservation = self.get_object()
@@ -1243,9 +1243,9 @@ class ReservationViewSet(viewsets.ModelViewSet):
             or not reservation.generated_approval_pdf
         ):
             return Response({"detail": "Approval document is unavailable."}, status=404)
-        filename = f"SAS-RESERVE-APPROVAL-{reservation.reservation_id}.pdf"
+        filename = f"GSO-RESERVE-APPROVAL-{reservation.reservation_id}.pdf"
         response = FileResponse(reservation.generated_approval_pdf.open("rb"), content_type="application/pdf")
-        disposition = "inline" if request.query_params.get("preview") == "1" and request.user.is_sas_staff else "attachment"
+        disposition = "inline" if request.query_params.get("preview") == "1" and request.user.is_gso_staff else "attachment"
         response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
         response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "private, no-store"
@@ -1259,8 +1259,8 @@ class ReservationViewSet(viewsets.ModelViewSet):
     )
     def approval_document_docx(self, request, pk=None):
         reservation = self.get_object()
-        if not request.user.is_sas_staff:
-            return Response({"detail": "Only SAS staff can download the DOCX source."}, status=403)
+        if not request.user.is_gso_staff:
+            return Response({"detail": "Only GSO staff can download the DOCX source."}, status=403)
         if (
             reservation.requester_type != Reservation.RequesterType.EXTERNAL
             or reservation.status != Reservation.Status.APPROVED
@@ -1268,7 +1268,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             or not reservation.generated_approval_docx
         ):
             return Response({"detail": "Approval document is unavailable."}, status=404)
-        filename = f"SAS-RESERVE-APPROVAL-{reservation.reservation_id}.docx"
+        filename = f"GSO-RESERVE-APPROVAL-{reservation.reservation_id}.docx"
         response = FileResponse(
             reservation.generated_approval_docx.open("rb"),
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1282,7 +1282,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         detail=True,
         methods=["get", "post", "patch"],
         url_path="payments",
-        permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly],
+        permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],
     )
     def payments(self, request, pk=None):
         """Administrative payment tracking for an external reservation.
@@ -1345,7 +1345,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             "approval_warning": payment_service.approval_warning(reservation),
         }
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def reject(self, request, pk=None):
         reservation = self.get_object()
         try:
@@ -1360,7 +1360,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def request_changes(self, request, pk=None):
         """Record a revision request and email it to the requester.
 
@@ -1413,7 +1413,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         elif email_error == "configuration":
             detail = (
                 "Revision request recorded, but email is not configured on the "
-                "server. Please contact the SAS Office."
+                "server. Please contact the GSO Office."
             )
         else:
             detail = (
@@ -1665,7 +1665,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
                     reservation.requester,
                     Notification.Type.RESERVATION,
                     "Reservation updated",
-                    f"{reservation.reservation_id} was updated and returned to the SAS review queue.",
+                    f"{reservation.reservation_id} was updated and returned to the GSO review queue.",
                     f"/reservations/{reservation.pk}",
                     event_key=f"reservation:{reservation.pk}:verified-edit:{verification.pk}",
                 )
@@ -1697,9 +1697,9 @@ class ReservationViewSet(viewsets.ModelViewSet):
             reservation = Reservation.objects.select_for_update().get(
                 pk=self.get_object().pk
             )
-            if not request.user.is_sas_staff:
+            if not request.user.is_gso_staff:
                 return Response(
-                    {"detail": "Only authorized SAS staff can use direct reservation editing."},
+                    {"detail": "Only authorized GSO staff can use direct reservation editing."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             if reservation.status != Reservation.Status.PENDING:
@@ -1746,7 +1746,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         reservation = self.get_object()
         is_owner = reservation.requester_id == request.user.id
-        if not (is_owner or request.user.is_sas_staff):
+        if not (is_owner or request.user.is_gso_staff):
             return Response(
                 {"detail": "You do not have permission to cancel this reservation."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1776,7 +1776,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
     def check_in(self, request, pk=None):
         """Check a reservation in.
 
-        Authorization: the reservation owner or SAS staff.
+        Authorization: the reservation owner or GSO staff.
 
         Time policy: check-in opens 3 hours before the event start. Anyone
         may check in once the window is open. Before it opens, only an
@@ -1790,7 +1790,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         """
         reservation = self.get_object()
         is_owner = reservation.requester_id == request.user.id
-        if not (is_owner or request.user.is_sas_staff):
+        if not (is_owner or request.user.is_gso_staff):
             return Response(
                 {"detail": "You do not have permission to check in this reservation."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1820,7 +1820,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         detail=True,
         methods=["post"],
         url_path="mark-no-show",
-        permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly],
+        permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],
     )
     def mark_no_show(self, request, pk=None):
         """Explicitly mark a past-date, approved reservation as a no-show.
@@ -1847,7 +1847,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         data["message"] = "Reservation successfully marked as no-show."
         return Response(data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSasStaff, IsAccountApprovedOrReadOnly])
+    @action(detail=True, methods=["post"], permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly])
     def check_out(self, request, pk=None):
         reservation = self.get_object()
         try:
@@ -1862,7 +1862,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
 
 
 @api_view(["GET"])
-@permission_classes([IsSasStaff])
+@permission_classes([IsGsoStaff])
 def reservation_by_checkin_code(request, code):
     """Staff scanning interface: resolve a reservation from its QR code."""
     expiration.expire_overdue_reservations()
@@ -1908,7 +1908,7 @@ def availability_check(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
         if not (
-            target.requester_id == request.user.id or request.user.is_sas_staff
+            target.requester_id == request.user.id or request.user.is_gso_staff
         ):
             return Response(
                 {
@@ -2053,7 +2053,7 @@ def calendar_events(request):
         date__gte=start,
         date__lte=end,
     ).select_related("facility", "requester")
-    if not request.user.is_sas_staff:
+    if not request.user.is_gso_staff:
         qs = qs.filter(requester=request.user)
     facility = request.query_params.get("facility")
     if facility and facility not in ("undefined", "null", "all", ""):
@@ -2076,7 +2076,7 @@ def calendar_events(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-    is_staff = request.user.is_sas_staff
+    is_staff = request.user.is_gso_staff
     events = []
     for r in qs:
         event = {
@@ -2142,7 +2142,7 @@ def public_booked_dates(request):
         user = request.user
         if target is None:
             return Response({"detail": "Reservation not found."}, status=status.HTTP_404_NOT_FOUND)
-        if not (user.is_authenticated and (target.requester_id == user.id or user.is_sas_staff)):
+        if not (user.is_authenticated and (target.requester_id == user.id or user.is_gso_staff)):
             return Response({"detail": "You cannot exclude this reservation."}, status=status.HTTP_403_FORBIDDEN)
 
     # The Booked Dates View intentionally includes pending reservations for

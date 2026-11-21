@@ -6,7 +6,7 @@ from rest_framework.permissions import SAFE_METHODS, BasePermission
 ACCOUNT_NOT_APPROVED_MESSAGE = {
     "detail": (
         "Your account is pending administrator approval. You currently have "
-        "view-only access to SAS RESERVE."
+        "view-only access to GSO RESERVE."
     ),
     "code": "account_not_approved",
 }
@@ -22,18 +22,18 @@ class IsAdmin(BasePermission):
         )
 
 
-class IsSasStaff(BasePermission):
-    """Administrator or SAS staff."""
+class IsGsoStaff(BasePermission):
+    """Administrator or GSO staff."""
 
     def has_permission(self, request, view):
         return bool(
             request.user
             and request.user.is_authenticated
-            and request.user.is_sas_staff
+            and request.user.is_gso_staff
         )
 
 
-class IsSasStaffOrReadOnly(BasePermission):
+class IsGsoStaffOrReadOnly(BasePermission):
     """Everyone may read; only administrator/staff may write."""
 
     def has_permission(self, request, view):
@@ -42,7 +42,7 @@ class IsSasStaffOrReadOnly(BasePermission):
         return bool(
             request.user
             and request.user.is_authenticated
-            and request.user.is_sas_staff
+            and request.user.is_gso_staff
         )
 
 

@@ -552,7 +552,7 @@ def quote_to_dict(quote: dict) -> dict:
         "total": f"{money(quote['total']):.2f}",
         "reference_total": f"{money(quote.get('reference_total', quote['total'])):.2f}",
         "note": (
-            "Estimated external organization fee. The SAS Office confirms the "
+            "Estimated external organization fee. The GSO Office confirms the "
             "final amount when the reservation is approved."
             if quote["external"]
             else "Internal Reservation — No Payment Required. Official charges are waived."

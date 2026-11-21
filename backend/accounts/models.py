@@ -5,7 +5,7 @@ from django.db import IntegrityError, models, transaction
 
 
 class Organization(models.Model):
-    """An organization affiliated with SAS RESERVE (internal or external).
+    """An organization affiliated with GSO RESERVE (internal or external).
 
     Google identifies the *person*; this entity identifies the *institution*
     that person represents. It is deliberately NOT an authentication
@@ -19,7 +19,7 @@ class Organization(models.Model):
       CIT, CBA, CAF, CARE, GHAD, CSSG). These are managed records seeded by
       migration, always ``APPROVED`` and never priced as external.
     * Every other type — an external organization. Registration is
-      self-service but inert until SAS staff verify it: new organizations
+      self-service but inert until GSO staff verify it: new organizations
       start ``PENDING`` and their members cannot create reservations until
       the status is ``APPROVED``.
 
@@ -316,7 +316,7 @@ class UserManager(BaseUserManager):
 class User(AbstractUser):
     """Application user with institutional roles.
 
-    ``affiliation`` is how SAS RESERVE identifies *who the person represents*
+    ``affiliation`` is how GSO RESERVE identifies *who the person represents*
     (NORSU student/faculty/office or an external organization), layered on top
     of the existing Google/2FA authentication — it is never used as a
     credential and never replaces it. Existing accounts keep their current
@@ -325,7 +325,7 @@ class User(AbstractUser):
 
     class Role(models.TextChoices):
         ADMIN = "ADMIN", "Administrator"
-        STAFF = "STAFF", "SAS Staff"
+        STAFF = "STAFF", "GSO Staff"
         REQUESTER = "REQUESTER", "Requester"
         ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE = (
             "ASSISTANT_CAMPUS_DIRECTOR_ADMIN_FINANCE",
@@ -453,8 +453,8 @@ class User(AbstractUser):
         return not self.is_approved
 
     @property
-    def is_sas_staff(self) -> bool:
-        """Administrator or SAS staff."""
+    def is_gso_staff(self) -> bool:
+        """Administrator or GSO staff."""
         return self.role in (self.Role.ADMIN, self.Role.STAFF)
 
     # -- Affiliation helpers -------------------------------------------
@@ -536,7 +536,7 @@ class User(AbstractUser):
         if organization is not None and not organization.is_active:
             return (
                 "Your organization is currently inactive. Reservations are "
-                "disabled until the SAS Office reactivates it."
+                "disabled until the GSO Office reactivates it."
             )
         if not self.is_external_organization:
             return ""
@@ -554,11 +554,11 @@ class User(AbstractUser):
             ),
             Organization.VerificationStatus.REJECTED: (
                 "Your organization registration was rejected, so reservations "
-                "are not available. Contact the SAS Office for assistance."
+                "are not available. Contact the GSO Office for assistance."
             ),
             Organization.VerificationStatus.SUSPENDED: (
                 "Your organization is currently suspended. Reservations are "
-                "disabled until the SAS Office reactivates it."
+                "disabled until the GSO Office reactivates it."
             ),
         }.get(organization.verification_status, "")
 

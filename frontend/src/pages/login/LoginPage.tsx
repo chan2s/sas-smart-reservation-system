@@ -119,7 +119,7 @@ export function LoginPage() {
               Welcome back
             </h1>
             <p className="mt-2.5 text-[15px] leading-relaxed text-body">
-              Administrators, SAS staff, and Assistant Campus Directors sign in here to manage reservations and facilities.
+              Administrators, GSO staff, and Assistant Campus Directors sign in here to manage reservations and facilities.
             </p>
 
             <div className="mt-9">
@@ -202,7 +202,7 @@ export function LoginPage() {
 
             <p className="mt-9 flex items-center justify-center gap-1.5 text-xs text-muted">
               <ShieldCheck className="size-3.5" aria-hidden />
-              Managed by the SAS Office — contact staff for account access
+              Managed by the GSO Office — contact staff for account access
             </p>
           </div>
         </div>

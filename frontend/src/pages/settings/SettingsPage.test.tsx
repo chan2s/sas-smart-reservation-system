@@ -87,17 +87,17 @@ afterEach(() => {
 })
 
 describe('SettingsPage', () => {
-  it('offers the Install SAS RESERVE App section to signed-in users', () => {
+  it('offers the Install GSO RESERVE App section to signed-in users', () => {
     state.user = requester()
     render(
       <MemoryRouter>
         <SettingsPage />
       </MemoryRouter>,
     )
-    expect(screen.getByRole('heading', { name: 'Install SAS RESERVE App' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Install GSO RESERVE App' })).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Install SAS RESERVE on your device for quicker access and an app-like experience.',
+        'Install GSO RESERVE on your device for quicker access and an app-like experience.',
       ),
     ).toBeInTheDocument()
   })

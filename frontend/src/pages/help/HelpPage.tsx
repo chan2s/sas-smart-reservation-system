@@ -26,7 +26,7 @@ export function HelpPage() {
     },
     {
       title: 'QR check-in',
-      description: 'Every approved reservation gets a QR code. Show it to SAS staff when you arrive.',
+      description: 'Every approved reservation gets a QR code. Show it to GSO staff when you arrive.',
       to: '/reservations',
       icon: <QrCode className="size-5" />,
       cta: 'View reservations',
@@ -54,7 +54,7 @@ export function HelpPage() {
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
-        eyebrow="SAS Help"
+        eyebrow="GSO Help"
         title="Help"
         description="Quick answers about using the reservation system."
       />
@@ -81,11 +81,11 @@ export function HelpPage() {
         <Card>
           <CardHeader title="Need more help?" />
           <p className="mt-2 text-sm text-body">
-            The SAS Office manages all accounts, approvals, and facility scheduling.
+            The GSO Office manages all accounts, approvals, and facility scheduling.
           </p>
           <ul className="mt-4 space-y-2.5 text-sm text-body">
             <li className="flex items-center gap-2.5">
-              <Mail className="size-4 text-muted" aria-hidden /> sas@school.edu
+              <Mail className="size-4 text-muted" aria-hidden /> gso@school.edu
             </li>
             <li className="flex items-center gap-2.5">
               <MessageCircleQuestion className="size-4 text-muted" aria-hidden /> Room 101, Main Building

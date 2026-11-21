@@ -56,7 +56,7 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader
-        eyebrow="SAS Settings"
+        eyebrow="GSO Settings"
         title="Settings"
         description="Manage your profile information, affiliation, and preferences."
       />
@@ -69,7 +69,7 @@ export function SettingsPage() {
             <p className="text-sm text-muted">@{user.username}</p>
             <div className="mt-1.5">
               <Badge tone={user.role === 'ADMIN' ? 'brand' : user.role === 'STAFF' ? 'sky' : 'neutral'}>
-                {user.role === 'ADMIN' ? 'Administrator' : user.role === 'STAFF' ? 'SAS Staff' : 'Requester'}
+                {user.role === 'ADMIN' ? 'Administrator' : user.role === 'STAFF' ? 'GSO Staff' : 'Requester'}
               </Badge>
             </div>
           </div>
@@ -135,7 +135,7 @@ export function SettingsPage() {
       <Card className="mt-6">
         <CardHeader
           title="Affiliation"
-          description="Google confirms who you are — your affiliation tells SAS RESERVE who you represent."
+          description="Google confirms who you are — your affiliation tells GSO RESERVE who you represent."
         />
 
         <dl className="mt-4 grid gap-3 sm:grid-cols-2">

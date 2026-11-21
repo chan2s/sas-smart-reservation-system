@@ -3,7 +3,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsSasStaff
+from accounts.permissions import IsGsoStaff
 
 from . import oauth_views, organization_views
 from .management_views import (
@@ -31,7 +31,7 @@ class AuditLogView(APIView):
     ?page=. Read-only — audit entries are never editable through the API.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsSasStaff]
+    permission_classes = [permissions.IsAuthenticated, IsGsoStaff]
 
     def get(self, request):
         from django.core.paginator import Paginator

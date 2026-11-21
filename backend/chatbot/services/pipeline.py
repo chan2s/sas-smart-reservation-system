@@ -523,7 +523,9 @@ def _handle_my_reservations(user, entities: Entities, raw: str) -> tuple[str, st
 def _handle_view_reservation(user, entities: Entities, raw: str) -> tuple[str, str, list]:
     reservation_id = entities.reservation_id
     if not reservation_id:
-        match = re.search(r"SAS[- ]?\d{0,4}[- ]?\d{0,5}", raw, re.IGNORECASE)
+        match = re.search(
+            r"(?:GSO|SAS)[- ]?\d{0,4}[- ]?\d{0,5}", raw, re.IGNORECASE
+        )
         if match:
             return templates.RESERVATION_ID_INCOMPLETE, "fallback", []
         return templates.RESERVATION_NOT_FOUND, "fallback", []
@@ -908,7 +910,7 @@ def _out_of_scope_or_unknown(
         "close", "equipment", "maintenance", "cancel", "cancellation",
         "policy", "policies", "capacity", "gym", "gymnasium", "cafeteria",
         "avr", "canteen", "mic", "microphone", "projector", "chair", "table",
-        "status", "approve", "pending", "approved", "sas", "register",
+        "status", "approve", "pending", "approved", "gso", "register",
         "registration", "log in", "login", "sign in", "sign up",
         "account", "password", "announcement", "faq", "help",
     }

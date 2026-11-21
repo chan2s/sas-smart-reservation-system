@@ -8,7 +8,7 @@ every restart, or the production domain. Two sources of truth, in order:
    (validated here) in the signed state it issues; ``google_callback`` reads
    it back after Google redirects. The round-trip through Google's redirect
    proves the browser can actually reach that origin, and the signature
-   proves SAS RESERVE issued it — an attacker cannot stuff an arbitrary
+   proves GSO RESERVE issued it — an attacker cannot stuff an arbitrary
    open-redirect origin into the flow.
 
 2. **The request itself.** When no state origin exists (error redirects

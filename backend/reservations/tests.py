@@ -552,7 +552,7 @@ class RecommendationDescriptionSyncTests(TestCase):
         self.assertGreater(checked, 0, "sweep asserted nothing")
 
 
-@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/sas-reservation-api-tests")
+@override_settings(MEDIA_ROOT=f"{tempfile.gettempdir()}/gso-reservation-api-tests")
 class ReservationApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -602,7 +602,7 @@ class ReservationApiTests(TestCase):
             end_time="11:00",
             event_name="Orientation",
             event_type="ACADEMIC",
-            organization="Student Affairs",
+            organization="General Services Office",
             purpose="Freshmen orientation",
             expected_participants=50,
             items=[{"equipment_id": self.chairs.id, "quantity": 50}],
@@ -614,7 +614,7 @@ class ReservationApiTests(TestCase):
     @mock.patch("reservations.views.notify_staff")
     def test_public_internal_and_external_requests_submit_as_guest(self, _notify, _confirmation):
         """Both public organization choices enter the regular pending queue."""
-        for index, organization in enumerate(("Campus Student Affairs", "Community Sports Club")):
+        for index, organization in enumerate(("Campus General Services Office", "Community Sports Club")):
             payload = self._payload(
                 date=(self.day + timedelta(days=index * 7)).isoformat(),
                 organization=organization,
@@ -707,7 +707,7 @@ class ReservationApiTests(TestCase):
         response = self.client.post("/api/reservations/", self._payload(), format="json")
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
-        self.assertTrue(body["reservation_id"].startswith("SAS-"))
+        self.assertTrue(body["reservation_id"].startswith("GSO-"))
         self.assertEqual(body["status"], "PENDING")
         self.assertEqual(body["requester_type"], "CAMPUS")
         self.assertEqual(body["requester"], self.requester.display_name)
@@ -1757,7 +1757,7 @@ class RequesterTypeApiTests(TestCase):
             first_name="Juan",
             last_name="Dela Cruz",
             email="juan@campus.edu",
-            organization="Student Affairs",
+            organization="General Services Office",
         )
         self.facility = Facility.objects.create(
             name="Gymnasium",
@@ -2262,13 +2262,13 @@ class RecommendationRuleTests(TestCase):
             threshold_tier_2=200,
             threshold_quantity_2=3,
             threshold_quantity_3=4,
-            explanation="Seminar AV rule configured by SAS staff",
+            explanation="Seminar AV rule configured by GSO staff",
         )
         by_category = self._recommend()
         self.assertEqual(by_category["Microphones"]["quantity"], 2)
         self.assertEqual(
             by_category["Microphones"]["reason"],
-            "Seminar AV rule configured by SAS staff",
+            "Seminar AV rule configured by GSO staff",
         )
 
     def test_specificity_and_priority_ordering(self):
@@ -2409,7 +2409,7 @@ class SameDayStartTimeApiTests(TestCase):
             end_time="11:00",
             event_name="Orientation",
             event_type="ACADEMIC",
-            organization="Student Affairs",
+            organization="General Services Office",
             purpose="Freshmen orientation",
             expected_participants=50,
         )

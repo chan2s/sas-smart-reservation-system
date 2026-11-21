@@ -28,7 +28,7 @@ import {
 
 export function Brand() {
   return (
-    <Link to="/" className="min-w-0 rounded-lg focus-ring" aria-label="SAS Reserve home">
+    <Link to="/" className="min-w-0 rounded-lg focus-ring" aria-label="GSO Reserve home">
       <BrandMark onDark />
     </Link>
   )
@@ -143,9 +143,9 @@ function HeaderActions() {
               </span>
               <span className="block text-[11px] text-white/60">
                 {user?.role === 'ADMIN'
-                  ? 'SAS Administrator'
+                  ? 'GSO Administrator'
                   : user?.role === 'STAFF'
-                    ? 'SAS Staff'
+                    ? 'GSO Staff'
                     : user?.organization_ref?.display_name ||
                         user?.organization_ref?.organization_name ||
                         user?.affiliation_label ||
@@ -165,9 +165,9 @@ function HeaderActions() {
               </p>
               <p className="text-xs text-muted">
                 {user?.role === 'ADMIN'
-                  ? 'SAS Administrator'
+                  ? 'GSO Administrator'
                   : user?.role === 'STAFF'
-                    ? 'SAS Staff'
+                    ? 'GSO Staff'
                     : user?.organization_ref?.display_name ||
                         user?.organization_ref?.organization_name ||
                         user?.affiliation_label ||

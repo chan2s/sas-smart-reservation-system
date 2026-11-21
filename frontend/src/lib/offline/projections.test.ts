@@ -42,7 +42,7 @@ const equipment = {
   condition_label: 'Good',
   status: 'AVAILABLE',
   status_label: 'Available',
-  storage_location: 'SAS Office',
+  storage_location: 'GSO Office',
   asset_code: 'AV-009',
   image: null,
   notes: 'Handle with care',
@@ -124,7 +124,7 @@ describe('projectEquipment', () => {
     expect(projected.name).toBe('Projector')
     expect(projected.category_name).toBe('Audio-Visual')
     expect(projected.total_quantity).toBe(4)
-    expect(projected.storage_location).toBe('SAS Office')
+    expect(projected.storage_location).toBe('GSO Office')
   })
 })
 

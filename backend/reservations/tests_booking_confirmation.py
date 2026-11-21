@@ -26,7 +26,7 @@ from reservations.services import confirmations
 
 User = get_user_model()
 
-SUBJECT = "SAS RESERVE - Booking Confirmation"
+SUBJECT = "GSO RESERVE - Booking Confirmation"
 
 
 class BookingConfirmationEmailTests(TestCase):
@@ -49,7 +49,7 @@ class BookingConfirmationEmailTests(TestCase):
             email="admin@campus.edu",
         )
         self.facility = Facility.objects.create(
-            name="SAS AVR",
+            name="GSO AVR",
             facility_type=Facility.FacilityType.AVR,
             capacity=100,
         )
@@ -82,7 +82,7 @@ class BookingConfirmationEmailTests(TestCase):
             end_time="11:00",
             event_name="Student Leadership Summit",
             event_type="SEMINAR",
-            organization="Student Affairs",
+            organization="General Services Office",
             purpose="Leadership training",
             expected_participants=80,
             items=[{"equipment_id": self.chairs.id, "quantity": 80}],
@@ -125,7 +125,7 @@ class BookingConfirmationEmailTests(TestCase):
         self.assertIn("Maria Santos", body)
         self.assertIn(reservation.reservation_id, body)
         self.assertIn("Student Leadership Summit", body)
-        self.assertIn("SAS AVR", body)
+        self.assertIn("GSO AVR", body)
         self.assertIn("Monobloc Chair", body)
         self.assertIn(format_date(reservation.date, "F j, Y"), body)
         self.assertIn(format_date(reservation.start_time, "g:i A"), body)
@@ -171,7 +171,7 @@ class BookingConfirmationEmailTests(TestCase):
         confirmations = [
             message
             for message in mail.outbox
-            if message.subject == "SAS RESERVE - Booking Confirmation"
+            if message.subject == "GSO RESERVE - Booking Confirmation"
         ]
         self.assertEqual(len(confirmations), 1)
         sent = confirmations[0]
@@ -361,7 +361,7 @@ class DeliverConnectionResilienceTests(TestCase):
         return EmailMultiAlternatives(
             subject=SUBJECT,
             body="plain body",
-            from_email="SAS RESERVE <noreply@localhost>",
+            from_email="GSO RESERVE <noreply@localhost>",
             to=["to@campus.edu"],
         )
 

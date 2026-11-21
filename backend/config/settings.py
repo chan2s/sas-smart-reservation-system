@@ -1,5 +1,6 @@
 """
-Django settings for the SAS Smart Facility & Resource Reservation System.
+Django settings for GSO RESERVE: A Smart Web-Based Facility and Resource
+Reservation System for NORSU-BSC.
 
 Target database architecture is PostgreSQL. The connection is taken from
 the ``.env`` file, in priority order:
@@ -307,7 +308,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "accounts.jwt.SasJWTAuthentication",
+        "accounts.jwt.GsoJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -393,7 +394,7 @@ ACCOUNT_EMAIL_VERIFICATION = "none"
 
 ACCOUNT_ADAPTER = "accounts.adapters.AllauthAccountAdapter"
 
-SOCIALACCOUNT_ADAPTER = "accounts.adapters.SasSocialAccountAdapter"
+SOCIALACCOUNT_ADAPTER = "accounts.adapters.GsoSocialAccountAdapter"
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +453,7 @@ GOOGLE_CLIENT_SECRET = os.environ.get(
 #
 # Set it in production (or behind a rewriting proxy) to the exact URL that is
 # registered in Google Cloud Console — e.g.
-#   GOOGLE_REDIRECT_URI=https://sas.example.com/api/auth/google/callback/
+#   GOOGLE_REDIRECT_URI=https://gso.example.com/api/auth/google/callback/
 # It must match the registered Authorized redirect URI character-for-character.
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
 
@@ -477,7 +478,7 @@ EMAIL_USE_SSL = _env_bool("EMAIL_USE_SSL", False)
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = _normalize_from_email(
-    os.environ.get("DEFAULT_FROM_EMAIL", "SAS RESERVE <noreply@localhost>")
+    os.environ.get("DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@localhost>")
 )
 # Keep a hung SMTP connection from blocking the reminder sweep forever.
 EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))

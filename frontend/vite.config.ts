@@ -56,8 +56,8 @@ export default defineConfig(({ command }) => {
         includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
         manifest: {
           id: '/',
-          name: 'SAS RESERVE',
-          short_name: 'SAS RESERVE',
+          name: 'GSO RESERVE',
+          short_name: 'GSO RESERVE',
           description:
             'Smart Web-Based Facility and Resource Reservation System for NORSU-BSC.',
           lang: 'en',

@@ -8,7 +8,7 @@ All three phases of the Organization Registry and Returning Booker Autofill feat
 - **Phase 2: Returning Booker Autofill** ✅ COMPLETE (backend + frontend API)
 - **Phase 3: Booking Metadata (IP Address Recording)** ✅ COMPLETE
 
-The implementation preserves all existing reservation workflows, prevents duplicate organizations via normalized name + type de-duplication, and integrates seamlessly with the current SAS RESERVE system.
+The implementation preserves all existing reservation workflows, prevents duplicate organizations via normalized name + type de-duplication, and integrates seamlessly with the current GSO RESERVE system.
 
 ---
 
