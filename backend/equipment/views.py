@@ -95,6 +95,25 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             qs = qs.filter(status=params["status"])
         return qs
 
+    def get_object(self):
+        """Resolve one item for staff writes, including archived rows.
+
+        Reads keep the default ``is_active`` filter so requesters never see
+        archived inventory, but deleting or restoring an archived item must
+        address the row that exists: those detail write actions look the item
+        up without the filter. Object permissions still apply, so this does not
+        widen who may write.
+        """
+        if self.action in {"update", "partial_update", "destroy"} and getattr(
+            self.request.user, "is_gso_staff", False
+        ):
+            equipment = get_object_or_404(
+                Equipment.objects.all(), pk=self.kwargs.get(self.lookup_field)
+            )
+            self.check_object_permissions(self.request, equipment)
+            return equipment
+        return super().get_object()
+
     def get_serializer_class(self):
         if self.action == "retrieve":
             return EquipmentDetailSerializer
@@ -630,6 +649,12 @@ class FacilityResourceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        # Archived equipment is not part of the active inventory: it is hidden
+        # from the equipment list and the reservation form, so its assignments
+        # must not surface here either. The assignment rows are kept so that
+        # restoring the equipment restores its facility configuration, but they
+        # are never exposed while the equipment is archived.
+        qs = qs.filter(equipment__is_active=True)
         facility = self.request.query_params.get("facility")
         if facility:
             qs = qs.filter(facility_id=facility)

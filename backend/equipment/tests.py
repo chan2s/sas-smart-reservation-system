@@ -19,7 +19,13 @@ from reservations.models import Reservation, ReservationItem
 from reservations.services.availability import check_availability
 from reservations.services.recommendations import recommend_resources
 
-from .models import Equipment, EquipmentCategory, EquipmentImage, MaintenanceRecord
+from .models import (
+    Equipment,
+    EquipmentCategory,
+    EquipmentImage,
+    FacilityResource,
+    MaintenanceRecord,
+)
 from .services import equipment_stats
 
 PNG = "image/png"
@@ -267,6 +273,103 @@ class EquipmentManagementApiTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Equipment.objects.filter(pk=fresh.id).exists())
 
+    def test_delete_archived_equipment_without_history(self):
+        archived = Equipment.objects.create(
+            name="Archived Shelf", category=self.category, is_active=False
+        )
+        self._auth(self.admin)
+        response = self.client.delete(f"/api/equipment/{archived.id}/")
+        self.assertEqual(response.status_code, 204, response.content)
+        self.assertFalse(Equipment.objects.filter(pk=archived.id).exists())
+
+    def test_restore_archived_equipment(self):
+        """An archived item must be reachable by the write endpoints.
+
+        Regression: the detail queryset hid inactive rows, so restoring (or
+        deleting) an archived item answered 404 even though it existed. The
+        fixture uses an official catalog name because reactivation goes through
+        the catalog validator, which is separate from this lookup.
+        """
+        category = EquipmentCategory.objects.create(name="Plastic Chairs")
+        archived = Equipment.objects.create(
+            name="Plastic Chairs", category=category, is_active=False
+        )
+
+        self._auth(self.admin)
+        response = self.client.patch(
+            f"/api/equipment/{archived.id}/", {"is_active": True}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        archived.refresh_from_db()
+        self.assertTrue(archived.is_active)
+
+    def test_delete_missing_equipment_returns_404(self):
+        """A stale id is a 404, never a silent success or a server error."""
+        self._auth(self.admin)
+        response = self.client.delete("/api/equipment/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_delete_equipment_removes_its_assignments_only(self):
+        """Deleting a global item clears its facility rows, nothing else."""
+        other_facility = Facility.objects.create(
+            name="Annex", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        keep = Equipment.objects.create(name="Kept", category=self.category)
+        FacilityResource.objects.create(facility=self.facility, equipment=self.mics)
+        FacilityResource.objects.create(facility=other_facility, equipment=self.mics)
+        FacilityResource.objects.create(facility=self.facility, equipment=keep)
+
+        self._auth(self.admin)
+        response = self.client.delete(f"/api/equipment/{self.mics.id}/")
+        self.assertEqual(response.status_code, 204, response.content)
+
+        self.assertFalse(
+            FacilityResource.objects.filter(equipment_id=self.mics.id).exists()
+        )
+        self.assertTrue(
+            FacilityResource.objects.filter(equipment_id=keep.id).exists()
+        )
+        self.assertTrue(Equipment.objects.filter(pk=keep.id).exists())
+
+    def test_removing_a_facility_assignment_keeps_the_global_equipment(self):
+        annex = Facility.objects.create(
+            name="Annex", facility_type=Facility.FacilityType.AVR, capacity=50
+        )
+        here = FacilityResource.objects.create(
+            facility=self.facility, equipment=self.mics
+        )
+        FacilityResource.objects.create(facility=annex, equipment=self.mics)
+
+        self._auth(self.admin)
+        response = self.client.delete(f"/api/facility-resources/{here.id}/")
+        self.assertEqual(response.status_code, 204, response.content)
+
+        self.assertTrue(Equipment.objects.filter(pk=self.mics.id).exists())
+        self.assertTrue(
+            FacilityResource.objects.filter(
+                facility=annex, equipment=self.mics
+            ).exists()
+        )
+
+    def test_deleting_equipment_keeps_other_recommendation_configuration(self):
+        keep = Equipment.objects.create(name="Kept", category=self.category)
+        assignment = FacilityResource.objects.create(
+            facility=self.facility,
+            equipment=keep,
+            is_recommendable=True,
+            recommendation_calculation=FacilityResource.RecommendationCalculation.FIXED,
+            recommendation_quantity=2,
+        )
+        doomed = Equipment.objects.create(name="Doomed", category=self.category)
+
+        self._auth(self.admin)
+        response = self.client.delete(f"/api/equipment/{doomed.id}/")
+        self.assertEqual(response.status_code, 204, response.content)
+
+        assignment.refresh_from_db()
+        self.assertTrue(assignment.is_recommendable)
+        self.assertEqual(assignment.recommendation_quantity, 2)
+
     def test_delete_with_reservation_history_archives(self):
         reservation = Reservation.objects.create(
             requester=self.requester,
@@ -400,8 +503,20 @@ class EquipmentManagementApiTests(TestCase):
         self.assertEqual(report["items"][0]["status"], "UNAVAILABLE")
 
         # Recommendations no longer suggest the item at all.
+        FacilityResource.objects.create(
+            facility=self.facility,
+            equipment=self.mics,
+            is_recommendable=True,
+            recommendation_calculation="FIXED",
+            recommendation_quantity=1,
+        )
         recommendations = recommend_resources(
-            "SEMINAR", 50, target_date=date(2026, 9, 14), start_time=time(9, 0), end_time=time(11, 0)
+            "SEMINAR",
+            50,
+            facility_id=self.facility.id,
+            target_date=date(2026, 9, 14),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
         )
         self.assertNotIn(
             "Wireless Microphone", [r["name"] for r in recommendations]

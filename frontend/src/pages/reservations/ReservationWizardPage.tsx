@@ -485,6 +485,8 @@ export function ReservationWizardPage() {
     suggestions,
     loading: suggestionsLoading,
     error: suggestionsError,
+    missingDetails: suggestionsMissingDetails,
+    recommendedIds,
     ignore: ignoreSuggestion,
   } = useSuggestedResources({
     // Only fetch while the step that shows the suggestions is on screen — the
@@ -503,7 +505,6 @@ export function ReservationWizardPage() {
     staffNotes: details.staffNotes,
     requesterType,
     publicReservation: publicFlow,
-    selectedItems: items,
   })
 
   const itemsList = useMemo<SubmitItems[]>(
@@ -1217,9 +1218,6 @@ export function ReservationWizardPage() {
     )
   }
 
-  const suggestedIds = new Set(suggestions.map((suggestion) => suggestion.equipmentId))
-  const otherEquipment = equipment.filter((item) => !suggestedIds.has(item.id))
-
   return (
     <div className="mx-auto w-full max-w-5xl pb-[calc(5rem_+_env(safe-area-inset-bottom))] lg:pb-0">
       <Link
@@ -1413,11 +1411,13 @@ export function ReservationWizardPage() {
             suggestions={suggestions}
             suggestionsLoading={suggestionsLoading}
             suggestionsError={suggestionsError}
+            suggestionsMissingDetails={suggestionsMissingDetails}
             items={items}
             onQuantity={setQuantity}
             onToggleSuggestion={addSuggestion}
             onIgnoreSuggestion={ignoreSuggestion}
-            equipment={otherEquipment}
+            equipment={equipment}
+            recommendedIds={recommendedIds}
             operatorConfig={operatorConfig}
             operatorSelections={operatorSelections}
             onOperatorChange={toggleOperator}

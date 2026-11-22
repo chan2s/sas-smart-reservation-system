@@ -327,6 +327,9 @@ export function useDeleteEquipment(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', id] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
       void queryClient.invalidateQueries({ queryKey: ['summary'] })
+      // Deleting/archiving changes which resources a facility may offer, so
+      // the configuration and reservation-form lists must refetch too.
+      invalidateFacilityResources(queryClient)
     },
   })
 }
@@ -340,6 +343,8 @@ export function useRestoreEquipment(id: number) {
       void queryClient.invalidateQueries({ queryKey: ['equipment-item', id] })
       void queryClient.invalidateQueries({ queryKey: ['equipment-stats'] })
       void queryClient.invalidateQueries({ queryKey: ['summary'] })
+      // A restored item and its preserved assignments become visible again.
+      invalidateFacilityResources(queryClient)
     },
   })
 }

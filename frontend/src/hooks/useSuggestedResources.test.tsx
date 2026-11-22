@@ -37,7 +37,6 @@ const args: UseSuggestedResourcesArgs = {
   purpose: 'Build a small application',
   staffNotes: '',
   requesterType: 'CAMPUS',
-  selectedItems: {},
 }
 
 const recommendation: Recommendation = {
@@ -61,7 +60,7 @@ afterEach(() => {
 })
 
 describe('useSuggestedResources', () => {
-  it('debounces context, filters selected equipment, and rejects partial inventory', async () => {
+  it('debounces requests and recalculates quantities from the latest participants', async () => {
     vi.useFakeTimers()
     const { result, rerender } = renderHook(({ input }) => useSuggestedResources(input), {
       initialProps: { input: args },
@@ -77,14 +76,83 @@ describe('useSuggestedResources', () => {
       end_time: '12:00',
     })
 
-    const partialInventory = { ...recommendation, quantity: 4, recommended: 3, available: 3, status: 'PARTIAL' as const }
-    act(() => mutate.mock.calls[0][1].onSuccess({ recommendations: [recommendation, partialInventory] }))
-    expect(result.current.suggestions.map((item) => item.equipmentId)).toEqual([10])
+    act(() => mutate.mock.calls[0][1].onSuccess({ recommendations: [recommendation] }))
+    expect(result.current.suggestions[0]).toMatchObject({ quantity: 1, recommended: 1 })
 
-    rerender({ input: { ...args, selectedItems: { 10: 1 } } })
+    rerender({ input: { ...args, participants: 200 } })
+    await act(async () => { vi.advanceTimersByTime(350) })
+    expect(mutate.mock.calls[1][0]).toMatchObject({ expected_participants: 200 })
+
+    act(() => mutate.mock.calls[1][1].onSuccess({
+      recommendations: [{ ...recommendation, quantity: 2, recommended: 2, available: 2 }],
+    }))
+    expect(result.current.suggestions[0]).toMatchObject({ quantity: 2, recommended: 2, available: 2 })
+  })
+
+  it('keeps a partial-stock recommendation visible with its shortage warning', async () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(({ input }) => useSuggestedResources(input), {
+      initialProps: { input: args },
+    })
+    await act(async () => { vi.advanceTimersByTime(350) })
+
+    const partial = {
+      ...recommendation,
+      quantity: 4,
+      recommended: 3,
+      available: 3,
+      status: 'PARTIAL' as const,
+      can_fulfill: false,
+      warning: 'Only 3 of the recommended 4 units are currently available.',
+    }
+    act(() => mutate.mock.calls[0][1].onSuccess({ recommendations: [partial, { ...partial, equipment_id: 99 }] }))
+
+    expect(result.current.suggestions).toHaveLength(1)
+    expect(result.current.suggestions[0]).toMatchObject({
+      equipmentId: 10,
+      quantity: 4,
+      recommended: 3,
+      status: 'PARTIAL',
+      warning: partial.warning,
+    })
+    // The Other equipment list is synchronised from the raw response, so an
+    // unavailable recommendation (id 99 is not offered here) still owns its row.
+    expect([...result.current.recommendedIds]).toEqual([10])
+  })
+
+  it('remembers an ignored suggestion across unrelated edits and resets it with the facility', async () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(({ input }) => useSuggestedResources(input), {
+      initialProps: { input: args },
+    })
+    await act(async () => { vi.advanceTimersByTime(350) })
+    act(() => mutate.mock.calls[0][1].onSuccess({ recommendations: [recommendation] }))
+
+    act(() => result.current.ignore(10))
     expect(result.current.suggestions).toEqual([])
-    rerender({ input: args })
-    expect(result.current.suggestions.map((item) => item.name)).toEqual(['Lecture Projector'])
+    expect(result.current.recommendedIds.size).toBe(0)
+
+    rerender({ input: { ...args, eventName: 'Programming workshop (updated)' } })
+    await act(async () => { vi.advanceTimersByTime(350) })
+    act(() => mutate.mock.calls[1][1].onSuccess({ recommendations: [recommendation] }))
+    expect(result.current.suggestions).toEqual([])
+
+    rerender({ input: { ...args, facilityId: 4 } })
+    await act(async () => { vi.advanceTimersByTime(350) })
+    act(() => mutate.mock.calls[2][1].onSuccess({ recommendations: [recommendation] }))
+    expect(result.current.suggestions.map((item) => item.equipmentId)).toEqual([10])
+  })
+
+  it('asks for missing event details instead of requesting recommendations', async () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(({ input }) => useSuggestedResources(input), {
+      initialProps: { input: { ...args, eventType: '' as const, participants: 0 } },
+    })
+    await act(async () => { vi.advanceTimersByTime(350) })
+
+    expect(mutate).not.toHaveBeenCalled()
+    expect(result.current.missingDetails).toEqual(['event type', 'expected participants'])
+    expect(result.current.suggestions).toEqual([])
   })
 
   it('does not let an old schedule response replace newer recommendations', async () => {

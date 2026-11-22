@@ -383,6 +383,15 @@ def quote_fees(
             "equipment_unit": equipment.unit,
         }
 
+    # Operator service is a weekend / after-hours charge. When the caller has
+    # not supplied a date (legacy callers and some internal estimates), keep
+    # the historical behavior rather than silently dropping a configured fee.
+    operator_time_applies = bool(
+        target_date
+        and (target_date.weekday() >= 5 or (end_time and end_time > time_cls(17, 0)))
+    )
+    operator_chargeable = operator_time_applies or target_date is None
+
     operator_triggers: dict[int, PricingRule] = {}
     for equipment, quantity, operator_requested in _resolve_items(items):
         category_id = equipment.category_id
@@ -403,43 +412,61 @@ def quote_fees(
         if unit_price > 0:
             fees.append(equipment_fee_line(equipment, quantity, unit_price, unit))
 
+        # Operator service: a facility-specific fee wins, otherwise the item's
+        # own saved configuration applies. It is charged once per reservation.
+        # A resource fee is opt-in/required; the item-level fee follows the
+        # historical automatic behavior unless the requester explicitly opts
+        # out. Never multiply by the number of packaged components.
+        operator_fee = Decimal("0.00")
+        operator_applies = False
+        used_item_operator = False
         if resource is not None:
-            # Operator service: only when explicitly requested (or forced by
-            # the resource configuration), never just because it is present.
             operator_fee = money(resource.operator_fee)
-            if (
-                (resource.operator_required or operator_requested is True)
-                and operator_fee > 0
-                and external
-            ):
-                fees.append(
-                    {
-                        "fee_type": PricingRule.FeeType.OPERATOR,
-                        "description": f"{equipment.name} Operator",
-                        "quantity": Decimal("1.00"),
-                        "unit": PricingRule.Unit.FLAT,
-                        "unit_price": operator_fee,
-                        "subtotal": operator_fee,
-                        "equipment_id": equipment.id,
-                        "equipment_category_id": category_id,
-                    }
-                )
+            operator_applies = resource.operator_required or operator_requested is True
+        if operator_fee <= 0 and money(equipment.operator_fee) > 0:
+            operator_fee = money(equipment.operator_fee)
+            operator_applies = operator_requested is not False
+            used_item_operator = True
+
+        if (
+            operator_applies
+            and operator_fee > 0
+            and external
+            and operator_chargeable
+        ):
+            fees.append(
+                {
+                    "fee_type": PricingRule.FeeType.OPERATOR,
+                    "description": f"{equipment.name} Operator",
+                    "quantity": Decimal("1.00"),
+                    "unit": PricingRule.Unit.FLAT,
+                    "unit_price": operator_fee,
+                    "subtotal": operator_fee,
+                    "equipment_id": equipment.id,
+                    "equipment_category_id": category_id,
+                }
+            )
+
+        if resource is not None:
             continue
 
         # Legacy category operator: applies unless the requester explicitly
-        # opted out (``operator_requested is False``). Pre-existing callers
-        # that send no flag keep the historical automatic behavior.
-        if category_id in operator_rules and operator_requested is not False:
+        # opted out (``operator_requested is False``), and only when the item
+        # itself has no operator fee (otherwise the same service would be
+        # charged twice). Pre-existing callers that send no flag keep the
+        # historical automatic behavior.
+        if (
+            not used_item_operator
+            and category_id in operator_rules
+            and operator_requested is not False
+        ):
             operator_triggers.setdefault(category_id, operator_rules[category_id])
 
 
-    # Operator fee only applies when a triggering resource (e.g. a sound
-    # system) is present. A ``flat`` operator rate is a single service charge
-    # for the reservation; an ``hour`` rate scales with the event duration.
-    operator_time_applies = bool(
-        target_date
-        and (target_date.weekday() >= 5 or (end_time and end_time > time_cls(17, 0)))
-    )
+    # Legacy category operator fee only applies when a triggering resource
+    # (e.g. a sound system) is present. A ``flat`` operator rate is a single
+    # service charge for the reservation; an ``hour`` rate scales with the
+    # event duration.
     for category_id, rule in (operator_triggers.items() if operator_time_applies else []):
         unit_price = money(rule.unit_price)
         charge_per_hour = (rule.unit or PricingRule.Unit.UNIT) == PricingRule.Unit.HOUR

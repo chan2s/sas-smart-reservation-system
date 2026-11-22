@@ -20,6 +20,7 @@ from equipment.models import (
     FacilityResource,
     MaintenanceRecord,
 )
+from equipment.recommendation_defaults import apply_default_recommendation_config
 from facilities.models import Facility, OperatingHour
 from reservations.models import (
     PricingRule,
@@ -260,7 +261,7 @@ class Command(BaseCommand):
         """Expose the same official equipment catalog at both official spaces."""
         for facility in Facility.objects.filter(name__in=["Gymnasium", "Dorm Cafeteria"], is_active=True):
             for equipment in Equipment.objects.filter(is_active=True):
-                FacilityResource.objects.update_or_create(
+                resource, created = FacilityResource.objects.update_or_create(
                     facility=facility,
                     equipment=equipment,
                     defaults={
@@ -271,6 +272,10 @@ class Command(BaseCommand):
                         "operator_fee": "0.00",
                     },
                 )
+                # Only new assignments get the starting recommendation
+                # profile; rerunning the seed never overwrites staff edits.
+                if created:
+                    apply_default_recommendation_config(resource)
 
     def seed_pricing(self):
         """Seed the single official rate configuration."""

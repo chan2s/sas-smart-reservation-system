@@ -2552,10 +2552,6 @@ def public_package_availability(request):
 @permission_classes([AllowAny])
 @throttle_classes([PublicReservationThrottle])
 def public_operator_availability(request):
-    """Check availability of Sound System Operators for a time window.
-    
-    Returns list of available operators and their rates.
-    """
     import datetime
     
     data = request.data

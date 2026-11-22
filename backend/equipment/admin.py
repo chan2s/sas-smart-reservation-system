@@ -95,6 +95,7 @@ class FacilityResourceInline(admin.TabularInline):
         "operator_available",
         "operator_required",
         "operator_fee",
+        "is_recommendable",
         "display_order",
         "is_active",
     )
@@ -119,8 +120,8 @@ class EquipmentAdmin(admin.ModelAdmin):
         (
             "Rental Pricing Configuration",
             {
-                "fields": ("pricing_method",),
-                "description": "Choose how this equipment is priced: per unit (quantity-based), by rental duration (half-day/whole-day), or as part of a package.",
+                "fields": ("pricing_method", "operator_fee"),
+                "description": "Choose how this equipment is priced: per unit (quantity-based), by rental duration (half-day/whole-day), or as part of a package. The operator fee is charged once per reservation on weekends or when a weekday booking ends after 5:00 PM.",
             },
         ),
         (
@@ -188,9 +189,10 @@ class FacilityResourceAdmin(admin.ModelAdmin):
         "additional_fee",
         "operator_available",
         "operator_fee",
+        "is_recommendable",
         "is_active",
     )
-    list_filter = ("facility", "status", "is_active", "operator_available")
+    list_filter = ("facility", "status", "is_active", "operator_available", "is_recommendable")
     search_fields = ("equipment__name", "facility__name", "description")
     autocomplete_fields = ("equipment", "facility")
     readonly_fields = (
@@ -217,6 +219,35 @@ class FacilityResourceAdmin(admin.ModelAdmin):
                     "Additional fee is per unit for external organizations at "
                     "this facility (0 = no additional fee). The operator is a "
                     "flat service charged only when requested, or always when required."
+                ),
+            },
+        ),
+        (
+            "Recommendation rules",
+            {
+                "fields": (
+                    "is_recommendable",
+                    "recommendation_event_types",
+                    "recommendation_min_participants",
+                    "recommendation_max_participants",
+                    "recommendation_calculation",
+                    "recommendation_quantity",
+                    "recommendation_participants_per_unit",
+                    "recommendation_tier_1",
+                    "recommendation_tier_1_quantity",
+                    "recommendation_tier_2",
+                    "recommendation_tier_2_quantity",
+                    "recommendation_tier_3",
+                    "recommendation_tier_3_quantity",
+                    "recommendation_min_quantity",
+                    "recommendation_max_quantity",
+                    "recommendation_explanation",
+                ),
+                "description": (
+                    "The booking form recommends only resources whose "
+                    "assignment is active, available, and marked recommendable "
+                    "here. Rules are per facility: the same equipment can have "
+                    "different settings at another facility."
                 ),
             },
         ),

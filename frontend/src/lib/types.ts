@@ -437,6 +437,11 @@ export interface Equipment {
   hourly_rate: string
   /** Configured package price (PACKAGE pricing). "0.00" = use category rate. */
   package_price: string
+  /**
+   * Flat operator/service fee charged once per reservation on weekends or when
+   * a weekday booking ends after 5:00 PM. "0.00" = no operator fee.
+   */
+  operator_fee?: string
   condition: EquipmentCondition
   condition_label: string
   status: EquipmentStatus

@@ -761,8 +761,11 @@ export const endpoints = {
     payload instanceof FormData
       ? api.patchForm<Facility>(`/api/facilities/${id}/`, payload)
       : api.patch<Facility>(`/api/facilities/${id}/`, payload),
+  /** 204 for a hard delete (no body), 200 with `archived: true` otherwise. */
   deleteFacility: (id: number) =>
-    api.delete<{ archived?: boolean; detail?: string }>(`/api/facilities/${id}/`),
+    api.delete<{ archived?: boolean; detail?: string } | undefined>(
+      `/api/facilities/${id}/`,
+    ),
   /** Re-enables an archived/disabled facility (PATCH is_active=true). */
   restoreFacility: (id: number) =>
     api.patch<Facility>(`/api/facilities/${id}/`, { is_active: true }),
@@ -925,8 +928,15 @@ export const endpoints = {
     payload instanceof FormData
       ? api.patchForm<Equipment>(`/api/equipment/${id}/`, payload)
       : api.patch<Equipment>(`/api/equipment/${id}/`, payload),
+  /**
+   * Deletes fresh equipment (HTTP 204, so the body is `undefined`) or archives
+   * equipment with history (HTTP 200 with `archived: true`). Callers must
+   * tolerate the missing body.
+   */
   deleteEquipment: (id: number) =>
-    api.delete<{ archived?: boolean; detail?: string }>(`/api/equipment/${id}/`),
+    api.delete<{ archived?: boolean; detail?: string } | undefined>(
+      `/api/equipment/${id}/`,
+    ),
   restoreEquipment: (id: number) =>
     api.patch<Equipment>(`/api/equipment/${id}/`, { is_active: true }),
   equipmentSetMaintenance: (id: number, payload: { quantity: number; reason?: string }) =>

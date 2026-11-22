@@ -28,6 +28,7 @@ export interface EquipmentFormValues {
   whole_day_price: string
   hourly_rate: string
   package_price: string
+  operator_fee: string
   condition: EquipmentCondition
   status: EquipmentStatus
   storage_location: string
@@ -57,6 +58,7 @@ const UNITS: { value: string; label: string }[] = [
   { value: 'set', label: 'Set' },
   { value: 'pair', label: 'Pair' },
   { value: 'box', label: 'Box' },
+  { value: 'package', label: 'Package' },
 ]
 
 /** Pricing methods — must mirror Equipment.PricingMethod on the backend. */
@@ -89,6 +91,7 @@ function initialValues(equipment: Equipment | null): EquipmentFormValues {
     whole_day_price: rateValue(equipment?.whole_day_price),
     hourly_rate: rateValue(equipment?.hourly_rate),
     package_price: rateValue(equipment?.package_price),
+    operator_fee: rateValue(equipment?.operator_fee),
     condition: equipment?.condition ?? 'GOOD',
     status: equipment?.status ?? 'AVAILABLE',
     storage_location: equipment?.storage_location ?? '',
@@ -166,6 +169,7 @@ export function EquipmentFormModal({
     const wholeDayPrice = Number(values.whole_day_price)
     const hourlyRate = Number(values.hourly_rate)
     const packagePrice = Number(values.package_price)
+    const operatorFee = Number(values.operator_fee)
     const rate = (value: number) =>
       Number.isFinite(value) && value > 0 ? value.toFixed(2) : '0.00'
 
@@ -181,7 +185,11 @@ export function EquipmentFormModal({
       setError('Total quantity must be a whole number of at least 1.')
       return
     }
-    if ([unitPrice, halfDayPrice, wholeDayPrice, hourlyRate, packagePrice].some((value) => value < 0)) {
+    if (
+      [unitPrice, halfDayPrice, wholeDayPrice, hourlyRate, packagePrice, operatorFee].some(
+        (value) => value < 0,
+      )
+    ) {
       setError('Prices cannot be negative.')
       return
     }
@@ -202,6 +210,7 @@ export function EquipmentFormModal({
     form.append('whole_day_price', rate(wholeDayPrice))
     form.append('hourly_rate', rate(hourlyRate))
     form.append('package_price', rate(packagePrice))
+    form.append('operator_fee', rate(operatorFee))
     form.append('condition', values.condition)
     form.append('status', values.status)
     form.append('storage_location', values.storage_location)
@@ -363,6 +372,25 @@ export function EquipmentFormModal({
             ))}
           </Select>
         </Field>
+
+        {values.pricing_method !== 'PER_UNIT' && (
+          <Field
+            label="Operator fee (₱)"
+            htmlFor="equipment-operator-fee"
+            hint="Charged once per reservation on Saturdays and Sundays, or when a weekday reservation ends after 5:00 PM. ₱0.00 means no operator fee."
+            className="sm:col-span-2"
+          >
+            <Input
+              id="equipment-operator-fee"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              value={values.operator_fee}
+              onChange={(event) => set('operator_fee', event.target.value)}
+            />
+          </Field>
+        )}
 
         {values.pricing_method === 'PER_UNIT' && (
           <Field

@@ -1,5 +1,7 @@
+import { useRef } from 'react'
 import { Archive, CalendarX, TriangleAlert } from 'lucide-react'
 import { useDeleteFacility } from '@/hooks/queries'
+import { apiErrorMessage } from '@/lib/api'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -22,22 +24,38 @@ export function RemoveFacilityModal({
 }) {
   const { toast } = useToast()
   const remove = useDeleteFacility(facility.id)
+  /** Blocks a second DELETE that lands before the button re-renders disabled. */
+  const inFlight = useRef(false)
 
   const willArchive = facility.has_history
   const reservationCount = facility.reservation_count ?? 0
 
   function confirm() {
+    if (inFlight.current) return
+    inFlight.current = true
+
     remove.mutate(undefined, {
       onSuccess: (result) => {
+        inFlight.current = false
+        // A hard delete answers 204 No Content, so `result` is undefined; an
+        // archive answers 200 with `archived: true`. Close before toasting so
+        // the dialog never depends on the response body being present.
+        onClose()
         toast(
-          result.archived
+          result?.archived
             ? `${facility.name} archived. Existing reservations remain intact.`
             : `${facility.name} deleted.`,
         )
-        onClose()
       },
-      onError: () =>
-        toast('Unable to remove this facility. Please try again.', 'error'),
+      onError: (error) => {
+        inFlight.current = false
+        // Leave the dialog open so the admin can retry or cancel, and surface
+        // the backend's own reason instead of a generic failure.
+        toast(
+          apiErrorMessage(error, 'Unable to remove this facility. Please try again.'),
+          'error',
+        )
+      },
     })
   }
 

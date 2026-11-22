@@ -345,8 +345,20 @@ class FacilityResourceRecommendationTests(TestCase):
         self.avr_projector = Equipment.objects.create(
             name="AVR Projector", category=self.projector_category, total_quantity=2
         )
-        FacilityResource.objects.create(facility=self.gym, equipment=self.gym_sound)
-        FacilityResource.objects.create(facility=self.avr, equipment=self.avr_projector)
+        FacilityResource.objects.create(
+            facility=self.gym,
+            equipment=self.gym_sound,
+            is_recommendable=True,
+            recommendation_calculation="FIXED",
+            recommendation_quantity=1,
+        )
+        FacilityResource.objects.create(
+            facility=self.avr,
+            equipment=self.avr_projector,
+            is_recommendable=True,
+            recommendation_calculation="FIXED",
+            recommendation_quantity=1,
+        )
 
     def test_only_facility_resources_are_recommended(self):
         from .services.recommendations import recommend_resources

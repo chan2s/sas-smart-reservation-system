@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { AlertTriangle, Pencil, Plus, Sparkles } from 'lucide-react'
+import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
@@ -29,6 +30,9 @@ const reservationTextareaClass =
 const reservationInvalidControlClass =
   '!border-status-rejected focus:!border-status-rejected focus:!ring-status-rejected/10'
 
+/** Stable empty default so the picker filter does not see a new Set on every render. */
+const EMPTY_RECOMMENDED_IDS: ReadonlySet<number> = new Set()
+
 /**
  * Step 3 — "Details & Resources".
  *
@@ -49,11 +53,13 @@ export function DetailsStep({
   suggestions,
   suggestionsLoading,
   suggestionsError,
+  suggestionsMissingDetails = [],
   items,
   onQuantity,
   onToggleSuggestion,
   onIgnoreSuggestion,
   equipment,
+  recommendedIds = EMPTY_RECOMMENDED_IDS,
   operatorConfig,
   operatorSelections,
   onOperatorChange,
@@ -75,12 +81,20 @@ export function DetailsStep({
   suggestions: SuggestedResource[]
   suggestionsLoading: boolean
   suggestionsError: boolean
+  /**
+   * Event details the recommender still needs (event type, participants, …).
+   * While this is non-empty the section asks the requester to fill them in
+   * rather than claiming nothing matched.
+   */
+  suggestionsMissingDetails?: string[]
   items: Record<number, number>
   onQuantity: (equipmentId: number, quantity: number, available: number) => void
   onToggleSuggestion: (equipmentId: number, suggestedQuantity: number, available: number) => void
   onIgnoreSuggestion: (equipmentId: number) => void
-  /** Facility resources that are NOT already listed as suggestions. */
+  /** The facility's full resource catalog (recommended and selected items are filtered out here). */
   equipment: ReservableResource[]
+  /** Ids owned by the latest recommendation response — never repeated in Other equipment. */
+  recommendedIds?: ReadonlySet<number>
   operatorConfig?: Record<number, OperatorConfig>
   operatorSelections?: Record<number, boolean>
   onOperatorChange?: (equipmentId: number, selected: boolean) => void
@@ -175,10 +189,25 @@ export function DetailsStep({
     return () => window.clearTimeout(timer)
   }, [focusAttempt, firstInvalid])
 
-  // Additional (non-suggested) resources the requester picked — kept visible
-  // even while the full picker is collapsed.
-  const selectedExtras = equipment.filter((item) => (items[item.id] ?? 0) > 0)
+  // Additional (non-suggested) resources the requester picked — always kept
+  // visible so their quantity can be adjusted even while the picker is open.
+  // Recommended equipment is excluded: it lives in Suggested resources (with
+  // its own stepper) so each item appears exactly once on the step.
+  const selectedExtras = equipment.filter(
+    (item) => (items[item.id] ?? 0) > 0 && !recommendedIds.has(item.id),
+  )
+  // Only resources that are neither recommended nor already selected are
+  // offered in the picker, so nothing can be added twice.
+  const pickerEquipment = equipment.filter(
+    (item) => !recommendedIds.has(item.id) && (items[item.id] ?? 0) === 0,
+  )
   const contactComplete = Boolean(contact.name.trim()) && isValidPhMobile(contact.phone)
+  const missingDetailsLabel =
+    suggestionsMissingDetails.length <= 1
+      ? suggestionsMissingDetails[0] ?? ''
+      : `${suggestionsMissingDetails.slice(0, -1).join(', ')} and ${
+          suggestionsMissingDetails[suggestionsMissingDetails.length - 1]
+        }`
 
   return (
     <section aria-label="Event details and resources" className="mx-auto w-full max-w-5xl">
@@ -456,8 +485,8 @@ export function DetailsStep({
             <div>
               <h3 id="suggested-resources-heading" className="text-base font-semibold text-ink">Suggested resources</h3>
               <p className="mt-1 text-sm text-body">
-                Suggestions use your event details, this facility&apos;s equipment, and availability
-                for the selected date and time. Add only what you need.
+                Suggestions update as you change the event details, and use this facility&apos;s
+                equipment with availability for the selected date and time. Add only what you need.
               </p>
             </div>
             <Sparkles className="mt-1 size-4 shrink-0 text-brand" aria-hidden />
@@ -468,30 +497,118 @@ export function DetailsStep({
             <p role="alert" className="mt-4 rounded-lg border border-status-pending/25 bg-status-pending-bg px-3.5 py-2.5 text-sm text-status-pending">
               Recommendations and availability could not be checked. Try changing the schedule or continue with the equipment list.
             </p>
+          ) : suggestionsMissingDetails.length > 0 ? (
+            <p role="status" className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-body">
+              Add the {missingDetailsLabel} to see recommended equipment. Suggestions update
+              automatically as you type — nothing is added without your action.
+            </p>
           ) : suggestions.length === 0 ? (
             <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-body">No matching available equipment was found for these event details and this schedule.</p>
           ) : (
             <ul className="mt-4 divide-y divide-line">
-              {suggestions.map((suggestion) => (
-                <li key={suggestion.equipmentId} className="flex flex-wrap items-center gap-3 py-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-ink">
-                      {suggestion.name} — {suggestion.quantity} × {suggestion.unit}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted">
-                      {suggestion.reason} · {suggestion.available} available for this schedule
-                    </p>
-                  </div>
-                  <div className="flex w-full shrink-0 gap-2 sm:w-auto">
-                    <Button type="button" size="md" className="flex-1 sm:flex-none" onClick={() => onToggleSuggestion(suggestion.equipmentId, suggestion.quantity, suggestion.available)}>
-                      Add
-                    </Button>
-                    <Button type="button" size="md" variant="outline" className="flex-1 sm:flex-none" onClick={() => onIgnoreSuggestion(suggestion.equipmentId)}>
-                      Ignore
-                    </Button>
-                  </div>
-                </li>
-              ))}
+              {suggestions.map((suggestion) => {
+                const selectedQuantity = items[suggestion.equipmentId] ?? 0
+                const selected = selectedQuantity > 0
+                const operator = operatorConfig?.[suggestion.equipmentId]
+                return (
+                  <li key={suggestion.equipmentId} className="py-4">
+                    <div className="flex flex-wrap items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-ink">{suggestion.name}</p>
+                          {selected && <Badge tone="emerald">Added · {selectedQuantity}</Badge>}
+                          {suggestion.status === 'PARTIAL' && <Badge tone="amber">Limited stock</Badge>}
+                        </div>
+                        <p className="mt-1 text-sm text-body">{suggestion.reason}</p>
+                        <p className="mt-0.5 text-xs text-muted">
+                          Needs {suggestion.quantity} × {suggestion.unit} · {suggestion.available} available for this schedule
+                          {suggestion.feeApplies && suggestion.unitPrice
+                            ? ` · ${formatCurrency(suggestion.unitPrice)} per ${suggestion.unit}`
+                            : ''}
+                        </p>
+                        {suggestion.calculation && (
+                          <p className="mt-0.5 text-xs text-muted">Calculation: {suggestion.calculation}</p>
+                        )}
+                        {suggestion.warning && (
+                          <p className="mt-1 flex items-start gap-1.5 text-xs text-status-pending">
+                            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                            {suggestion.warning}
+                          </p>
+                        )}
+                        {selected && operator && (operator.available || operator.required) && (
+                          <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-sm text-body">
+                            <input
+                              type="checkbox"
+                              className="size-3.5 accent-[var(--color-brand)]"
+                              checked={
+                                operatorSelections?.[suggestion.equipmentId] ?? Boolean(operator.required)
+                              }
+                              disabled={Boolean(operator.required)}
+                              onChange={(event) =>
+                                onOperatorChange?.(suggestion.equipmentId, event.target.checked)
+                              }
+                            />
+                            <span>
+                              Operator service
+                              {Number(operator.fee) > 0 ? ` (+${formatCurrency(operator.fee)})` : ''}
+                              {operator.required ? ' · required' : ''}
+                            </span>
+                          </label>
+                        )}
+                      </div>
+                      <div className="flex w-full shrink-0 gap-2 sm:w-auto">
+                        {selected ? (
+                          <>
+                            <QuantityStepper
+                              value={selectedQuantity}
+                              max={suggestion.available}
+                              label={suggestion.name}
+                              onChange={(next) =>
+                                onQuantity(suggestion.equipmentId, next, suggestion.available)
+                              }
+                            />
+                            <Button
+                              type="button"
+                              size="md"
+                              variant="outline"
+                              className="flex-1 sm:flex-none"
+                              onClick={() => onQuantity(suggestion.equipmentId, 0, suggestion.available)}
+                            >
+                              Remove
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              type="button"
+                              size="md"
+                              className="flex-1 sm:flex-none"
+                              onClick={() =>
+                                onToggleSuggestion(
+                                  suggestion.equipmentId,
+                                  suggestion.recommended,
+                                  suggestion.available,
+                                )
+                              }
+                            >
+                              Add
+                            </Button>
+                            <Button
+                              type="button"
+                              size="md"
+                              variant="outline"
+                              className="flex-1 sm:flex-none"
+                              onClick={() => onIgnoreSuggestion(suggestion.equipmentId)}
+                            >
+                              Ignore
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
@@ -519,7 +636,7 @@ export function DetailsStep({
           </Button>
         </div>
 
-        {!showPicker && selectedExtras.length > 0 && (
+        {selectedExtras.length > 0 && (
           <div className="mt-5">
             <h4 className="text-sm font-medium text-ink">Selected equipment</h4>
             <ul className="mt-2 divide-y divide-slate-200 border-y border-slate-200">
@@ -553,7 +670,7 @@ export function DetailsStep({
         {showPicker && (
           <div id="other-equipment-picker">
             <OtherEquipmentPicker
-              equipment={equipment}
+              equipment={pickerEquipment}
               items={items}
               onQuantity={onQuantity}
               operatorConfig={operatorConfig}

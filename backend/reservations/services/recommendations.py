@@ -1,28 +1,28 @@
-"""Smart resource recommendations.
+"""Facility-configuration-driven resource recommendations.
 
-A deterministic, extensible rule engine that turns event requirements
-(event type, purpose, expected participants, facility, schedule) into
-sensible equipment **quantities**, then reports — separately — what is
-actually available during the proposed reservation window.
+Recommendations come from the selected facility's own equipment assignments
+(``FacilityResource`` rows) — never from a built-in catalog of equipment
+names, quantities, or participant thresholds.
 
-Extending the engine means editing data tables, not control flow:
+For each considered event the engine reads the assignments of the selected
+facility, keeps only rows that are
 
-* ``_EVENT_PROFILES`` — one entry per event type; new event types are added
-  here.
-* ``_FACILITY_ADJUSTMENTS`` — per-facility-type tweaks (e.g. AVR always
-  suggests a projector).
-* ``_PURPOSE_PROJECTOR_KEYWORDS`` — purpose text that boosts a projector.
-* ``RecommendationRule`` (DB, staff-editable via Django admin) — overrides
-  any built-in category rule. Specificity decides which rule wins: exact
-  event type > exact facility type > participant range > priority. Built-in
-  rules remain the fallback whenever no active DB rule covers a category, so
-  the engine behaves identically to the code-only version until staff add
-  overrides.
+* active and marked available at that facility,
+* backed by active, currently usable equipment,
+* opted in with ``is_recommendable``,
+* matching the configured event types and participant range,
 
-Every recommendation in the payload answers three questions:
+then computes the quantity from the assignment's configured calculation and
+reports separately what is actually available during the proposed window.
 
-* ``quantity`` — how many units the event *needs* (rule-based).
-* ``available`` — how many units exist during the window (inventory).
+Extending the behaviour means changing configuration (Django admin), not
+control flow: staff can change a threshold or quantity, deactivate an
+assignment, or remove it from the facility and the booking form follows.
+
+Every recommendation answers three questions:
+
+* ``quantity`` — how many units the event *needs* (configured rule output).
+* ``available`` — how many units exist at the facility during the window.
 * ``reason`` / ``calculation`` — why that quantity was chosen and the exact
   arithmetic behind it.
 
@@ -36,354 +36,123 @@ from __future__ import annotations
 import math
 from datetime import date as date_cls
 from datetime import time as time_cls
-from django.db.models import Q
 
-from equipment.models import Equipment, EquipmentCategory
-from equipment.services import (
-    configured_builtin_tokens_for_facility,
-    facility_has_resources,
-    facility_resource_equipment_ids,
-)
+from equipment.models import Equipment, FacilityResource
 from facilities.models import Facility
 
 from . import pricing
 from .availability import equipment_availability_map
-from ..models import RecommendationRule, Reservation
+from ..models import Reservation
 
 
 # ---------------------------------------------------------------------------
-# Quantity rules
+# Assignment rule evaluation
 # ---------------------------------------------------------------------------
 
-def _chairs(participants: int) -> int:
-    return max(participants, 0)
+Rec = FacilityResource.RecommendationCalculation
 
 
-def _tables(participants: int) -> int:
-    """One table per 10 participants; small events still get a table."""
-    return max(math.ceil(participants / 10), 1)
+def _matches_event_types(resource: FacilityResource, event_type: str) -> bool:
+    """True when the assignment is configured for this event type."""
+    configured = resource.recommendation_event_types or []
+    if not configured:
+        return True  # empty = suitable for every event type
+    return (event_type or Reservation.EventType.OTHER) in configured
 
 
-# A second sound system is required from this participant count up.
-_SOUND_LARGE_THRESHOLD = 200
-
-# Microphone tiers: ``(inclusive participant limit, quantity, label)``.
-# This table is the single source of truth for the microphone ladder; the
-# quantity in ``_microphones`` and the human justification in ``_explain`` are
-# both derived from it, so the displayed text can never contradict the
-# computed quantity.
-_MICROPHONE_TIERS = (
-    (60, 1, "small events"),
-    (200, 2, "medium events"),
-    (400, 4, "large events"),
-)
-_MICROPHONE_OVERSIZED_QUANTITY = 6
+def _matches_participants(resource: FacilityResource, participants: int) -> bool:
+    minimum = resource.recommendation_min_participants
+    maximum = resource.recommendation_max_participants
+    if minimum is not None and participants < minimum:
+        return False
+    if maximum is not None and participants > maximum:
+        return False
+    return True
 
 
-def _sound(participants: int) -> int:
-    if participants < 30:
-        return 0
-    if participants < _SOUND_LARGE_THRESHOLD:
-        return 1
-    return 2
-
-
-def _microphones(participants: int) -> int:
-    for limit, quantity, _label in _MICROPHONE_TIERS:
-        if participants <= limit:
-            return quantity
-    return _MICROPHONE_OVERSIZED_QUANTITY
-
-
-# ---------------------------------------------------------------------------
-# Rule tables (the extensible part)
-# ---------------------------------------------------------------------------
-#
-# A profile maps a category key to either:
-#   False   -> never suggested for this event type
-#   True    -> use the base quantity rule for that category
-#   int     -> fixed quantity
-# A category key absent from a profile is never suggested.
-
-_CATEGORY_KEYS = ("chairs", "tables", "sound", "microphones", "projector")
-_BASE_RULES = {
-    "chairs": _chairs,
-    "tables": _tables,
-    "sound": _sound,
-    "microphones": _microphones,
-    "projector": lambda _participants: 1,
-}
-
-# Human-readable rule statements used in reasons and calculations. The noun
-# pair is singular/plural so explanations read naturally ("1 table per 10
-# participants", "2 microphones for large seminars").
-_UNIT_NOUNS = {
-    "chairs": ("chair", "chairs"),
-    "tables": ("table", "tables"),
-    "sound": ("sound system", "sound systems"),
-    "microphones": ("microphone", "microphones"),
-    "projector": ("projector", "projectors"),
-}
-
-_EVENT_PROFILES = {
-    "SEMINAR": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "MEETING": {"projector": True, "sound": False, "microphones": 1, "chairs": True, "tables": 1},
-    "WORKSHOP": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "TRAINING": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "CONFERENCE": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "RECOGNITION": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "ORIENTATION": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "CULTURAL": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "ACADEMIC": {"projector": True, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "SPORTS": {"projector": False, "sound": True, "microphones": True, "chairs": True, "tables": True},
-    "OTHER": {"projector": False, "sound": True, "microphones": True, "chairs": True, "tables": True},
-}
-
-# Category key -> EquipmentCategory name keyword.
-_CATEGORY_KEYWORDS = {
-    "chairs": "chairs",
-    "tables": "tables",
-    "sound": "sound",
-    "microphones": "microphones",
-    "projector": "projector",
-}
-
-_PURPOSE_PROJECTOR_KEYWORDS = (
-    "presentation",
-    "seminar",
-    "conference",
-    "workshop",
-    "training",
-    "recognition",
-    "award",
-    "ceremony",
-    "graduation",
-    "accreditation",
-    "lecture",
-)
-
-# Context terms identify a hands-on computing activity, while equipment names
-# and category metadata determine which real catalog records can satisfy it.
-# This intentionally does not name or fabricate a particular inventory item.
-_COMPUTING_EVENT_KEYWORDS = (
-    "programming", "coding", "computer workshop", "computer lab",
-    "software development", "data science", "web development",
-)
-_COMPUTING_EQUIPMENT_KEYWORDS = ("computer", "laptop", "desktop", "workstation")
-
-
-# ---------------------------------------------------------------------------
-# DB-configured rules (staff-editable via Django admin)
-# ---------------------------------------------------------------------------
-
-def _matching_rules(event_type: str, facility_type: str | None, participants: int) -> list:
-    """Active DB rules matching the event, most specific first.
-
-    Specificity: exact event type (4) + exact facility type (2) + participant
-    range (1), then ``priority`` (lower wins), then most recently updated.
-    """
-    matched = []
-    rules = (
-        RecommendationRule.objects.filter(is_active=True)
-        .select_related("category")
-        .order_by("priority", "id")
+def _threshold_quantity(
+    resource: FacilityResource, participants: int
+) -> tuple[int, str]:
+    """Tiered lookup: <= t1 -> q1; <= t2 -> q2; <= t3 -> q3; else configured."""
+    fallback = resource.recommendation_quantity
+    tiers = (
+        (resource.recommendation_tier_1, resource.recommendation_tier_1_quantity),
+        (resource.recommendation_tier_2, resource.recommendation_tier_2_quantity),
+        (resource.recommendation_tier_3, resource.recommendation_tier_3_quantity),
     )
-    for rule in rules:
-        if rule.event_type and rule.event_type != event_type:
+    higher_bound = 0
+    for tier, quantity in tiers:
+        if not tier or quantity is None:
             continue
-        if rule.facility_type and rule.facility_type != (facility_type or ""):
-            continue
-        if participants < rule.min_participants:
-            continue
-        if rule.max_participants is not None and participants > rule.max_participants:
-            continue
-        specificity = (
-            (4 if rule.event_type else 0)
-            + (2 if rule.facility_type else 0)
-            + (1 if (rule.min_participants or rule.max_participants) else 0)
-        )
-        matched.append((-specificity, rule.priority, -rule.id, rule))
-    matched.sort(key=lambda entry: entry[:3])
-    return [entry[3] for entry in matched]
+        if participants <= tier:
+            return quantity, f"{participants} participants → {quantity}"
+        higher_bound = tier
+    return fallback, f"participants > {higher_bound} → {fallback}"
 
 
-def _rule_quantity(rule: RecommendationRule, participants: int) -> tuple[int, str]:
-    """Return ``(quantity, calculation_trace)`` for a DB rule."""
-    ct = rule.calculation_type
+def _calculate_quantity(
+    resource: FacilityResource, participants: int
+) -> tuple[int, str]:
+    """Return ``(quantity, calculation_trace)`` from the configured rule."""
+    calculation = resource.recommendation_calculation
+    value = resource.recommendation_quantity
 
-    if ct == RecommendationRule.CalculationType.FIXED:
-        quantity = rule.quantity_value
-        return quantity, f"{quantity} × 1"
-
-    if ct == RecommendationRule.CalculationType.PER_PARTICIPANT:
-        quantity = participants * rule.quantity_value
-        return quantity, f"{participants} × {rule.quantity_value}"
-
-    if ct == RecommendationRule.CalculationType.PER_GROUP:
-        per_unit = max(rule.participants_per_unit, 1)
+    if calculation == Rec.FIXED:
+        quantity, trace = value, f"{value} × 1"
+    elif calculation == Rec.PER_PARTICIPANT:
+        quantity, trace = participants * value, f"{participants} × {value}"
+    elif calculation == Rec.PER_GROUP:
+        per_unit = max(resource.recommendation_participants_per_unit, 1)
         quantity = max(math.ceil(participants / per_unit), 1)
-        return quantity, f"ceil({participants} / {per_unit}) = {quantity}"
+        trace = f"ceil({participants} / {per_unit}) = {quantity}"
+    else:  # THRESHOLD
+        quantity, trace = _threshold_quantity(resource, participants)
 
-    # THRESHOLD: participants <= tier 1 → q1; <= tier 2 → q2; else q3.
-    tier_1 = rule.threshold_tier_1 or 0
-    tier_2 = rule.threshold_tier_2 or 0
-    q1 = rule.threshold_quantity_1
-    q2 = rule.threshold_quantity_2
-    q3 = (
-        rule.threshold_quantity_3
-        if rule.threshold_quantity_3 is not None
-        else rule.quantity_value
-    )
-    if tier_1 and q1 is not None and participants <= tier_1:
-        return q1, f"{participants} participants → {q1}"
-    if tier_2 and q2 is not None and participants <= tier_2:
-        return q2, f"{participants} participants → {q2}"
-    return q3, f"participants > {tier_2 or tier_1} → {q3}"
+    minimum = resource.recommendation_min_quantity
+    maximum = resource.recommendation_max_quantity
+    if minimum is not None and quantity < minimum:
+        quantity = minimum
+        trace += f" → at least {minimum}"
+    if maximum is not None and quantity > maximum:
+        quantity = maximum
+        trace += f" → at most {maximum}"
+    return quantity, trace
 
 
-def _rule_reason(rule: RecommendationRule, quantity: int, participants: int) -> str:
-    """Custom explanation if staff wrote one, otherwise auto-generated."""
-    if rule.explanation:
-        return rule.explanation
+def _reason(
+    resource: FacilityResource, quantity: int, participants: int
+) -> str:
+    """Custom explanation if staff wrote one, otherwise derived from the rule."""
+    if resource.recommendation_explanation:
+        return resource.recommendation_explanation
 
-    name = rule.category.name
-    # "Chairs" -> "chair", "Sound Systems" -> "sound system".
-    singular = name[:-1] if name.endswith("s") and not name.endswith("ss") else name
-    singular = singular.lower()
-    ct = rule.calculation_type
+    name = resource.equipment.name
+    calculation = resource.recommendation_calculation
 
-    if ct == RecommendationRule.CalculationType.FIXED:
-        noun = singular if rule.quantity_value == 1 else name.lower()
-        return f"{rule.quantity_value} {noun} for this event"
-    if ct == RecommendationRule.CalculationType.PER_PARTICIPANT:
-        return f"{rule.quantity_value} {singular} per participant"
-    if ct == RecommendationRule.CalculationType.PER_GROUP:
-        return f"1 {singular} per {rule.participants_per_unit} participants, rounded up"
+    if calculation == Rec.FIXED:
+        return f"{quantity} × {name} for this event"
+    if calculation == Rec.PER_PARTICIPANT:
+        return f"{resource.recommendation_quantity} {name} per participant"
+    if calculation == Rec.PER_GROUP:
+        per_unit = max(resource.recommendation_participants_per_unit, 1)
+        return f"1 {name} per {per_unit} participants, rounded up"
 
     # THRESHOLD: describe the tier that matched.
-    tier_1 = rule.threshold_tier_1 or 0
-    tier_2 = rule.threshold_tier_2 or 0
-    if tier_1 and participants <= tier_1:
-        return f"{quantity} {singular if quantity == 1 else name.lower()} for events up to {tier_1} participants"
-    if tier_2 and participants <= tier_2:
-        return f"{quantity} {singular if quantity == 1 else name.lower()} for events up to {tier_2} participants"
-    return f"{quantity} {singular if quantity == 1 else name.lower()} for events over {tier_2 or tier_1} participants"
-
-
-def _purpose_suggests_projector(purpose: str) -> bool:
-    lowered = (purpose or "").lower()
-    return any(keyword in lowered for keyword in _PURPOSE_PROJECTOR_KEYWORDS)
-
-
-def _context_suggests_computing(context: str) -> bool:
-    lowered = (context or "").lower()
-    return any(keyword in lowered for keyword in _COMPUTING_EVENT_KEYWORDS)
-
-
-def _adjust_profile(profile: dict, facility_type: str | None, purpose: str) -> dict:
-    """Apply facility and purpose adjustments to a copy of an event profile."""
-    adjusted = dict(profile)
-
-    if facility_type == Facility.FacilityType.AVR:
-        # Presentation rooms always warrant a projector.
-        adjusted["projector"] = True
-    elif facility_type == Facility.FacilityType.GYMNASIUM:
-        # Open arenas rarely need a projector unless it is a program.
-        if profile.get("projector") is False and not _purpose_suggests_projector(purpose):
-            adjusted["projector"] = False
-        else:
-            adjusted["projector"] = True
-    elif facility_type == Facility.FacilityType.CAFETERIA:
-        adjusted["projector"] = False
-
-    if _purpose_suggests_projector(purpose):
-        adjusted["projector"] = True
-
-    return adjusted
-
-
-# ---------------------------------------------------------------------------
-# Explanation builders
-# ---------------------------------------------------------------------------
-
-def _explain(key: str, spec, quantity: int, participants: int) -> tuple[str, str]:
-    """Return ``(reason, calculation)`` for one recommended category.
-
-    ``reason`` is a human sentence explaining *why* the quantity was chosen;
-    ``calculation`` traces the arithmetic used to get it.
-    """
-    singular, plural = _UNIT_NOUNS[key]
-
-    # Fixed quantity (e.g. MEETING asks for exactly 1 microphone).
-    if spec is not True:
-        noun = singular if spec == 1 else plural
-        return (
-            f"Fixed allocation for this event type: {spec} {noun}.",
-            f"{spec} × 1",
-        )
-
-    if key == "chairs":
-        return (
-            f"1 {singular} per participant",
-            f"{participants} × 1",
-        )
-    if key == "tables":
-        groups = math.ceil(participants / 10) if participants else 1
-        return (
-            f"1 {singular} per 10 participants, rounded up",
-            f"ceil({participants} / 10) = {groups}",
-        )
-    if key == "sound":
-        if quantity == 0:
-            return ("Not needed for this event size", "")
-        noun = singular if quantity == 1 else plural
-        if quantity == 1:
-            return (
-                f"1 {singular} for events under {_SOUND_LARGE_THRESHOLD} participants",
-                "1 × 1",
-            )
-        return (
-            f"{quantity} {noun} for events of {_SOUND_LARGE_THRESHOLD} "
-            f"participants or more",
-            f"participants >= {_SOUND_LARGE_THRESHOLD} → {quantity}",
-        )
-    if key == "microphones":
-        # The justification quotes ``quantity`` — the value already computed by
-        # ``_microphones`` — rather than restating a literal, so the text and
-        # the recommended quantity stay in sync across every tier.
-        noun = singular if quantity == 1 else plural
-        for limit, _tier_quantity, label in _MICROPHONE_TIERS:
-            if participants <= limit:
-                return (
-                    f"{quantity} {noun} for {label} (up to {limit} participants)",
-                    f"{participants} participants → {quantity}",
-                )
-        return (
-            f"{quantity} {noun} for very large events (over "
-            f"{_MICROPHONE_TIERS[-1][0]} participants)",
-            f"{participants} participants → {quantity}",
-        )
-    # projector and any future fixed-1 rule
-    return ("1 projector for this event type", "1 × 1")
+    tiers = (
+        (resource.recommendation_tier_1, resource.recommendation_tier_1_quantity),
+        (resource.recommendation_tier_2, resource.recommendation_tier_2_quantity),
+        (resource.recommendation_tier_3, resource.recommendation_tier_3_quantity),
+    )
+    for tier, _tier_quantity in tiers:
+        if tier and participants <= tier:
+            return f"{quantity} {name} for events up to {tier} participants"
+    highest = max((tier for tier, _ in tiers if tier), default=0)
+    return f"{quantity} {name} for events over {highest} participants"
 
 
 # ---------------------------------------------------------------------------
 # Recommendation builder
 # ---------------------------------------------------------------------------
-
-def _evaluate_quantities(profile: dict, participants: int) -> dict:
-    """category key -> (rule spec, rule quantity) pre-availability."""
-    quantities = {}
-    for key in _CATEGORY_KEYS:
-        spec = profile.get(key)
-        if spec is False or spec is None:
-            continue
-        if spec is True:
-            quantities[key] = (spec, _BASE_RULES[key](participants))
-        else:
-            quantities[key] = (spec, int(spec))
-    return quantities
-
 
 def recommend_resources(
     event_type: str,
@@ -396,7 +165,7 @@ def recommend_resources(
     end_time: time_cls | None = None,
     event_name: str = "",
 ) -> list:
-    """Recommend resources for an event profile.
+    """Recommend the selected facility's configured equipment.
 
     Returns a list of::
 
@@ -404,7 +173,7 @@ def recommend_resources(
             "equipment_id": int,
             "name": str,
             "category": str,
-            "quantity": int,      # rule-based recommendation (uncapped)
+            "quantity": int,      # configured recommendation (uncapped)
             "available": int,     # units available during the window
             "recommended": int,   # min(quantity, available) — safe prefill
             "status": "AVAILABLE" | "PARTIAL" | "UNAVAILABLE",
@@ -414,169 +183,59 @@ def recommend_resources(
             "warning": str,       # only when recommendation exceeds stock
         }
 
-    ``quantity`` is always the rule output — never inventory — while
-    ``recommended`` is the availability-capped value safe to prefill into the
-    request form. When no schedule window is given, availability is computed
-    against all current reservations (a conservative at-a-glance view).
+    ``quantity`` is always the configured rule output — never inventory —
+    while ``recommended`` is the availability-capped value safe to prefill into
+    the request form. When no schedule window is given, availability is
+    computed against all current reservations (a conservative at-a-glance
+    view).
 
-    Staff-configured ``RecommendationRule`` rows (Django admin) take
-    precedence over the built-in profile rules: a matching DB rule replaces
-    the built-in quantity for its category, and categories not present in
-    the built-in profile can be introduced purely through DB rules.
-
-    Missing participants (0/None) skips participant-based calculation entirely
-    and returns no recommendations rather than guessing quantities.
+    A facility is the source of truth: without one there is nothing to
+    recommend, and an equipment item that is not assigned to the facility is
+    never recommended. ``purpose``, ``special_requirements``, and
+    ``event_name`` are accepted for API compatibility; they do not add
+    equipment, because doing so would reintroduce hardcoded rules.
     """
     # No participant count → no participant-based quantities. This matches the
     # create-time validation (expected_participants >= 1) so the wizard never
     # shows recommendations that could not be requested.
     participants = int(participants or 0)
-    if participants < 1:
+    if participants < 1 or facility_id is None:
         return []
 
-    profile = _EVENT_PROFILES.get(event_type or "OTHER", _EVENT_PROFILES["OTHER"])
-
-    facility_type = None
-    if facility_id is not None:
-        facility_type = Facility.objects.filter(pk=facility_id).values_list(
-            "facility_type", flat=True
-        ).first()
-
-    # Only resources that belong to the selected facility may be recommended.
-    # ``None`` means the facility has no assignments configured, so the
-    # engine keeps its global behavior for backwards compatibility.
-    assigned_ids = None
-    if facility_id is not None and facility_has_resources(facility_id):
-        assigned_ids = facility_resource_equipment_ids(facility_id)
-
-    # Event name, purpose, and notes describe the requested activity. Let all
-    # requester-provided context affect contextual equipment rules.
-    context = " ".join(
-        str(value or "") for value in (event_name, purpose, special_requirements)
+    resources = (
+        FacilityResource.objects.filter(
+            facility_id=facility_id,
+            is_active=True,
+            status=FacilityResource.Status.AVAILABLE,
+            is_recommendable=True,
+            equipment__is_active=True,
+            equipment__status=Equipment.Status.AVAILABLE,
+        )
+        .select_related("equipment__category")
+        .order_by("display_order", "equipment__name")
     )
-    profile = _adjust_profile(profile, facility_type, context)
-    quantities = _evaluate_quantities(profile, participants)
 
-    if facility_id is not None:
-        facility_layout = Facility.objects.filter(pk=facility_id).only(
-            "seating_type", "built_in_seats"
-        ).first()
-        if facility_layout:
-            builtin_tokens = configured_builtin_tokens_for_facility(facility_id)
-            if facility_layout.seating_type in {
-                Facility.SeatingType.TABLES_AND_CHAIRS,
-                Facility.SeatingType.FIXED_ROWS,
-            }:
-                seating_allowance = facility_layout.built_in_seats or 0
-                for key in ("chairs", "tables"):
-                    if key in quantities:
-                        spec, needed = quantities[key]
-                        quantities[key] = (spec, max(0, needed - seating_allowance))
-            builtin_categories = {
-                "chairs": "chairs",
-                "tables": "tables",
-                "sound": "sound_system",
-                "projector": "projector",
-            }
-            for key, token in builtin_categories.items():
-                if token in builtin_tokens:
-                    quantities.pop(key, None)
+    configured = [
+        resource
+        for resource in resources
+        if _matches_event_types(resource, event_type)
+        and _matches_participants(resource, participants)
+    ]
+    if not configured:
+        return []
 
     availability = equipment_availability_map(
         target_date, start_time, end_time, facility_id=facility_id
     )
 
-    # ------------------------------------------------------------------
-    # Build the recommendation set. DB rules (staff-configured) win over
-    # built-ins for the categories they cover; built-in profile rules fill
-    # in everything else. Entries are keyed by category id so a category is
-    # recommended at most once.
-    # ------------------------------------------------------------------
-    selected: dict[int, dict] = {}
-
-    covered = set()
-    for rule in _matching_rules(event_type or "OTHER", facility_type, participants):
-        if rule.category_id in covered:
-            continue  # a more specific rule already covers this category
-        covered.add(rule.category_id)
-        quantity, calculation = _rule_quantity(rule, participants)
-        selected[rule.category_id] = {
-            "category": rule.category,
-            "quantity": quantity,
-            "reason": _rule_reason(rule, quantity, participants),
-            "calculation": calculation,
-        }
-
-    for key in _CATEGORY_KEYS:
-        spec, quantity = quantities.get(key, (None, 0))
-        if not quantity:
-            continue
-        category = EquipmentCategory.objects.filter(
-            name__icontains=_CATEGORY_KEYWORDS[key]
-        ).first()
-        if not category or category.id in covered:
-            continue
-        reason, calculation = _explain(key, spec, quantity, participants)
-        if key == "projector" and _purpose_suggests_projector(context):
-            reason = "Recommended because the event details indicate a presentation or lecture."
-        selected[category.id] = {
-            "category": category,
-            "quantity": quantity,
-            "reason": reason,
-            "calculation": calculation,
-        }
-
-    # Hands-on computing activities need individual workstations. Discover
-    # eligible categories from the actual equipment catalog metadata; facility
-    # assignment and schedule availability are still enforced below.
-    if _context_suggests_computing(context):
-        catalog_terms = Q()
-        for term in _COMPUTING_EQUIPMENT_KEYWORDS:
-            catalog_terms |= (
-                Q(name__icontains=term)
-                | Q(description__icontains=term)
-                | Q(items__name__icontains=term)
-                | Q(items__description__icontains=term)
-            )
-        computer_categories = EquipmentCategory.objects.filter(
-            catalog_terms,
-            items__is_active=True,
-            items__status=Equipment.Status.AVAILABLE,
-        ).distinct()
-        for category in computer_categories:
-            selected.setdefault(
-                category.id,
-                {
-                    "category": category,
-                    "quantity": participants,
-                    "reason": "Recommended because the event details describe hands-on computing; one workstation per participant.",
-                    "calculation": f"{participants} participants × 1 workstation",
-                },
-            )
-
     recommendations = []
-    for entry in sorted(selected.values(), key=lambda item: item["category"].name):
-        category = entry["category"]
-        quantity = entry["quantity"]
-        if not quantity:
-            continue
-        # Only active, currently-usable inventory is considered. A line that
-        # is archived, retired, or fully under maintenance is skipped entirely
-        # (no point recommending an item that cannot be reserved at all);
-        # schedule-level shortages are still surfaced as PARTIAL/UNAVAILABLE.
-        candidates = Equipment.objects.filter(
-            category=category,
-            is_active=True,
-            status=Equipment.Status.AVAILABLE,
-        )
-        if assigned_ids is not None:
-            candidates = candidates.filter(id__in=assigned_ids)
-        equipment = candidates.order_by("name").first()
-        if not equipment:
+    for resource in configured:
+        quantity, calculation = _calculate_quantity(resource, participants)
+        if quantity < 1:
             continue
 
-        info = availability.get(equipment.id, {})
-        available = info.get("available", equipment.total_quantity)
+        info = availability.get(resource.equipment_id) or {}
+        available = info.get("available", resource.effective_quantity)
         recommended = min(quantity, available)
 
         if available >= quantity:
@@ -595,16 +254,16 @@ def recommend_resources(
 
         recommendations.append(
             {
-                "equipment_id": equipment.id,
-                "name": equipment.name,
-                "category": category.name,
+                "equipment_id": resource.equipment_id,
+                "name": resource.equipment.name,
+                "category": resource.equipment.category.name,
                 "quantity": quantity,
                 "available": available,
                 "recommended": recommended,
                 "status": status,
                 "can_fulfill": available >= quantity,
-                "reason": entry["reason"],
-                "calculation": entry["calculation"],
+                "reason": _reason(resource, quantity, participants),
+                "calculation": calculation,
                 "warning": warning,
             }
         )
@@ -629,10 +288,11 @@ def recommend_resources_with_pricing(
     """Recommend resources, then price them for the requester type.
 
     Recommendation and pricing stay separate concerns: resources are chosen
-    from the event profile first (never from price), and only then is the
-    applicable external-organization cost calculated from the recommended
-    quantities and the schedule. Internal requesters get a visible zero-fee
-    summary rather than external prices presented as if charged.
+    from the facility's configuration first (never from price), and only then
+    is the applicable external-organization cost calculated from the
+    recommended quantities and the schedule. Internal requesters get a
+    visible zero-fee summary rather than external prices presented as if
+    charged.
 
     Returns ``{"recommendations": [...], "pricing": {...}}``. Each
     recommendation gains ``unit_price``/``estimated_cost``/``fee_applies`` so

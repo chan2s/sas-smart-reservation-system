@@ -26,6 +26,17 @@ class UnifiedRentalPricingTests(TestCase):
                     "unit": "piece" if name == "Plastic Chairs" else "unit",
                     "total_quantity": 100,
                     "is_active": True,
+                    # This suite exercises the legacy per-category PricingRule
+                    # path, so the equipment-level configuration installed by
+                    # the rental-configuration migration is cleared here.
+                    "pricing_method": "PER_UNIT",
+                    "unit_price": Decimal("0.00"),
+                    "half_day_price": Decimal("0.00"),
+                    "whole_day_price": Decimal("0.00"),
+                    "hourly_rate": Decimal("0.00"),
+                    "package_price": Decimal("0.00"),
+                    "operator_fee": Decimal("0.00"),
+                    "price": Decimal("0.00"),
                 },
             )[0]
             for name in self.categories

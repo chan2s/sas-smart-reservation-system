@@ -151,6 +151,12 @@ class EquipmentSerializer(serializers.ModelSerializer):
         min_value=Decimal("0.00"),
         required=False,
     )
+    operator_fee = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        required=False,
+    )
 
     class Meta:
         model = Equipment
@@ -170,6 +176,7 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "whole_day_price",
             "hourly_rate",
             "package_price",
+            "operator_fee",
             "condition",
             "condition_label",
             "status",

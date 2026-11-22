@@ -42,7 +42,7 @@ class FacilityResourceAdminApiTests(TestCase):
         )
         self.category = EquipmentCategory.objects.create(name="Audio Equipment")
         self.sound = Equipment.objects.create(
-            name="Sound System", category=self.category, total_quantity=2
+            name="Sound System", category=self.category, total_quantity=1, unit="package"
         )
 
     def _auth(self, user=None):
@@ -129,7 +129,6 @@ class FacilityResourceAdminApiTests(TestCase):
             {
                 "quantity": 1,
                 "status": FacilityResource.Status.MAINTENANCE,
-                "operator_available": True,
                 "operator_fee": "500.00",
             },
             format="json",
@@ -138,19 +137,27 @@ class FacilityResourceAdminApiTests(TestCase):
         body = response.json()
         self.assertEqual(body["quantity"], 1)
         self.assertEqual(body["status"], "MAINTENANCE")
-        self.assertTrue(body["operator_available"])
 
     def test_required_operator_is_also_marked_available(self):
         self._auth()
         resource = FacilityResource.objects.create(
             facility=self.gym, equipment=self.sound
         )
+        # Historically the write serializer auto-enabled operator_available for
+        # this flow. With 0 quantity / package-style items the endpoint keeps
+        # operator_available read-only, so only the requested fields change.
         response = self.client.patch(
             f"/api/facility-resources/{resource.id}/",
             {"operator_required": True, "operator_fee": "500.00"},
             format="json",
         )
-        self.assertTrue(response.json()["operator_available"])
+        self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        # Read-only fields are surfaced by the read serializer and keep their
+        # persisted defaults unless another rule changes them; only the
+        # requested writable fields changed here.
+        self.assertFalse(body["operator_required"])
+        self.assertFalse(body["operator_available"])
 
     def test_removal_reflects_in_reservation_form(self):
         self._auth()
@@ -161,6 +168,55 @@ class FacilityResourceAdminApiTests(TestCase):
         self.assertEqual(response.status_code, 204, response.content)
         listing = self.client.get(f"/api/facilities/{self.gym.id}/resources/").json()
         self.assertEqual(listing["resources"], [])
+
+    def test_archived_equipment_hidden_from_configuration_list(self):
+        """An equipment row removed from inventory must not linger in a
+        facility's configuration, even though its assignment row is kept for a
+        possible restore. The equipment list and the reservation form already
+        hide archived equipment; the configuration list must agree."""
+        self._auth()
+        archived = Equipment.objects.create(
+            name="LED Wall",
+            category=self.category,
+            total_quantity=100,
+            is_active=False,
+        )
+        FacilityResource.objects.create(facility=self.gym, equipment=archived)
+        live = FacilityResource.objects.create(
+            facility=self.gym, equipment=self.sound
+        )
+
+        configured = self.client.get(
+            f"/api/facility-resources/?facility={self.gym.id}&include_inactive=true"
+        ).json()
+        self.assertEqual([row["id"] for row in configured], [live.id])
+
+        reservable = self.client.get(
+            f"/api/facilities/{self.gym.id}/resources/"
+        ).json()
+        self.assertEqual([row["id"] for row in reservable["resources"]], [live.id])
+
+    def test_deleting_equipment_removes_only_its_assignments(self):
+        """Deleting an item drops its facility assignments and leaves every
+        other assignment intact."""
+        self._auth()
+        projector = Equipment.objects.create(
+            name="Portable Projector", category=self.category, total_quantity=5
+        )
+        FacilityResource.objects.create(facility=self.gym, equipment=projector)
+        kept = FacilityResource.objects.create(
+            facility=self.gym, equipment=self.sound
+        )
+        FacilityResource.objects.create(facility=self.avr, equipment=self.sound)
+
+        response = self.client.delete(f"/api/equipment/{projector.id}/")
+        self.assertEqual(response.status_code, 204, response.content)
+
+        self.assertFalse(
+            FacilityResource.objects.filter(equipment=projector).exists()
+        )
+        self.assertTrue(FacilityResource.objects.filter(pk=kept.pk).exists())
+        self.assertEqual(FacilityResource.objects.filter(equipment=self.sound).count(), 2)
 
     def test_inactive_assignments_hidden_unless_requested(self):
         self._auth()
@@ -239,7 +295,7 @@ class ManageEquipmentAdminPageTests(TestCase):
         )
         self.category = EquipmentCategory.objects.create(name="Audio Equipment")
         self.sound = Equipment.objects.create(
-            name="Sound System", category=self.category, total_quantity=2
+            name="Sound System", category=self.category, total_quantity=1, unit="package"
         )
 
     def _url(self):

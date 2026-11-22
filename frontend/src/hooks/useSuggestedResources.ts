@@ -7,15 +7,40 @@ export interface SuggestedResource {
   name: string
   category: string
   unit: string
+  /** Units the configured rule says the event needs (never inventory). */
   quantity: number
+  /** Availability-capped quantity safe to add: min(quantity, available). */
+  recommended: number
+  /** Units free during the selected schedule. */
   available: number
+  status: 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE'
+  /** Only set when the rule quantity exceeds what the schedule can provide. */
+  warning: string | null
   reason: string
+  calculation: string
+  /** Configured rate for this item, or null when it is unpriced. */
+  unitPrice: string | null
+  /** Payable estimate for the selected requester type. */
+  estimatedCost: string | null
+  feeApplies: boolean
 }
 
 export interface SuggestedResourcesState {
   suggestions: SuggestedResource[]
   loading: boolean
   error: boolean
+  /**
+   * Event details the recommender still needs (event type, participants,
+   * facility, schedule). Empty when a request could be made.
+   */
+  missingDetails: string[]
+  /**
+   * Facility equipment ids owned by the latest recommendation response. The
+   * Other equipment list filters on this set, NOT on the rendered suggestions:
+   * an item that is temporarily unavailable (or ignored) must not reappear in
+   * the catalog while the recommender still claims it.
+   */
+  recommendedIds: Set<number>
   ignore: (equipmentId: number) => void
 }
 
@@ -33,7 +58,6 @@ export interface UseSuggestedResourcesArgs {
   staffNotes: string
   requesterType: RequesterType
   publicReservation?: boolean
-  selectedItems: Record<number, number>
 }
 
 /** Recommendations are shown only when the backend checked this exact facility and window. */
@@ -51,22 +75,38 @@ export function useSuggestedResources({
   staffNotes,
   requesterType,
   publicReservation = false,
-  selectedItems,
 }: UseSuggestedResourcesArgs): SuggestedResourcesState {
   const recommendResources = useRecommendResources(publicReservation)
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null)
   const [fetchedFor, setFetchedFor] = useState<string | null>(null)
   const [errorFor, setErrorFor] = useState<string | null>(null)
-  const [ignored, setIgnored] = useState<{ key: string; ids: Set<number> }>({ key: '', ids: new Set() })
+  // Ignoring a suggestion is the requester's decision, so it must survive the
+  // edits that keep recalculating the recommendation. It only resets when the
+  // facility changes, because that replaces the whole resource list.
+  const [ignored, setIgnored] = useState<Set<number>>(() => new Set())
   const requestRef = useRef<string | null>(null)
 
-  const enabled = Boolean(
-    active && eventType && facilityId != null && participants >= 1 && dateISO && startTime && endTime,
-  )
+  const missingDetails = useMemo(() => {
+    const missing: string[] = []
+    if (!eventType) missing.push('event type')
+    if (participants < 1) missing.push('expected participants')
+    if (facilityId == null) missing.push('facility')
+    if (!dateISO) missing.push('reservation date')
+    if (!startTime || !endTime) missing.push('reservation start and end time')
+    return missing
+  }, [eventType, participants, facilityId, dateISO, startTime, endTime])
+
+  const enabled = active && missingDetails.length === 0
+  // Every input the backend reads is part of the key, so any change supersedes
+  // the last request (and any response still in flight for it).
   const requestKey = [
     eventType, eventName.trim(), participants, facilityId ?? '', purpose.trim(), staffNotes.trim(),
     dateISO, startTime, endTime, requesterType,
   ].join('|')
+
+  useEffect(() => {
+    setIgnored(new Set())
+  }, [facilityId])
 
   useEffect(() => {
     if (!enabled) {
@@ -94,6 +134,8 @@ export function useSuggestedResources({
         },
         {
           onSuccess: (data) => {
+            // A response for an older form state must never replace the
+            // recommendations for the current one.
             if (requestRef.current !== requestKey) return
             setRecommendations(data.recommendations)
             setErrorFor(null)
@@ -118,30 +160,47 @@ export function useSuggestedResources({
     const byId = new Map(equipment.map((item) => [item.id, item]))
     return recommendations.flatMap((recommendation) => {
       const item = byId.get(recommendation.equipment_id)
-      const quantity = Math.min(recommendation.recommended, recommendation.available)
-      if (
-        !item || quantity < 1 || recommendation.available < recommendation.quantity ||
-        selectedItems[item.id] > 0 || (ignored.key === requestKey && ignored.ids.has(item.id))
-      ) return []
+      // Not offered at this facility, or nothing free during this schedule:
+      // such a row could never be added, so it is not shown as available.
+      // PARTIAL rows stay visible with the shortage called out below.
+      if (!item || recommendation.available < 1 || ignored.has(item.id)) return []
       return [{
         equipmentId: item.id,
         name: item.name,
         category: item.category.name,
         unit: item.unit,
-        quantity,
+        quantity: recommendation.quantity,
+        recommended: Math.min(recommendation.quantity, recommendation.available),
         available: recommendation.available,
+        status: recommendation.status,
+        warning: recommendation.warning,
         reason: recommendation.reason,
+        calculation: recommendation.calculation,
+        unitPrice: recommendation.unit_price ?? null,
+        estimatedCost: recommendation.estimated_cost ?? null,
+        feeApplies: Boolean(recommendation.fee_applies),
       }]
     })
-  }, [enabled, recommendations, equipment, selectedItems, ignored])
+  }, [enabled, recommendations, equipment, ignored])
+
+  const recommendedIds = useMemo(() => {
+    const ids = new Set<number>()
+    if (!recommendations) return ids
+    const offered = new Set(equipment.map((item) => item.id))
+    for (const recommendation of recommendations) {
+      if (offered.has(recommendation.equipment_id) && !ignored.has(recommendation.equipment_id)) {
+        ids.add(recommendation.equipment_id)
+      }
+    }
+    return ids
+  }, [recommendations, equipment, ignored])
 
   return {
     suggestions,
     loading: Boolean(enabled && fetchedFor !== requestKey),
     error: errorFor === requestKey,
-    ignore: (equipmentId) => setIgnored((current) => ({
-      key: requestKey,
-      ids: new Set(current.key === requestKey ? current.ids : []).add(equipmentId),
-    })),
+    missingDetails,
+    recommendedIds,
+    ignore: (equipmentId) => setIgnored((current) => new Set(current).add(equipmentId)),
   }
 }

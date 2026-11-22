@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { DetailsStep } from './DetailsStep'
 import type { EventDetailsDraft } from '@/lib/reservationDraft'
 import type { SuggestedResource } from '@/hooks/useSuggestedResources'
+import type { ReservableResource } from '@/lib/types'
 
 const details: EventDetailsDraft = {
   eventName: '',
@@ -18,8 +19,30 @@ const suggestion: SuggestedResource = {
   category: 'Projectors',
   unit: 'unit',
   quantity: 1,
+  recommended: 1,
   available: 2,
+  status: 'AVAILABLE',
+  warning: null,
   reason: 'Recommended for a presentation.',
+  calculation: '1 × 1',
+  unitPrice: null,
+  estimatedCost: null,
+  feeApplies: false,
+}
+
+function resource(id: number, name: string): ReservableResource {
+  return {
+    id,
+    name,
+    category: { id: 1, name: 'Projectors', icon: '', description: '' },
+    description: '',
+    total_quantity: 4,
+    unit: 'unit',
+    status: 'AVAILABLE',
+    status_label: 'Available',
+    image: null,
+    availability: { total: 4, available: 4, reserved: 0, under_maintenance: 0, status: 'AVAILABLE' },
+  }
 }
 
 function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof DetailsStep>> = {}) {
@@ -73,12 +96,70 @@ describe('DetailsStep reservation form presentation', () => {
   it('renders schedule-checked suggestions as optional Add/Ignore actions', () => {
     const { props } = renderDetailsStep()
 
-    expect(screen.getByText('Presentation Projector — 1 × unit')).toBeInTheDocument()
-    expect(screen.getByText(/2 available for this schedule/)).toBeInTheDocument()
+    expect(screen.getByText('Presentation Projector')).toBeInTheDocument()
+    expect(screen.getByText(/Needs 1 × unit · 2 available for this schedule/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     fireEvent.click(screen.getByRole('button', { name: 'Ignore' }))
     expect(props.onToggleSuggestion).toHaveBeenCalledWith(21, 1, 2)
     expect(props.onIgnoreSuggestion).toHaveBeenCalledWith(21)
+  })
+
+  it('shows a shortage for partial stock and lets a selected suggestion be adjusted or removed', () => {
+    const warning = 'Only 2 of the recommended 3 units are currently available.'
+    const { props } = renderDetailsStep({
+      items: { 21: 1 },
+      suggestions: [
+        { ...suggestion, quantity: 3, recommended: 2, available: 2, status: 'PARTIAL', warning },
+      ],
+    })
+
+    expect(screen.getByText('Added · 1')).toBeInTheDocument()
+    expect(screen.getByText('Limited stock')).toBeInTheDocument()
+    expect(screen.getByText(warning)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Increase Presentation Projector quantity' }))
+    expect(props.onQuantity).toHaveBeenCalledWith(21, 2, 2)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(props.onQuantity).toHaveBeenCalledWith(21, 0, 2)
+  })
+
+  it('keeps recommended and already-selected equipment out of Other equipment', () => {
+    const { rerender, props } = renderDetailsStep({
+      equipment: [
+        resource(21, 'Presentation Projector'),
+        resource(22, 'LED Wall'),
+        resource(23, 'Plastic Chairs'),
+      ],
+      recommendedIds: new Set([21]),
+      items: { 23: 2 },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add other equipment' }))
+
+    expect(screen.getByRole('button', { name: 'View details of LED Wall' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'View details of Presentation Projector' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'View details of Plastic Chairs' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('Selected equipment')).toBeInTheDocument()
+
+    // No longer recommended → the resource returns to Other equipment.
+    rerender(<DetailsStep {...props} recommendedIds={new Set()} />)
+    expect(
+      screen.getByRole('button', { name: 'View details of Presentation Projector' }),
+    ).toBeInTheDocument()
+  })
+
+  it('asks the requester to complete event details before showing recommendations', () => {
+    renderDetailsStep({ suggestions: [], suggestionsMissingDetails: ['event type', 'expected participants'] })
+
+    expect(
+      screen.getByText(/Add the event type and expected participants to see recommended equipment/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/No matching available equipment/)).not.toBeInTheDocument()
   })
 
   it('shows the event approval letter as a required internal-only field', () => {
