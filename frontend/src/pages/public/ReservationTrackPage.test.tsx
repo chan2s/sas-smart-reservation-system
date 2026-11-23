@@ -168,12 +168,16 @@ describe('ReservationTrackPage', () => {
     )
   })
 
-  it('offers camera and file upload when the approval letter is missing', async () => {
+  it('offers camera and file upload when the optional approval letter is not attached yet', async () => {
     apiState.track.mockResolvedValue(result)
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'Track Reservation' }))
 
-    expect(await screen.findByText('This document is required before your reservation can be approved. Take a photo of your signed event approval letter or upload an image file.')).toBeTruthy()
+    expect(
+      await screen.findByText(
+        'Optional. Upload your signed event approval letter now or provide it later — your reservation stays in the GSO review queue either way. Take a photo or upload an image file.',
+      ),
+    ).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Take Photo' })).toBeTruthy()
     expect(screen.getByLabelText('Upload approval letter image')).toBeTruthy()
   })

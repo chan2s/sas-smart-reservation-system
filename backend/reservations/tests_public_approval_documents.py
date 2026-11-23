@@ -235,13 +235,22 @@ class PublicApprovalDocumentTests(TestCase):
         reservation.refresh_from_db()
         self.assertFalse(reservation.approval_letter_image)
 
-    def test_internal_submission_requires_letter_and_document_is_private_to_staff(self):
+    def test_internal_submission_accepts_missing_letter_and_document_is_private_to_staff(self):
         missing = self.client.post(SUBMIT_URL, self.public_payload(), format="json")
-        self.assertEqual(missing.status_code, 400, missing.content)
-        self.assertIn("approval_letter_image", missing.json())
+        self.assertEqual(missing.status_code, 201, missing.content)
+        reservation_missing = missing.json()
+        self.assertNotIn("approval_letter_image", reservation_missing)
+
+        # The missing-letter submission helper below posts with a file, so it
+        # creates a different reservation from this no-file submission; the
+        # two assertions below intentionally check different document states.
+        missing_db = Reservation.objects.get(pk=reservation_missing["id"])
+        self.assertEqual(missing_db.approval_document_status, "AWAITING")
+        self.assertEqual(missing_db.status, Reservation.Status.PENDING)
 
         reservation = self.submit_public()
         self.assertEqual(reservation.approval_document_status, "SUBMITTED")
+        self.assertTrue(reservation.approval_letter_image.name.startswith("approval_letters/requester/"))
         self.client.force_authenticate(self.admin)
         self.assertTrue(reservation.approval_letter_image.name.startswith("approval_letters/requester/"))
         self.client.force_authenticate(user=None)
@@ -253,7 +262,6 @@ class PublicApprovalDocumentTests(TestCase):
             self.client.get(f"/api/reservations/{reservation.pk}/approval-letter-image/file/").status_code,
             401,
         )
-
         self.client.force_authenticate(self.admin)
         image = self.client.get(f"/api/reservations/{reservation.pk}/approval-letter-image/file/")
         self.assertEqual(image.status_code, 200)
@@ -276,6 +284,7 @@ class PublicApprovalDocumentTests(TestCase):
                 "approval_letter_image": SimpleUploadedFile(
                     "oversized.png", png_bytes() + (b"0" * (5 * 1024 * 1024)), content_type="image/png"
                 ),
+                "organization_id": self.campus_organization.id,
             },
             format="multipart",
         )
@@ -289,6 +298,7 @@ class PublicApprovalDocumentTests(TestCase):
                 "approval_letter_image": SimpleUploadedFile(
                     "not-an-image.png", b"this is not png data", content_type="image/png"
                 ),
+                "organization_id": self.campus_organization.id,
             },
             format="multipart",
         )
@@ -315,15 +325,18 @@ class PublicApprovalDocumentTests(TestCase):
         self.assertEqual(reservation.approval_document_status, "NOT_REQUIRED")
         self.assertFalse(reservation.approval_letter_image)
 
-        # GSO can approve it without ever asking for an event approval letter.
+        # GSO can approve it without ever asking for an event approval letter;
+        # the external payment warning is acknowledged separately.
         self.client.force_authenticate(self.admin)
         approved = self.client.post(
-            f"/api/reservations/{reservation.pk}/approve/", {}, format="json"
+            f"/api/reservations/{reservation.pk}/approve/",
+            {"acknowledge_payment_warning": True},
+            format="json",
         )
         self.assertEqual(approved.status_code, 200, approved.content)
         self.assertEqual(approved.json()["status"], "APPROVED")
 
-    def test_external_submission_ignores_an_uploaded_event_approval_letter(self):
+    def test_external_submission_with_an_ignored_approval_letter(self):
         reservation = self.submit_public(
             payload=self.external_payload(),
             file=SimpleUploadedFile(
@@ -333,6 +346,47 @@ class PublicApprovalDocumentTests(TestCase):
 
         self.assertFalse(reservation.approval_letter_image)
         self.assertEqual(reservation.approval_document_status, "NOT_REQUIRED")
+
+    def test_internal_submission_without_letter_then_late_upload(self):
+        # Submit an internal reservation without an approval letter.
+        response = self.client.post(SUBMIT_URL, self.public_payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        reservation = Reservation.objects.get(pk=response.json()["id"])
+        self.assertEqual(reservation.approval_document_status, "AWAITING")
+        self.assertFalse(reservation.approval_letter_image)
+        reservation_id = reservation.reservation_id
+
+        # The reservation appears in the tracking page.
+        track = self.client.post(
+            TRACK_URL, {"reservation_id": reservation_id}, format="json"
+        )
+        self.assertEqual(track.status_code, 200, track.content)
+        self.assertEqual(track.json()["reservation_id"], reservation_id)
+        self.assertEqual(track.json()["approval_document_status"], "AWAITING")
+
+        # Upload the approval letter later via the public endpoint.
+        upload_response = self.client.post(
+            UPLOAD_URL,
+            {
+                "reservation_id": reservation_id,
+                "approval_letter_image": SimpleUploadedFile(
+                    "signed-letter-later.png", png_bytes(), content_type="image/png"
+                ),
+            },
+            format="multipart",
+        )
+        self.assertEqual(upload_response.status_code, 200, upload_response.content)
+        reservation.refresh_from_db()
+        self.assertTrue(reservation.approval_letter_image)
+        self.assertEqual(reservation.approval_document_status, "SUBMITTED")
+        self.assertFalse(reservation.approval_letter_required)
+
+        # The tracking page now shows the letter is on file.
+        track2 = self.client.post(
+            TRACK_URL, {"reservation_id": reservation_id}, format="json"
+        )
+        self.assertEqual(track2.status_code, 200, track2.content)
+        self.assertEqual(track2.json()["approval_document_status"], "SUBMITTED")
 
     def test_external_submission_still_requires_its_other_fields(self):
         response = self.client.post(
@@ -371,6 +425,27 @@ class PublicApprovalDocumentTests(TestCase):
         reservation.refresh_from_db()
         self.assertFalse(reservation.approval_letter_image)
 
+    def test_legacy_reservations_remain_approvable(self):
+        reservation = Reservation.objects.create(
+            requester_type=Reservation.RequesterType.CAMPUS,
+            organization="Legacy office",
+            event_name="Existing legacy reservation",
+            facility=self.facility,
+            date=self.day,
+            start_time=time(9),
+            end_time=time(10),
+            status=Reservation.Status.PENDING,
+        )
+        self.assertFalse(reservation.approval_letter_required)
+        self.assertEqual(reservation.approval_document_status, "AWAITING")
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(f"/api/reservations/{reservation.pk}/approve/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        self.assertFalse(reservation.approval_letter_required)
+        self.assertEqual(reservation.approval_document_status, "NOT_REQUIRED")
+
     def test_external_reservation_stored_with_the_legacy_flag_stays_approvable(self):
         reservation = Reservation.objects.create(
             requester_type=Reservation.RequesterType.EXTERNAL,
@@ -408,24 +483,8 @@ class PublicApprovalDocumentTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         reservation.refresh_from_db()
         self.assertEqual(reservation.status, Reservation.Status.APPROVED)
+        # After approval, the legacy flag is cleared and the document is marked submitted.
         self.assertFalse(reservation.approval_letter_required)
         self.assertEqual(reservation.approval_document_status, "SUBMITTED")
         self.assertTrue(reservation.approval_letter_image.storage.exists(reservation.approval_letter_image.name))
-
-    def test_legacy_reservations_remain_approvable(self):
-        reservation = Reservation.objects.create(
-            requester_type=Reservation.RequesterType.CAMPUS,
-            organization="Legacy office",
-            event_name="Existing legacy reservation",
-            facility=self.facility,
-            date=self.day,
-            start_time=time(9),
-            end_time=time(10),
-            status=Reservation.Status.PENDING,
-        )
-        self.assertFalse(reservation.approval_letter_required)
-        self.assertEqual(reservation.approval_document_status, "NOT_REQUIRED")
-        self.client.force_authenticate(self.admin)
-        response = self.client.post(f"/api/reservations/{reservation.pk}/approve/", {}, format="json")
-        self.assertEqual(response.status_code, 200, response.content)
 

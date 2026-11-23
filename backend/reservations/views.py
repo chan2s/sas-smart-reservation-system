@@ -686,10 +686,13 @@ def public_reschedule_verify_otp(request):
 @permission_classes([AllowAny])
 @throttle_classes([PublicReservationThrottle])
 def public_reservation_upload_approval_letter(request):
-    """Allow the contact for a guest reservation to provide a missing image.
+    """Allow a contact to provide a missing approval letter for an internal
+    reservation that is still pending review.
 
     The lookup stays limited to guest reservations, so account-owned
     reservations can never be modified through this public endpoint.
+    The document is optional; uploading one later does not bypass the existing
+    GSO approval workflow.
     """
     data = request.data if hasattr(request.data, "get") else {}
     reference = str(data.get("reservation_id", "")).strip().upper()
@@ -709,8 +712,15 @@ def public_reservation_upload_approval_letter(request):
         return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
     if not reservation.is_internal:
         return Response(
-            {"detail": "External reservations do not require an event approval letter."},
+            {"detail": "External reservations do not use an event approval letter."},
             status=409,
+        )
+
+    upload = request.data.get("approval_letter_image")
+    if upload in (None, "", [], {}):
+        return Response(
+            {"detail": "An approval letter image is required to attach the document."},
+            status=400,
         )
     if reservation.has_approval_letter_document:
         return Response({"detail": "An event approval letter has already been submitted."}, status=409)
@@ -719,7 +729,6 @@ def public_reservation_upload_approval_letter(request):
     serializer.is_valid(raise_exception=True)
     previous_name = reservation.approval_letter_image.name if reservation.approval_letter_image else ""
     reservation.approval_letter_image = serializer.validated_data["approval_letter_image"]
-    reservation.approval_letter_required = True
     reservation.save(update_fields=["approval_letter_image", "approval_letter_required", "approval_document_status", "updated_at"])
     if previous_name and previous_name != reservation.approval_letter_image.name:
         reservation.approval_letter_image.storage.delete(previous_name)
@@ -1182,42 +1191,26 @@ class ReservationViewSet(viewsets.ModelViewSet):
         if is_rebook:
             _record_rebook_lineage(request, reservation)
 
-        # Legacy administrator-created reservations without the document
-        # requirement retain their immediate-approval behavior. New requests
-        # require staff review of the uploaded authorization, so they stay in
-        # the pending queue even when created by an administrator. A status
-        # value sent by the client is never trusted.
-        #
-        # Exception: a rebook / request-new-schedule is deliberately NOT
-        # auto-approved even for an administrator — recreating an expired
-        # reservation must go through the normal review (Requirement: the new
-        # reservation always starts PENDING).
-        if (
-            request.user.is_admin
-            and not is_rebook
-            # External reservations keep their existing staff review (and
-            # generated approval letter) workflow; only an internal request
-            # without the letter requirement is auto-approved.
-            and reservation.is_internal
-            and not reservation.requires_event_approval_letter
-        ):
-            workflow.auto_approve(reservation, request.user)
-        else:
-            notify_staff(
-                Notification.Type.RESERVATION,
-                "New reservation request",
-                f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
-                f"/reservations/{reservation.id}",
-                event_key=f"reservation:{reservation.pk}:submitted",
-            )
-            notify(
-                reservation.requester,
-                Notification.Type.RESERVATION,
-                "Reservation submitted",
-                "Your reservation request was submitted and is awaiting review.",
-                f"/reservations/{reservation.id}",
-                event_key=f"reservation:{reservation.pk}:submitted-requester",
-            )
+        # Every new reservation starts in the pending queue, including ones an
+        # administrator creates. The event approval letter is optional, so its
+        # presence or absence must never decide the status: a reservation
+        # submitted without a letter is not approved automatically, and a
+        # status value sent by the client is never trusted.
+        notify_staff(
+            Notification.Type.RESERVATION,
+            "New reservation request",
+            f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
+            f"/reservations/{reservation.id}",
+            event_key=f"reservation:{reservation.pk}:submitted",
+        )
+        notify(
+            reservation.requester,
+            Notification.Type.RESERVATION,
+            "Reservation submitted",
+            "Your reservation request was submitted and is awaiting review.",
+            f"/reservations/{reservation.id}",
+            event_key=f"reservation:{reservation.pk}:submitted-requester",
+        )
         # Booking confirmation email. Scheduled AFTER the creation has been
         # saved and the final status has been decided above, so the message
         # always describes the status that was actually persisted (pending or
@@ -1356,7 +1349,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
     )
     def upload_approval_letter_image(self, request, pk=None):
-        """Upload the required requester image while a reservation is pending."""
+        """Upload the optional requester image while a reservation is pending."""
         reservation = self.get_object()
         if not request.user.is_gso_staff and reservation.requester_id != request.user.id:
             return Response({"detail": "You cannot update this reservation."}, status=403)
@@ -1364,7 +1357,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Documents can only be added while a reservation is pending review."}, status=409)
         if not reservation.is_internal:
             return Response(
-                {"detail": "External reservations do not require an event approval letter."},
+                {"detail": "External reservations do not use an event approval letter."},
                 status=409,
             )
         if reservation.has_approval_letter_document:
@@ -1375,7 +1368,6 @@ class ReservationViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         previous_name = reservation.approval_letter_image.name if reservation.approval_letter_image else ""
         reservation.approval_letter_image = serializer.validated_data["approval_letter_image"]
-        reservation.approval_letter_required = True
         reservation.save(update_fields=["approval_letter_image", "approval_letter_required", "approval_document_status", "updated_at"])
         if previous_name and previous_name != reservation.approval_letter_image.name:
             reservation.approval_letter_image.storage.delete(previous_name)

@@ -153,7 +153,7 @@ class BookingConfirmationEmailTests(TestCase):
     # 4-5: the email reflects the status that was actually saved
     # ------------------------------------------------------------------
 
-    def test_admin_created_reservation_waits_for_letter_and_says_so_in_email(self):
+    def test_admin_created_reservation_stays_pending_with_an_optional_letter(self):
         self.client.force_authenticate(self.admin)
         response = self._create(
             self._payload(
@@ -167,7 +167,8 @@ class BookingConfirmationEmailTests(TestCase):
         self.assertEqual(reservation.status, Reservation.Status.PENDING)
         self.assertEqual(reservation.approval_document_status, "AWAITING")
 
-        # The requester is told the letter must be uploaded before approval.
+        # The letter is optional: the reservation still waits for GSO review,
+        # but the email never says approval is blocked on the document.
         confirmations = [
             message
             for message in mail.outbox
@@ -177,8 +178,8 @@ class BookingConfirmationEmailTests(TestCase):
         sent = confirmations[0]
         self.assertEqual(sent.to, [self.requester.email])
         self.assertIn("awaiting administrator approval", sent.body)
-        self.assertIn("event approval letter", sent.body)
-        self.assertIn("Approval cannot proceed until you upload it", sent.body)
+        self.assertNotIn("Approval cannot proceed until you upload it", sent.body)
+        self.assertNotIn("required event approval letter", sent.body)
 
     # ------------------------------------------------------------------
     # 6: a failed creation never sends an email
@@ -189,6 +190,13 @@ class BookingConfirmationEmailTests(TestCase):
         first = self._create()
         self.assertEqual(first.status_code, 201, first.content)
         self.assertEqual(len(mail.outbox), 1)
+        # Only approved reservations block the calendar, so the slot is not
+        # contested until an administrator approves the first request.
+        self.client.force_authenticate(self.admin)
+        approved = self.client.post(
+            f"/api/reservations/{first.json()['id']}/approve/", {}, format="json"
+        )
+        self.assertEqual(approved.status_code, 200, approved.content)
 
         # Same slot again -> availability conflict, no new reservation.
         self.client.force_authenticate(
@@ -254,7 +262,14 @@ class BookingConfirmationEmailTests(TestCase):
         reservation = Reservation.objects.get(pk=response.json()["id"])
         self.assertEqual(len(mail.outbox), 1)
 
-        # A repeated frontend submit hits the same slot and is refused.
+        # Once the first request is approved the slot is blocked, so a
+        # repeated frontend submit is refused without a second email.
+        self.client.force_authenticate(self.admin)
+        approved = self.client.post(
+            f"/api/reservations/{reservation.pk}/approve/", {}, format="json"
+        )
+        self.assertEqual(approved.status_code, 200, approved.content)
+        self.client.force_authenticate(self.requester)
         with self.captureOnCommitCallbacks(execute=True):
             second = self.client.post(
                 "/api/reservations/", self._payload(), format="json"

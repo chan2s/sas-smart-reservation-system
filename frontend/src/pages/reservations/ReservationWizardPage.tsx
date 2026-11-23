@@ -323,20 +323,22 @@ export function ReservationWizardPage() {
   // code. Sent with the reservation so the backend can refresh the saved
   // organization/representative records after a successful submission.
   const [bookerSession, setBookerSession] = useState('')
-  // The event approval letter is an INTERNAL-only supporting document. Staff
-  // and public requesters choose the requester type explicitly; a signed-in
-  // external organization member books for their own organization, which the
-  // backend derives from the account profile.
+  // The event approval letter is optional for every reservation, internal or
+  // external. Staff and public requesters choose the requester type
+  // explicitly; a signed-in external organization member books for their own
+  // organization, which the backend derives from the account profile. External
+  // reservations do not use the requester letter, so the field is only shown
+  // for internal ones.
   const requesterIsExternal =
     isAdmin || publicFlow
       ? requesterType === 'EXTERNAL'
       : user?.affiliation === 'EXTERNAL_ORGANIZATION'
-  const approvalLetterRequired = !isEditing && !requesterIsExternal
+  const showApprovalLetter = !isEditing && !requesterIsExternal
   // Leaving the internal flow removes the upload field: drop any chosen file so
   // it can never be submitted on behalf of an external reservation.
   useEffect(() => {
-    if (!approvalLetterRequired) setApprovalLetterFile(null)
-  }, [approvalLetterRequired])
+    if (!showApprovalLetter) setApprovalLetterFile(null)
+  }, [showApprovalLetter])
   // In edit mode the requester step never renders, so the step list is the
   // campus one for everyone.
   const steps = publicFlow && !isEditing ? PUBLIC_STEPS : isEditing ? CAMPUS_STEPS : isAdmin ? ADMIN_STEPS : CAMPUS_STEPS
@@ -476,7 +478,6 @@ export function ReservationWizardPage() {
     [details, contact, facility],
   )
   const missingDetails = useMemo(() => missingFieldLabels(fieldErrors), [fieldErrors])
-  const missingApprovalLetter = approvalLetterRequired && !approvalLetterFile
 
   // ------------------------------------------------------------------
   // Suggested resources (backend rules + facility and schedule availability)
@@ -724,18 +725,17 @@ export function ReservationWizardPage() {
       stepError &&
       stepKey === 'details' &&
       missingDetails.length === 0 &&
-      !missingApprovalLetter &&
       availabilityOk
     ) {
       setStepError(null)
     }
-  }, [stepError, stepKey, missingDetails, missingApprovalLetter, availabilityOk])
+  }, [stepError, stepKey, missingDetails, availabilityOk])
 
   // Final submission additionally re-validates on the backend (HTTP 409 on
   // conflict), but the button stays disabled until a check for the CURRENT
   // configuration has actually succeeded.
   const canSubmit =
-    scheduleComplete && !dateInvalid && canProceed && availabilityOk && !missingApprovalLetter
+    scheduleComplete && !dateInvalid && canProceed && availabilityOk
 
   // Per-step Continue gate. Required fields must be valid AND, on the steps
   // where availability matters, the check must have succeeded for the current
@@ -759,7 +759,7 @@ export function ReservationWizardPage() {
         : stepKey === 'schedule'
           ? scheduleComplete && !dateInvalid
           : stepKey === 'details'
-            ? missingDetails.length === 0 && !missingApprovalLetter
+            ? missingDetails.length === 0
             : true
   const availabilityRequired = stepKey === 'schedule' || stepKey === 'details'
   const canContinue =
@@ -773,8 +773,6 @@ export function ReservationWizardPage() {
       ? availabilityMessage
       : stepKey === 'details' && missingDetails.length > 0
         ? `Complete these fields: ${missingDetails.join(', ')}.`
-        : stepKey === 'details' && missingApprovalLetter
-          ? 'Upload the Event Approval Letter to continue with an internal reservation.'
         : stepKey === 'facility' && facilityId == null
           ? 'Select a facility to continue.'
           : stepKey === 'schedule' && !scheduleComplete
@@ -833,10 +831,6 @@ export function ReservationWizardPage() {
       setFocusAttempt((attempt) => attempt + 1)
       return
     }
-    if (stepKey === 'details' && missingApprovalLetter) {
-      setStepError('Upload the Event Approval Letter to continue with an internal reservation.')
-      return
-    }
     if (stepKey === 'details' && !availabilityOk) {
       setStepError(availabilityMessage)
       return
@@ -867,7 +861,7 @@ export function ReservationWizardPage() {
     // Defence in depth: the backend re-validates availability on submit and
     // returns 409, but never send a request for a configuration that has not
     // passed the current availability check.
-    if (!canSubmit || facilityId == null || missingDetails.length > 0 || missingApprovalLetter) return
+    if (!canSubmit || facilityId == null || missingDetails.length > 0) return
     // Never attempt a submission without a reachable backend: a queued request
     // could be replayed later and appear to succeed out of context.
     if (!online) {
@@ -974,9 +968,7 @@ export function ReservationWizardPage() {
           ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
           : {}),
       }),
-      ...(approvalLetterRequired && approvalLetterFile
-        ? { approval_letter_image: approvalLetterFile }
-        : {}),
+      ...(approvalLetterFile ? { approval_letter_image: approvalLetterFile } : {}),
     }
 
     createReservation.mutate(payload, {
@@ -1090,17 +1082,22 @@ export function ReservationWizardPage() {
               <Badge tone="amber">Pending approval</Badge>
             )}
           </div>
-          {publicFlow && submitted.approval_document_status === 'AWAITING' && (
-            <p role="status" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-pending/25 bg-status-pending-bg p-4 text-left text-sm leading-6 text-status-pending">
-              Your reservation is awaiting the required event approval letter. GSO cannot approve it until the document is submitted. You can upload it later from the{' '}
-              <Link
-                to={`/track-reservation?reservation_id=${encodeURIComponent(submitted.reservation_id)}`}
-                className="font-semibold underline underline-offset-2"
-              >
-                reservation tracking page
-              </Link>.
-            </p>
-          )}
+          {publicFlow &&
+            submitted.requester_type !== 'EXTERNAL' &&
+            submitted.approval_document_status === 'AWAITING' && (
+              <p role="status" className="mx-auto mt-4 max-w-lg rounded-xl border border-slate-200 bg-soft/60 p-4 text-left text-sm leading-6 text-body">
+                Your signed event approval letter is optional and can be uploaded whenever it becomes
+                available. Your reservation is already in the GSO review queue — the letter does not
+                delay review. Add it from the{' '}
+                <Link
+                  to={`/track-reservation?reservation_id=${encodeURIComponent(submitted.reservation_id)}`}
+                  className="font-semibold underline underline-offset-2"
+                >
+                  reservation tracking page
+                </Link>{' '}
+                later.
+              </p>
+            )}
           {submitted.requester_type === 'CAMPUS' && (
             <p role="status" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-available/25 bg-status-available-bg p-4 text-left text-sm leading-6 text-status-available">
               Internal Reservation — No Payment Required. Your final payable amount is PHP 0.00.
@@ -1426,7 +1423,7 @@ export function ReservationWizardPage() {
             showAllErrors={stepError != null}
             approvalLetterFile={approvalLetterFile}
             onApprovalLetterFile={setApprovalLetterFile}
-            approvalLetterRequired={approvalLetterRequired}
+            showApprovalLetter={showApprovalLetter}
           />
         )}
 

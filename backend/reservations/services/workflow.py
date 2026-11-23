@@ -324,15 +324,21 @@ def auto_approve(reservation, actor, message=""):
             raise ValueError(
                 "This reservation has expired and can no longer be approved."
             )
-        if locked.requires_event_approval_letter and not locked.has_approval_letter_document:
-            raise ValueError(
-                "Cannot approve this reservation because the event approval letter has not been submitted."
-            )
         from_status = locked.status
         locked.status = Reservation.Status.APPROVED
         locked.approved_by = actor
         locked.approved_at = timezone.now()
         update_fields = ["status", "approved_by", "approved_at", "updated_at"]
+        # The approval letter is optional, so approval never waits for it. Make
+        # sure the historical requirement flag and document state cannot go
+        # stale now that the reservation is approved.
+        locked.approval_letter_required = False
+        locked.approval_document_status = (
+            Reservation.ApprovalDocumentStatus.SUBMITTED
+            if locked.approval_letter_image
+            else Reservation.ApprovalDocumentStatus.NOT_REQUIRED
+        )
+        update_fields.extend(["approval_letter_required", "approval_document_status"])
         if locked.requester_type == Reservation.RequesterType.EXTERNAL:
             locked.approval_email_status = Reservation.ApprovalEmailStatus.NOT_SENT
             locked.approval_email_last_error = ""
@@ -388,14 +394,20 @@ def approve_reservation(reservation, actor, comment=""):
         from_status = locked.status
         if locked.status != Reservation.Status.PENDING:
             raise ValueError("Only pending reservations can be approved.")
-        if locked.requires_event_approval_letter and not locked.has_approval_letter_document:
-            raise ValueError(
-                "Cannot approve this reservation because the event approval letter has not been submitted."
-            )
         locked.status = Reservation.Status.APPROVED
         locked.approved_by = actor
         locked.approved_at = timezone.now()
         update_fields = ["status", "approved_by", "approved_at", "updated_at"]
+        # The approval letter is optional and never gates approval. Keep the
+        # document state accurate and clear any historical requirement flag so
+        # a legacy row can be approved without a letter.
+        locked.approval_letter_required = False
+        locked.approval_document_status = (
+            Reservation.ApprovalDocumentStatus.SUBMITTED
+            if locked.approval_letter_image
+            else Reservation.ApprovalDocumentStatus.NOT_REQUIRED
+        )
+        update_fields.extend(["approval_letter_required", "approval_document_status"])
         if locked.requester_type == Reservation.RequesterType.EXTERNAL:
             locked.approval_email_status = Reservation.ApprovalEmailStatus.NOT_SENT
             locked.approval_email_last_error = ""

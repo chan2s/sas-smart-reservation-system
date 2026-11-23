@@ -61,16 +61,6 @@ def validate_approval_letter_file(upload):
     return upload
 
 
-def validate_event_approval_letter_requirement(attrs, requester_type):
-    if (
-        requester_type != Reservation.RequesterType.EXTERNAL
-        and not attrs.get("approval_letter_image")
-    ):
-        raise serializers.ValidationError(
-            {"approval_letter_image": "An event approval letter is required for internal reservations."}
-        )
-
-
 def event_approval_document_status(reservation):
     if not reservation.is_internal:
         return Reservation.ApprovalDocumentStatus.NOT_REQUIRED
@@ -979,12 +969,11 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             if requester_type == Reservation.RequesterType.EXTERNAL:
                 if not attrs.get("organization_type"):
                     raise serializers.ValidationError({"organization_type": "Organization type is required."})
-                # The event approval letter is internal-only: ignore any upload
-                # sent with an external submission.
+                # The event approval letter is not used for external
+                # reservations: ignore any upload sent with the submission.
                 attrs.pop("approval_letter_image", None)
             else:
                 attrs["organization_type"] = ""
-            validate_event_approval_letter_requirement(attrs, requester_type)
             return attrs
 
         # Admins may create directly for a registered organization. Resolve
@@ -1098,13 +1087,11 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             )
         attrs["requester_type"] = requester_type
 
-        validate_event_approval_letter_requirement(attrs, requester_type)
-
         if requester_type == Reservation.RequesterType.EXTERNAL:
             attrs.pop("requester_id", None)
-            # The event approval letter is an internal-only supporting
-            # document. Ignore any upload sent with an external submission so
-            # it is never stored as an internal requirement.
+            # The event approval letter is optional (it can be attached with
+            # the submission or uploaded later). External reservations never
+            # use it, so ignore any upload sent with the submission.
             attrs.pop("approval_letter_image", None)
             if is_staff:
                 # Reservation on behalf of an organization without an account
@@ -1263,11 +1250,10 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             organization_ref=organization_ref,
             rebooked_from=rebooked_from,
             created_by=(user if authenticated and not self.context.get("public_submission") else None),
-            # Only internal reservations follow the event approval letter
-            # requirement; external reservations never submit one.
-            approval_letter_required=(
-                requester_type != Reservation.RequesterType.EXTERNAL
-            ),
+            # The event approval letter is optional for all reservations.
+            # The historical requirement flag is no longer used to enforce
+            # submission requirements; it only tracks legacy records.
+            approval_letter_required=False,
         )
         for item in items:
             ReservationItem.objects.create(

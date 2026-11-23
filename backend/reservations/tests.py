@@ -479,6 +479,9 @@ class ReservationApiTests(TestCase):
         self.day = timezone.localdate() + timedelta(days=1)
         while self.day.weekday() != 0:
             self.day += timedelta(days=1)
+        # Public internal submissions must select a registered campus
+        # organization; this fixture supplies a valid one.
+        self.campus_organization = Organization.objects.get(organization_code="CAS")
 
     def _auth(self, user):
         self.client.force_authenticate(user)
@@ -526,6 +529,8 @@ class ReservationApiTests(TestCase):
                 contact_email="jordan@example.org",
                 contact_phone="09171234567",
             )
+            if payload["requester_type"] == "CAMPUS":
+                payload["organization_id"] = self.campus_organization.id
             response = self.client.post(
                 "/api/public/reservations/submit/", payload, format="json"
             )
@@ -547,6 +552,7 @@ class ReservationApiTests(TestCase):
             contact_person="Jordan Rivera",
             contact_phone="123",
             requester_type="CAMPUS",
+            organization_id=self.campus_organization.id,
         )
         response = self.client.post(
             "/api/public/reservations/submit/", payload, format="json"
@@ -1820,11 +1826,19 @@ class RequesterTypeApiTests(TestCase):
             contact_person="CAS Event Contact",
         )
         payload.pop("items", None)
+        # The event approval letter is optional: staff can book the date first
+        # and the reservation stays in the normal pending review queue.
         missing_letter = self.client.post(
-            "/api/reservations/", payload, format="json"
+            "/api/reservations/",
+            {**payload, "start_time": "09:00", "end_time": "11:00"},
+            format="json",
         )
-        self.assertEqual(missing_letter.status_code, 400, missing_letter.content)
-        self.assertIn("approval_letter_image", missing_letter.json())
+        self.assertEqual(missing_letter.status_code, 201, missing_letter.content)
+        without_letter = Reservation.objects.get(pk=missing_letter.json()["id"])
+        self.assertEqual(without_letter.status, Reservation.Status.PENDING)
+        self.assertEqual(without_letter.approval_document_status, "AWAITING")
+        self.assertFalse(without_letter.approval_letter_required)
+        self.assertFalse(without_letter.approval_letter_image)
 
         image_buffer = BytesIO()
         Image.new("RGB", (8, 8), color="navy").save(image_buffer, format="PNG")
@@ -1840,6 +1854,8 @@ class RequesterTypeApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
+        self.assertEqual(body["status"], "PENDING")
+        self.assertEqual(body["approval_document_status"], "SUBMITTED")
         reservation = Reservation.objects.get(pk=body["id"])
         self.assertEqual(reservation.organization_ref, organization)
         self.assertEqual(reservation.organization, organization.organization_name)

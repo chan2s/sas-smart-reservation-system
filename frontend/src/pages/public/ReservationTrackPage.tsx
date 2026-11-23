@@ -358,7 +358,9 @@ export function ReservationTrackPage() {
             <Card className="mt-5">
               <h2 className="text-base font-semibold text-ink">Event Approval Letter</h2>
               <p className="mt-1 text-sm leading-6 text-body">
-                This document is required before your reservation can be approved. Take a photo of your signed event approval letter or upload an image file.
+                Optional. Upload your signed event approval letter now or provide it later — your
+                reservation stays in the GSO review queue either way. Take a photo or upload an image
+                file.
               </p>
               <div className="mt-4">
                 <ApprovalLetterCapture

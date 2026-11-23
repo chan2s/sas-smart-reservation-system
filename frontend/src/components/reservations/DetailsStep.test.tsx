@@ -67,7 +67,7 @@ function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof Detail
     showAllErrors: false,
     approvalLetterFile: null,
     onApprovalLetterFile: vi.fn(),
-    approvalLetterRequired: true,
+    showApprovalLetter: true,
     ...overrides,
   }
   return { ...render(<DetailsStep {...props} />), props }
@@ -162,26 +162,30 @@ describe('DetailsStep reservation form presentation', () => {
     expect(screen.queryByText(/No matching available equipment/)).not.toBeInTheDocument()
   })
 
-  it('shows the event approval letter as a required internal-only field', () => {
-    renderDetailsStep({ approvalLetterRequired: true })
+  it('shows the event approval letter as an optional internal-only field', () => {
+    renderDetailsStep({ showApprovalLetter: true })
 
     expect(screen.getByLabelText('Upload approval letter image')).toBeInTheDocument()
-    expect(screen.getByText(/Required for internal reservations/)).toBeInTheDocument()
+    expect(screen.getByText(/Optional. You can upload your signed event approval letter now/)).toBeInTheDocument()
+    expect(screen.queryByText(/Required for internal reservations/)).not.toBeInTheDocument()
   })
 
-  it('shows missing-letter feedback after validation fails', () => {
-    renderDetailsStep({ approvalLetterRequired: true, showAllErrors: true })
+  it('does not block the step when no approval letter is attached', () => {
+    renderDetailsStep({ showApprovalLetter: true, showAllErrors: true })
 
-    expect(screen.getByText('Upload an Event Approval Letter for this internal reservation.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('Upload an Event Approval Letter for this internal reservation.'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Event name')).toBeInTheDocument()
   })
 
   it('hides the event approval letter for external reservations and shows it again for internal ones', () => {
-    const { rerender, props } = renderDetailsStep({ approvalLetterRequired: false })
+    const { rerender, props } = renderDetailsStep({ showApprovalLetter: false })
 
     expect(screen.queryByLabelText('Upload approval letter image')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Required for internal reservations/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Optional. You can upload your signed/)).not.toBeInTheDocument()
 
-    rerender(<DetailsStep {...props} approvalLetterRequired />)
+    rerender(<DetailsStep {...props} showApprovalLetter />)
 
     expect(screen.getByLabelText('Upload approval letter image')).toBeInTheDocument()
   })

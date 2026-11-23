@@ -1100,7 +1100,7 @@ export function ReservationDetailPage() {
             <Card>
               <CardHeader
                 title="Event Approval Letter"
-                description="Requester authorization document required before approval"
+                description="Optional requester document; it can be uploaded before or after submission"
               />
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <Badge tone={reservation.approval_document_status === 'SUBMITTED' ? 'emerald' : 'amber'}>
@@ -1108,12 +1108,13 @@ export function ReservationDetailPage() {
                 </Badge>
               </div>
               {reservation.approval_document_status === 'NOT_REQUIRED' ? (
-                <p className="mt-3 text-sm text-body">This existing reservation predates the event approval letter requirement.</p>
+                <p className="mt-3 text-sm text-body">No event approval letter is attached. The document is optional.</p>
               ) : reservation.approval_document_status === 'SUBMITTED' ? (
                 <p className="mt-3 text-sm text-body">An image has been uploaded and is available for review.</p>
               ) : (
-                <p role="status" className="mt-3 rounded-lg border border-status-pending/25 bg-status-pending-bg p-3 text-sm text-status-pending">
-                  Missing document. This reservation cannot be approved until the event approval letter is submitted.
+                <p role="status" className="mt-3 rounded-lg border border-slate-200 bg-soft/60 p-3 text-sm text-body">
+                  No event approval letter is attached yet. This is optional — the reservation can still
+                  be reviewed and approved, and the letter can be uploaded while it is pending.
                 </p>
               )}
               {isStaff && reservation.approval_document_status === 'SUBMITTED' && (

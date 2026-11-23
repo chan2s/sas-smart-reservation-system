@@ -68,7 +68,7 @@ export function DetailsStep({
   showAllErrors,
   approvalLetterFile,
   onApprovalLetterFile,
-  approvalLetterRequired,
+  showApprovalLetter,
 }: {
   details: EventDetailsDraft
   onDetailsChange: (next: EventDetailsDraft) => void
@@ -106,11 +106,11 @@ export function DetailsStep({
   approvalLetterFile: File | null
   onApprovalLetterFile: (file: File | null) => void
   /**
-   * True only for internal reservations. The event approval letter is an
-   * INTERNAL-only supporting document, so external reservations never see the
-   * field or any of its validation.
+   * True only for internal reservations. The event approval letter is OPTIONAL
+   * — it can be attached now or uploaded later — and external reservations do
+   * not use it, so they never see the field.
    */
-  approvalLetterRequired: boolean
+  showApprovalLetter: boolean
 }) {
   const errors = useMemo(
     () => reservationFieldErrors({ details, contact, capacity, facilityName }),
@@ -133,11 +133,7 @@ export function DetailsStep({
     setTouched((current) => (current[key] ? current : { ...current, [key]: true }))
   const visibleError = (key: ReservationFieldKey) =>
     touched[key] || showAllErrors ? errors[key] : undefined
-  const visibleApprovalLetterError =
-    approvalLetterError ||
-    (showAllErrors && approvalLetterRequired && !approvalLetterFile
-      ? 'Upload an Event Approval Letter for this internal reservation.'
-      : '')
+  const visibleApprovalLetterError = approvalLetterError
 
   // Autofocus the first field on mount (but never steal focus from a draft the
   // requester already filled in).
@@ -155,8 +151,8 @@ export function DetailsStep({
   // Switching to an external reservation hides the field; drop any stale
   // upload error so it cannot reappear when the field is shown again.
   useEffect(() => {
-    if (!approvalLetterRequired) setApprovalLetterError('')
-  }, [approvalLetterRequired])
+    if (!showApprovalLetter) setApprovalLetterError('')
+  }, [showApprovalLetter])
 
   // "Enter" in a single-line field moves on instead of submitting the wizard.
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -460,13 +456,12 @@ export function DetailsStep({
               placeholder="Special setup, accessibility needs, or anything else we should know."
             />
           </Field>
-          {approvalLetterRequired && (
+          {showApprovalLetter && (
             <Field
               label="Event Approval Letter"
               htmlFor="event-approval-letter"
               className="sm:col-span-2"
-              required
-              hint="Required for internal reservations. Upload the signed letter before submitting. JPG, JPEG, PNG, or WEBP; maximum 5 MB."
+              hint="Optional. You can upload your signed event approval letter now or provide it later. You may reserve your preferred date while waiting for the document. JPG, JPEG, PNG, or WEBP; maximum 5 MB."
               error={visibleApprovalLetterError || undefined}
             >
               <ApprovalLetterCapture

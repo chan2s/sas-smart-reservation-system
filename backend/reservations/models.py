@@ -517,6 +517,8 @@ class Reservation(models.Model):
     approval_letter_image = models.ImageField(
         upload_to=approval_letter_upload_path, blank=True, null=True
     )
+    # Kept only for backward compatibility; the event approval letter is now
+    # optional, so this flag is always False and never blocks anything.
     approval_letter_required = models.BooleanField(
         default=False,
         help_text="Whether this reservation follows the event approval letter requirement.",
@@ -772,12 +774,14 @@ class Reservation(models.Model):
     def requires_event_approval_letter(self) -> bool:
         """Whether the requester-submitted event approval letter is required.
 
-        The letter is an INTERNAL-only supporting document. Reservations stored
-        before the requirement existed keep ``approval_letter_required`` False
-        so they remain approvable without a letter; external reservations are
-        never subject to it, whatever their stored flag says.
+        The event approval letter is optional for every reservation, internal or
+        external, so a date may be reserved while the signed letter is still
+        being processed. Reservations keep the historical
+        ``approval_letter_required`` flag for backward compatibility, but it no
+        longer enforces anything; a pending document can still be uploaded later
+        and the GSO review/approval workflow is unchanged.
         """
-        return self.is_internal and self.approval_letter_required
+        return False
 
     def save(self, *args, **kwargs):
         if not self.reservation_id:
@@ -798,25 +802,19 @@ class Reservation(models.Model):
                 payment_updates.add("payment_required_amount")
         if update_fields is not None and payment_updates:
             kwargs["update_fields"] = {*update_fields, *payment_updates}
-        # The event approval letter requirement is internal-only. Clear the flag
-        # on external reservations (including rows saved before this rule) so
-        # they can never be blocked by a document they do not submit. Any
-        # uploaded file is preserved untouched.
-        if not self.is_internal and self.approval_letter_required:
-            self.approval_letter_required = False
-            update_fields = kwargs.get("update_fields")
-            if update_fields is not None:
-                kwargs["update_fields"] = {
-                    *update_fields,
-                    "approval_letter_required",
-                    "approval_document_status",
-                }
+        # The requester-uploaded event approval letter is optional. An attached
+        # image means the document is on file (SUBMITTED). A pending internal
+        # reservation without one keeps the AWAITING state so the existing
+        # tracking/detail upload UI can offer the requester the chance to add it
+        # later; it never blocks approval. External reservations never use this
+        # document. The historical requirement flag is always cleared.
         if self.approval_letter_image:
             self.approval_document_status = self.ApprovalDocumentStatus.SUBMITTED
-        elif self.approval_letter_required:
+        elif self.is_internal and self.status == self.Status.PENDING:
             self.approval_document_status = self.ApprovalDocumentStatus.AWAITING
         else:
             self.approval_document_status = self.ApprovalDocumentStatus.NOT_REQUIRED
+        self.approval_letter_required = False
         super().save(*args, **kwargs)
 
     def _next_reservation_id(self) -> str:
