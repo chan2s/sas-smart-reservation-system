@@ -101,8 +101,14 @@ class ExternalApprovalDocumentTests(TestCase):
 
         message = mail.outbox[0]
         self.assertEqual(message.to, [self.requester.email])
-        self.assertEqual(message.subject, "Reservation Approved — Community Health Forum | GSO RESERVE")
+        self.assertEqual(
+            message.subject,
+            f"Reservation Approved — {approved.reservation_id} | Community Health Forum | GSO RESERVE",
+        )
         self.assertIn("Bayawan-Sta. Catalina Campus", message.body)
+        self.assertIn(f"Reservation ID: {approved.reservation_id}", message.body)
+        self.assertIn("Facility: Community Gym", message.body)
+        self.assertIn("Time: 9:00 AM to 12:00 PM", message.body)
         self.assertEqual(len(message.attachments), 1)
         filename, attachment, mimetype = message.attachments[0]
         self.assertEqual(filename, f"GSO-RESERVE-APPROVAL-{approved.reservation_id}.pdf")

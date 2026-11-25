@@ -294,6 +294,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         source="get_generated_approval_status_display", read_only=True
     )
     generated_approval_error = serializers.SerializerMethodField()
+    generated_approval_at = serializers.DateTimeField(read_only=True)
     approval_pdf_available = serializers.SerializerMethodField()
     approval_docx_available = serializers.SerializerMethodField()
     approval_email_sent_at = serializers.DateTimeField(read_only=True)
@@ -356,6 +357,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "generated_approval_status",
             "generated_approval_status_label",
             "generated_approval_error",
+            "generated_approval_at",
             "approval_pdf_available",
             "approval_docx_available",
             "approval_email_sent_at",
@@ -834,6 +836,10 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
     rebooked_from_id = serializers.IntegerField(
         write_only=True, required=False, allow_null=True
     )
+    # Administrator-only idempotency key. Ignored for every other caller.
+    client_request_id = serializers.CharField(
+        required=False, allow_blank=True, max_length=64, write_only=True
+    )
     requester_type = serializers.ChoiceField(
         choices=Reservation.RequesterType.choices,
         required=False,
@@ -896,6 +902,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
             "requester_id",
             "requester_type",
             "rebooked_from_id",
+            "client_request_id",
         )
 
     def validate_approval_letter_image(self, upload):
@@ -1220,6 +1227,7 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         on_behalf_of = validated_data.pop("_on_behalf_of", None)
         organization_ref = validated_data.pop("_organization_ref", None)
         rebooked_from = validated_data.pop("_rebooked_from", None)
+        client_request_id = (validated_data.pop("client_request_id", "") or "").strip()
         requester_type = validated_data.pop(
             "requester_type", Reservation.RequesterType.CAMPUS
         )
@@ -1289,6 +1297,13 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 organization_ref=organization_ref,
                 rebooked_from=rebooked_from,
                 created_by=(user if authenticated and not self.context.get("public_submission") else None),
+                # Only an administrator's form can make creation idempotent;
+                # public/requester submissions never store a client key.
+                client_request_id=(
+                    client_request_id
+                    if authenticated and user.is_admin and not self.context.get("public_submission")
+                    else ""
+                ),
                 # The event approval letter is optional for all reservations.
                 # The historical requirement flag is no longer used to enforce
                 # submission requirements; it only tracks legacy records.

@@ -441,6 +441,7 @@ export function ReservationDetailPage() {
   // The requester-submitted event approval letter only applies to internal
   // reservations. External generated approval letters use a separate card.
   const showEventApprovalLetter = reservation.requester_type !== 'EXTERNAL'
+  const letterNotification = approvalLetterNotification(reservation)
   const rescheduleRequest = reservation.reschedule_request
   const rescheduleTone =
     rescheduleRequest?.status === 'APPROVED'
@@ -1288,6 +1289,11 @@ export function ReservationDetailPage() {
                             {reservation.generated_approval_status_label || reservation.generated_approval_status}
                           </span>
                         )}
+                        {isStaff && reservation.generated_approval_at && (
+                          <span className="text-xs text-muted">
+                            Generated {formatDateTime(reservation.generated_approval_at)}
+                          </span>
+                        )}
                         {(isOwner || isStaff) && (
                           <Button variant="primary" size="sm" icon={<Download className="size-4" aria-hidden />} onClick={() => void downloadApprovalDocument()}>
                             Download Approval Letter
@@ -1337,12 +1343,16 @@ export function ReservationDetailPage() {
                       <span
                         className={cn(
                           'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
-                          approvalEmailBadgeClass(reservation.approval_email_status),
+                          reservation.requester_type === 'EXTERNAL'
+                            ? letterNotification.className
+                            : approvalEmailBadgeClass(reservation.approval_email_status),
                         )}
                       >
                         <span className="size-1.5 rounded-full bg-current" />
-                        {reservation.approval_email_status_label ||
-                          reservation.approval_email_status}
+                        {reservation.requester_type === 'EXTERNAL'
+                          ? letterNotification.label
+                          : reservation.approval_email_status_label ||
+                            reservation.approval_email_status}
                       </span>
                       {reservation.requester_type === 'EXTERNAL' ? (
                         <>
@@ -1795,6 +1805,51 @@ export function ReservationDetailPage() {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * One admin-facing summary of the whole external approval-letter pipeline.
+ * The individual generation/delivery rows keep their own detail and retry
+ * actions; this makes the overall outcome readable at a glance.
+ */
+function approvalLetterNotification(reservation: ReservationDetail): {
+  label: string
+  className: string
+} {
+  if (reservation.generated_approval_status === 'FAILED') {
+    return {
+      label: 'Letter generation failed',
+      className: 'border-red-200 bg-red-50 text-red-700',
+    }
+  }
+  if (reservation.generated_approval_status !== 'GENERATED') {
+    return {
+      label: 'Letter not generated yet',
+      className: 'border-amber-200 bg-amber-50 text-amber-700',
+    }
+  }
+  if (reservation.approval_email_status === 'SENT') {
+    return {
+      label: 'Letter generated and emailed',
+      className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    }
+  }
+  if (reservation.approval_email_status === 'NO_EMAIL') {
+    return {
+      label: 'Organization email address missing',
+      className: 'border-stone-200 bg-stone-50 text-stone-500',
+    }
+  }
+  if (reservation.approval_email_status === 'FAILED') {
+    return {
+      label: 'Letter generated, email delivery failed',
+      className: 'border-red-200 bg-red-50 text-red-700',
+    }
+  }
+  return {
+    label: 'Letter generated, email not sent',
+    className: 'border-amber-200 bg-amber-50 text-amber-700',
+  }
+}
 
 function approvalEmailBadgeClass(status: string) {
   switch (status) {

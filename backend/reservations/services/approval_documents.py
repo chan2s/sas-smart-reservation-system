@@ -628,9 +628,11 @@ def generate_approval_documents(reservation, *, force=False, regenerate=False):
                 reservation.generated_approval_pdf.save(pdf_path.name, File(stream), save=False)
             reservation.generated_approval_status = Reservation.GeneratedApprovalStatus.GENERATED
             reservation.generated_approval_error = ""
+            reservation.generated_approval_at = timezone.now()
             reservation.save(update_fields=[
                 "generated_approval_docx", "generated_approval_pdf",
-                "generated_approval_status", "generated_approval_error", "updated_at",
+                "generated_approval_status", "generated_approval_error",
+                "generated_approval_at", "updated_at",
             ])
         if old_docx_name and old_docx_name != reservation.generated_approval_docx.name:
             reservation.generated_approval_docx.storage.delete(old_docx_name)

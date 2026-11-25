@@ -557,14 +557,24 @@ def send_external_reservation_approval(reservation) -> tuple[bool, Optional[str]
             reservation.requester.display_name if reservation.requester_id
             else reservation.contact_person or reservation.organization or "Requester"
         )
-        subject = f"Reservation Approved — {reservation.event_name} | GSO RESERVE"
+        event_date = reservation.date.strftime("%B %d, %Y").replace(" 0", " ")
+        start_time = reservation.start_time.strftime("%I:%M %p").lstrip("0")
+        end_time = reservation.end_time.strftime("%I:%M %p").lstrip("0")
+        subject = (
+            f"Reservation Approved — {reservation.reservation_id} | "
+            f"{reservation.event_name} | GSO RESERVE"
+        )
         body = (
             f"Dear {requester_name},\n\n"
-            "We are pleased to inform you that your external facility reservation request has been approved by the General Services Office (GSO) of Negros Oriental State University - Bayawan-Sta. Catalina Campus.\n\n"
-            "Please find your official reservation approval letter attached to this email.\n\n"
+            "This confirms that the following reservation has been created and approved by the General Services Office (GSO) of Negros Oriental State University - Bayawan-Sta. Catalina Campus.\n\n"
+            f"Reservation ID: {reservation.reservation_id}\n"
+            f"Facility: {reservation.facility.name}\n"
+            f"Event date: {event_date}\n"
+            f"Time: {start_time} to {end_time}\n\n"
+            "Your official reservation approval letter is attached to this email as a PDF.\n\n"
             "The attached document contains your approved reservation details and the required signature sections.\n\n"
             "Please download and print the document to obtain the necessary signatures.\n\n"
-            "You may also access and download your approval letter directly through your GSO RESERVE account.\n\n"
+            "Please keep this email and the attached letter for your records.\n\n"
             "Thank you for choosing NORSU-BSC.\n\n"
             "Sincerely,\n\nNORSU-BSC General Services Office\nGSO RESERVE"
         )
@@ -1139,14 +1149,26 @@ def resolve_requester_email(reservation, actor=None) -> str:
     """Resolve the requester's email from the database relationship.
 
     Campus requesters use their account email. External requesters use the
-    reservation's contact email. The acting/creating staff account is never
-    used as a fallback recipient, and malformed addresses are rejected.
+    reservation's contact email, except a reservation an administrator entered
+    on an organization's behalf, which uses the email saved on that
+    organization's registry record (the authoritative address). The
+    acting/creating staff account is never used as a fallback recipient, and
+    malformed addresses are rejected.
     """
     from django.core.exceptions import ValidationError
     from django.core.validators import validate_email
 
+    from reservations.models import Reservation
+
     if reservation.requester and reservation.requester.email:
         email = reservation.requester.email.strip()
+    elif (
+        reservation.requester is None
+        and reservation.created_by_id
+        and reservation.requester_type == Reservation.RequesterType.EXTERNAL
+        and reservation.organization_ref_id
+    ):
+        email = (reservation.organization_ref.contact_email or "").strip()
     else:
         email = (reservation.contact_email or "").strip()
     if not email:

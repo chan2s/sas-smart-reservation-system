@@ -142,6 +142,7 @@ function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDet
     generated_approval_status: 'NOT_STARTED',
     generated_approval_status_label: 'Not generated',
     generated_approval_error: '',
+    generated_approval_at: null,
     approval_pdf_available: false,
     approval_docx_available: false,
     approval_email_sent_at: null,

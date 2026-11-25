@@ -574,6 +574,11 @@ class Reservation(models.Model):
         db_index=True,
     )
     generated_approval_error = models.CharField(max_length=80, blank=True)
+    generated_approval_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the current approval letter PDF was last generated successfully.",
+    )
     approval_email_sent_at = models.DateTimeField(null=True, blank=True)
     approval_email_last_error = models.CharField(max_length=80, blank=True)
     approval_email_attempts = models.PositiveIntegerField(default=0)
@@ -668,6 +673,20 @@ class Reservation(models.Model):
         help_text="When the operator was assigned to this reservation"
     )
 
+    # Idempotency key supplied by the administrator's reservation form. It is
+    # unique when set so a retried submission (lost response, double click,
+    # browser retry) returns the SAME reservation instead of creating a second
+    # one and sending a second approval email. Public/requester creates never
+    # populate it.
+    client_request_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        editable=False,
+        db_index=True,
+        help_text="Client-generated key that makes administrator reservation creation idempotent.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -704,6 +723,11 @@ class Reservation(models.Model):
                     | models.Q(payment_required_amount__gte=0)
                 ),
                 name="reservation_required_amount_non_negative",
+            ),
+            models.UniqueConstraint(
+                fields=["client_request_id"],
+                condition=~models.Q(client_request_id=""),
+                name="unique_reservation_client_request_id",
             ),
         ]
 

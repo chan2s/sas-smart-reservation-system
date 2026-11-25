@@ -46,6 +46,7 @@ import {
   clearDraft,
   loadDraft,
   missingFieldLabels,
+  newSubmissionKey,
   reservationFieldErrors,
   saveDraft,
   toCreateReservationPayload,
@@ -318,6 +319,10 @@ export function ReservationWizardPage() {
   // id: the backend creates (or reuses) the record when the reservation is
   // saved, so the admin never has to visit the Manage Organizations page.
   const [adminOrganizationIsNew, setAdminOrganizationIsNew] = useState(false)
+  // One stable idempotency key per administrator submission intent. Restored
+  // from the draft so a retry/refresh reuses it instead of creating a second
+  // reservation and sending its approval letter again.
+  const [submissionKey] = useState(() => restored?.submissionKey ?? newSubmissionKey())
   const [organizationSearch, setOrganizationSearch] = useState('')
   const [external, setExternal] = useState(
     () => restored?.rebooker?.external ?? EMPTY_EXTERNAL,
@@ -646,6 +651,7 @@ export function ReservationWizardPage() {
       operatorSelections,
       userEditedItems: [...userEditedItems],
       stepKey,
+      submissionKey,
       // Preserve the rebook lineage across a refresh mid-wizard.
       rebookedFromId,
       rebooker: restored?.rebooker ?? null,
@@ -666,6 +672,7 @@ export function ReservationWizardPage() {
     operatorSelections,
     userEditedItems,
     stepKey,
+    submissionKey,
     publicFlow,
     isEditing,
     editOTP,
@@ -976,6 +983,7 @@ export function ReservationWizardPage() {
           ? { external: { ...external, contact_person: publicFlow ? contact.name.trim() : external.contact_person } }
           : {}),
       }),
+      ...(isAdmin ? { client_request_id: submissionKey } : {}),
       ...(approvalLetterFile ? { approval_letter_image: approvalLetterFile } : {}),
     }
 
@@ -1090,6 +1098,31 @@ export function ReservationWizardPage() {
               <Badge tone="amber">Pending approval</Badge>
             )}
           </div>
+          {isAdmin && submitted.requester_type === 'EXTERNAL' && (
+            <>
+              {submitted.generated_approval_status === 'FAILED' && (
+                <p role="alert" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-rejected/25 bg-status-rejected-bg p-4 text-left text-sm leading-6 text-status-rejected">
+                  The reservation was created and approved, but its approval letter could not be
+                  generated. Retry generation from the reservation details page.
+                </p>
+              )}
+              {submitted.generated_approval_status !== 'FAILED' &&
+                submitted.approval_email_status === 'NO_EMAIL' && (
+                  <p role="alert" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-pending/25 bg-status-pending-bg p-4 text-left text-sm leading-6 text-status-pending">
+                    The approval letter was generated, but it could not be emailed because the
+                    external organization has no email address on record. Add one and resend the
+                    letter from the reservation details page.
+                  </p>
+                )}
+              {submitted.generated_approval_status !== 'FAILED' &&
+                submitted.approval_email_status === 'FAILED' && (
+                  <p role="alert" className="mx-auto mt-4 max-w-lg rounded-xl border border-status-rejected/25 bg-status-rejected-bg p-4 text-left text-sm leading-6 text-status-rejected">
+                    The approval letter could not be emailed. You can retry sending it from the
+                    reservation details page.
+                  </p>
+                )}
+            </>
+          )}
           {publicFlow &&
             submitted.requester_type !== 'EXTERNAL' &&
             submitted.approval_document_status === 'AWAITING' && (
@@ -1503,12 +1536,13 @@ export function ReservationWizardPage() {
         )}
       </div>
 
-      {!isEditing && isAdmin && (stepKey === 'details' || stepKey === 'review') && (
+      {!isEditing && isAdmin && requesterType === 'EXTERNAL' && (stepKey === 'details' || stepKey === 'review') && (
         <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-brand/20 bg-brand-soft/50 px-4 py-3 text-sm text-brand">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
           <p>
             <span className="font-semibold">Administrator reservation.</span>{' '}
-            Reservations created by administrators are automatically approved.
+            External-organization reservations created by administrators are automatically
+            approved, and the approval letter is emailed to the organization.
           </p>
         </div>
       )}

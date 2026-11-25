@@ -5,7 +5,7 @@ import mimetypes
 from pathlib import Path
 
 from django.http import FileResponse
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -1200,6 +1200,21 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 incoming["items"] = json.loads(incoming["items"])
             except (TypeError, ValueError):
                 return Response({"items": ["Expected a valid list of reservation resources."]}, status=400)
+        # An administrator's form sends a stable per-submission key. A retried
+        # request (lost response, double click, browser retry) returns the
+        # reservation created the first time: no second reservation, no second
+        # approval email, and no duplicate approval timeline entries.
+        request_key = str(incoming.get("client_request_id") or "").strip()
+        if request_key and request.user.is_authenticated and request.user.is_admin:
+            existing = Reservation.objects.filter(
+                client_request_id=request_key, created_by=request.user
+            ).first()
+            if existing is not None:
+                return Response(
+                    ReservationDetailSerializer(
+                        existing, context={"request": request}
+                    ).data
+                )
         serializer = self.get_serializer(data=incoming, context={"request": request})
         try:
             serializer.is_valid(raise_exception=True)
@@ -1215,7 +1230,22 @@ class ReservationViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_409_CONFLICT,
                 )
             raise
-        reservation = serializer.save()
+        try:
+            reservation = serializer.save()
+        except IntegrityError:
+            # A concurrent retry with the same key won the unique constraint.
+            # Reuse that committed reservation instead of surfacing an error.
+            if request_key and request.user.is_admin:
+                existing = Reservation.objects.filter(
+                    client_request_id=request_key, created_by=request.user
+                ).first()
+                if existing is not None:
+                    return Response(
+                        ReservationDetailSerializer(
+                            existing, context={"request": request}
+                        ).data
+                    )
+            raise
         _record_submission_metadata(request, reservation)
         _apply_booker_lookup(reservation, request)
         is_rebook = reservation.rebooked_from_id is not None
@@ -1233,26 +1263,42 @@ class ReservationViewSet(viewsets.ModelViewSet):
         if is_rebook:
             _record_rebook_lineage(request, reservation)
 
-        # Every new reservation starts in the pending queue, including ones an
-        # administrator creates. The event approval letter is optional, so its
-        # presence or absence must never decide the status: a reservation
-        # submitted without a letter is not approved automatically, and a
-        # status value sent by the client is never trusted.
-        notify_staff(
-            Notification.Type.RESERVATION,
-            "New reservation request",
-            f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
-            f"/reservations/{reservation.id}",
-            event_key=f"reservation:{reservation.pk}:submitted",
+        # An administrator manually encoding an external organization's
+        # reservation approves it as part of creation (the documented admin
+        # workflow). ``auto_approve`` then schedules the existing external
+        # approval-letter generation + email delivery after commit. The
+        # approval itself is decided here, never by whether a letter or email
+        # later succeeds, so a generation/delivery failure leaves the
+        # reservation approved. Everything else — including internal requests
+        # and rebooks — starts in the normal pending queue.
+        auto_approved = (
+            request.user.is_admin
+            and not is_rebook
+            and reservation.requester_type == Reservation.RequesterType.EXTERNAL
         )
-        notify(
-            reservation.requester,
-            Notification.Type.RESERVATION,
-            "Reservation submitted",
-            "Your reservation request was submitted and is awaiting review.",
-            f"/reservations/{reservation.id}",
-            event_key=f"reservation:{reservation.pk}:submitted-requester",
-        )
+        if auto_approved:
+            workflow.auto_approve(
+                reservation,
+                request.user,
+                message="Automatically approved — external reservation created by an administrator.",
+            )
+            reservation.refresh_from_db()
+        else:
+            notify_staff(
+                Notification.Type.RESERVATION,
+                "New reservation request",
+                f"{reservation.event_name} on {reservation.date} ({reservation.start_time:%H:%M}–{reservation.end_time:%H:%M}) is awaiting approval.",
+                f"/reservations/{reservation.id}",
+                event_key=f"reservation:{reservation.pk}:submitted",
+            )
+            notify(
+                reservation.requester,
+                Notification.Type.RESERVATION,
+                "Reservation submitted",
+                "Your reservation request was submitted and is awaiting review.",
+                f"/reservations/{reservation.id}",
+                event_key=f"reservation:{reservation.pk}:submitted-requester",
+            )
         # Booking confirmation email. Scheduled AFTER the creation has been
         # saved and the final status has been decided above, so the message
         # always describes the status that was actually persisted (pending or

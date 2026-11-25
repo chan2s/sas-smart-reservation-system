@@ -52,6 +52,13 @@ export interface RebookRequesterSeed {
 }
 
 export interface WizardDraft {
+  /**
+   * Stable key for an administrator's reservation submission. It survives a
+   * refresh/retry mid-wizard so the backend can return the reservation that
+   * was already created instead of creating a second one (and emailing its
+   * approval letter twice).
+   */
+  submissionKey?: string
   facilityId: number | null
   /** ISO `yyyy-MM-dd`, or '' when no date is chosen yet. */
   dateISO: string
@@ -92,6 +99,15 @@ export const EMPTY_DETAILS: EventDetailsDraft = {
   expectedParticipants: '',
   purpose: '',
   staffNotes: '',
+}
+
+/** A random key for one administrator submission intent. */
+export function newSubmissionKey(): string {
+  const cryptoApi = globalThis.crypto
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID()
+  }
+  return `submission-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 export function emptyDraft(): WizardDraft {

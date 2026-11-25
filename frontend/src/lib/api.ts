@@ -602,6 +602,8 @@ export interface CreateReservationPayload {
   requester_type?: RequesterType
   /** Rebook / "request new schedule": the expired reservation this one is from. */
   rebooked_from_id?: number
+  /** Administrator-only idempotency key; a retry returns the same reservation. */
+  client_request_id?: string
   approval_letter_image?: File
 }
 
@@ -685,6 +687,10 @@ export interface PublicReservationSubmission {
   requester_type: 'CAMPUS' | 'EXTERNAL'
   approval_document_status: 'NOT_REQUIRED' | 'AWAITING' | 'SUBMITTED'
   approval_document_status_label: string
+  /** Present on administrator-created submissions; absent on the public response. */
+  generated_approval_status?: 'NOT_STARTED' | 'GENERATED' | 'FAILED'
+  generated_approval_at?: string | null
+  approval_email_status?: string
 }
 
 export type RescheduleRequestStatus =
