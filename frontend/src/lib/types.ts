@@ -100,6 +100,15 @@ export interface Organization {
   reservation_history?: OrganizationReservationHistoryRow[]
 }
 
+/** Identity-only external organization returned by the public search endpoint. */
+export interface PublicOrganizationOption {
+  id: number
+  organization_code: string
+  organization_name: string
+  organization_type: ExternalOrganizationType
+  organization_type_label: string
+}
+
 export interface OrganizationReservationHistoryRow {
   id: number
   reservation_id: string

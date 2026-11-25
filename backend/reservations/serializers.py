@@ -6,10 +6,15 @@ from PIL import Image
 from PIL import UnidentifiedImageError
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
 from accounts.models import Organization
+from accounts.organization_registry import (
+    organization_type_from_reservation_type,
+    resolve_organization,
+)
 from equipment.models import Equipment
 from equipment.services import unassigned_equipment_for_facility
 from facilities.models import Facility
@@ -931,29 +936,30 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                     )
                 attrs["_organization_ref"] = organization
                 attrs["organization"] = organization.organization_name
-            elif organization_id is not None:
-                organization = Organization.objects.filter(
-                    pk=organization_id,
-                    organization_type__in=[
-                        Organization.OrganizationType.GOVERNMENT_AGENCY,
-                        Organization.OrganizationType.NGO,
-                        Organization.OrganizationType.PRIVATE_ORGANIZATION,
-                        Organization.OrganizationType.COMMUNITY_ORGANIZATION,
-                        Organization.OrganizationType.SCHOOL_UNIVERSITY,
-                        Organization.OrganizationType.OTHER,
-                    ],
-                    verification_status=Organization.VerificationStatus.APPROVED,
-                    is_active=True,
-                ).first()
+            elif organization_id is not None and not (attrs.get("organization") or "").strip():
+                # A selected record is only a convenience: the typed name is
+                # authoritative and resolved/created on save. When the client
+                # sends only an id, copy the record's official name so a
+                # legacy payload still works. Approval status is deliberately
+                # not required — organizations created by earlier public
+                # requests remain usable by their own requesters.
+                organization = (
+                    Organization.objects.filter(pk=organization_id, is_active=True)
+                    .exclude(organization_type=Organization.OrganizationType.INTERNAL)
+                    .first()
+                )
                 if organization is None:
                     raise serializers.ValidationError(
-                        {"organization_id": "Select an active, approved external organization."}
+                        {"organization_id": "Select an active external organization."}
                     )
-                attrs["_organization_ref"] = organization
                 attrs["organization"] = organization.organization_name
-                attrs["organization_type"] = Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
-                    organization.organization_type, Reservation.OrganizationType.OTHER
-                )
+                if not attrs.get("organization_type"):
+                    attrs["organization_type"] = (
+                        Reservation.ORGANIZATION_TYPE_FROM_ORGANIZATION.get(
+                            organization.organization_type,
+                            Reservation.OrganizationType.OTHER,
+                        )
+                    )
             if not (attrs.get("organization") or "").strip():
                 raise serializers.ValidationError({"organization": "Organization name is required."})
             if not (attrs.get("contact_person") or "").strip():
@@ -993,10 +999,13 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
                 is_active=True,
             )
             if requester_type == Reservation.RequesterType.EXTERNAL:
+                # Any active external record may be selected, including the
+                # PENDING ones created automatically by public requests.
+                # Approval still governs the normal verification workflow and
+                # the organization's own members; it does not hide the record
+                # from staff creating a reservation on its behalf.
                 organizations = organizations.exclude(
                     organization_type=Organization.OrganizationType.INTERNAL
-                ).filter(
-                    verification_status=Organization.VerificationStatus.APPROVED
                 )
             else:
                 organizations = organizations.filter(
@@ -1242,29 +1251,60 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
         else:
             requester = None
 
-        reservation = Reservation.objects.create(
-            **validated_data,
-            facility_id=facility_id,
-            requester=requester,
-            requester_type=requester_type,
-            organization_ref=organization_ref,
-            rebooked_from=rebooked_from,
-            created_by=(user if authenticated and not self.context.get("public_submission") else None),
-            # The event approval letter is optional for all reservations.
-            # The historical requirement flag is no longer used to enforce
-            # submission requirements; it only tracks legacy records.
-            approval_letter_required=False,
-        )
-        for item in items:
-            ReservationItem.objects.create(
-                reservation=reservation,
-                equipment_id=item["equipment_id"],
-                quantity=item.get("quantity", 1),
-                operator_requested=item.get("operator"),
+        # An external reservation with only a typed organization name (public
+        # intake or manual admin entry) resolves its registry record here, in
+        # the same transaction as the reservation: the organization is saved
+        # first, a failure in either operation rolls both back, and a
+        # concurrent duplicate submission reuses the winner instead of
+        # creating a second record.
+        with transaction.atomic():
+            if (
+                organization_ref is None
+                and requester_type == Reservation.RequesterType.EXTERNAL
+            ):
+                name = (validated_data.get("organization") or "").strip()
+                if name:
+                    organization_ref, _created = resolve_organization(
+                        name,
+                        organization_type_from_reservation_type(
+                            validated_data.get("organization_type")
+                        ),
+                        create=True,
+                        contact_person=(validated_data.get("contact_person") or "").strip(),
+                        contact_email=(validated_data.get("contact_email") or "").strip(),
+                        contact_number=(validated_data.get("contact_phone") or "") or "",
+                        address=(validated_data.get("organization_address") or "").strip(),
+                        verification_status=Organization.VerificationStatus.PENDING,
+                    )
+                    if organization_ref is not None:
+                        # Reuse the official display name (and never approve or
+                        # grant anything merely because a name was entered).
+                        validated_data["organization"] = organization_ref.organization_name
+
+            reservation = Reservation.objects.create(
+                **validated_data,
+                facility_id=facility_id,
+                requester=requester,
+                requester_type=requester_type,
+                organization_ref=organization_ref,
+                rebooked_from=rebooked_from,
+                created_by=(user if authenticated and not self.context.get("public_submission") else None),
+                # The event approval letter is optional for all reservations.
+                # The historical requirement flag is no longer used to enforce
+                # submission requirements; it only tracks legacy records.
+                approval_letter_required=False,
             )
-        # The backend computes and snapshots the amount from the reservation's
-        # own fields. Any client-supplied total is ignored by construction.
-        snapshot_reservation_fees(reservation)
+            for item in items:
+                ReservationItem.objects.create(
+                    reservation=reservation,
+                    equipment_id=item["equipment_id"],
+                    quantity=item.get("quantity", 1),
+                    operator_requested=item.get("operator"),
+                )
+            # The backend computes and snapshots the amount from the
+            # reservation's own fields. Any client-supplied total is ignored by
+            # construction.
+            snapshot_reservation_fees(reservation)
         return reservation
 
 

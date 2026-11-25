@@ -18,6 +18,7 @@ import {
   useFacilityResources,
   useInternalOrganizations,
   useOrganizations,
+  usePublicOrganizations,
   useReservations,
 } from '@/hooks/queries'
 import { useSuggestedResources } from '@/hooks/useSuggestedResources'
@@ -65,6 +66,7 @@ import type {
   BookerLookupDetails,
   ReservationDetail,
   ReservableResource,
+  ExternalOrganizationType,
   InternalOrganization,
   Organization,
 } from '@/lib/types'
@@ -312,6 +314,10 @@ export function ReservationWizardPage() {
   )
   const [adminOrganization, setAdminOrganization] = useState<Organization | InternalOrganization | null>(null)
   const [adminOrganizationId, setAdminOrganizationId] = useState('')
+  // An admin-typed external organization that does not exist yet. It has no
+  // id: the backend creates (or reuses) the record when the reservation is
+  // saved, so the admin never has to visit the Manage Organizations page.
+  const [adminOrganizationIsNew, setAdminOrganizationIsNew] = useState(false)
   const [organizationSearch, setOrganizationSearch] = useState('')
   const [external, setExternal] = useState(
     () => restored?.rebooker?.external ?? EMPTY_EXTERNAL,
@@ -750,7 +756,7 @@ export function ReservationWizardPage() {
           (requesterType !== 'EXTERNAL' || external.organization_type),
         )
       : true
-    : Boolean(adminOrganizationId)
+    : Boolean(adminOrganizationId || adminOrganizationIsNew)
   const stepFieldsValid =
     stepKey === 'requester'
       ? requesterStepValid
@@ -797,8 +803,8 @@ export function ReservationWizardPage() {
       )
       return
     }
-    if (stepKey === 'requester' && isAdmin && !adminOrganizationId) {
-      setStepError('Search for and select the organization requesting this reservation.')
+    if (stepKey === 'requester' && isAdmin && !adminOrganizationId && !adminOrganizationIsNew) {
+      setStepError('Search for an existing organization or add a new one to continue.')
       return
     }
     if (stepKey === 'requester' && publicFlow && !requesterStepValid) {
@@ -957,7 +963,9 @@ export function ReservationWizardPage() {
         // sending it only keeps the payload self-describing.
         organization: isExternalRequester ? external.organization : reservingAs,
         ...(isAdmin
-          ? { organizationId: Number(adminOrganizationId) }
+          ? adminOrganizationIsNew
+            ? {}
+            : { organizationId: Number(adminOrganizationId) }
           : publicFlow && requesterType === 'CAMPUS'
           ? {
               contactEmail: external.contact_email,
@@ -1344,6 +1352,7 @@ export function ReservationWizardPage() {
               setRequesterType(type)
               setAdminOrganization(null)
               setAdminOrganizationId('')
+              setAdminOrganizationIsNew(false)
               setOrganizationSearch('')
               setExternal(EMPTY_EXTERNAL)
               setStepError(null)
@@ -1352,6 +1361,7 @@ export function ReservationWizardPage() {
             onSelectOrganization={(organization) => {
               setAdminOrganization(organization)
               setAdminOrganizationId(String(organization.id))
+              setAdminOrganizationIsNew(false)
               if (organization.organization_type !== 'INTERNAL') {
                 setExternal({
                   organization: organization.organization_name,
@@ -1362,6 +1372,21 @@ export function ReservationWizardPage() {
               } else {
                 setExternal(EMPTY_EXTERNAL)
               }
+            }}
+            pendingNewOrganizationName={
+              adminOrganizationIsNew ? adminOrganization?.organization_name ?? '' : ''
+            }
+            onCreateOrganization={(organization) => {
+              setAdminOrganization(organization)
+              setAdminOrganizationId('')
+              setAdminOrganizationIsNew(true)
+              setExternal({
+                organization: organization.organization_name,
+                organization_type: reservationOrganizationType(organization.organization_type),
+                contact_person: organization.contact_person ?? '',
+                contact_email: organization.contact_email ?? '',
+              })
+              setStepError(null)
             }}
             search={organizationSearch}
             onSearch={setOrganizationSearch}
@@ -1634,7 +1659,9 @@ function PublicOrganizationStep({
         {requesterType === 'EXTERNAL' ? 'External organization details' : 'Internal organization details'}
       </h2>
       <p className="mt-1 text-sm text-body">
-        Add the organization and contact email for this reservation request.
+        {requesterType === 'EXTERNAL'
+          ? 'Search for your organization or enter its name, then add a contact email. No account or separate registration is needed.'
+          : 'Select your college, office, or unit and add a contact email for this reservation request.'}
       </p>
       {requesterType === 'EXTERNAL' && (
         <ReturningBookerLookup
@@ -1644,18 +1671,11 @@ function PublicOrganizationStep({
       )}
       <Card className="mt-5 !rounded-xl !border-slate-200 !shadow-none grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
         {requesterType === 'EXTERNAL' ? (
-          <Field label="Organization name" htmlFor="public-organization">
-            <Input
-              id="public-organization"
-              value={organization}
-              onChange={(event) => onChange('organization', event.target.value)}
-              maxLength={120}
-              autoComplete="organization"
-              required
-              className={cn(reservationControlClass, showErrors && !organization.trim() && reservationInvalidControlClass)}
-              aria-invalid={showErrors && !organization.trim()}
-            />
-          </Field>
+          <ExternalOrganizationInput
+            organization={organization}
+            onChange={onChange}
+            showErrors={showErrors}
+          />
         ) : (
           <InternalOrganizationSelect
             organizationId={organizationId}
@@ -1697,6 +1717,119 @@ function PublicOrganizationStep({
         </Field>
       </Card>
     </section>
+  )
+}
+
+/**
+ * Searchable external-organization input.
+ *
+ * Suggests existing registry records as the requester types (identity fields
+ * only, never contacts or member data). Selecting a suggestion fills in the
+ * organization's official name and type. When nothing matches, the typed name
+ * is kept and the backend creates the record together with the reservation —
+ * the requester never needs an account or a separate registration step.
+ */
+function ExternalOrganizationInput({
+  organization,
+  onChange,
+  showErrors,
+}: {
+  organization: string
+  onChange: (key: 'organization' | 'organization_type' | 'contact_email', value: string) => void
+  showErrors: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const term = organization.trim()
+  const { data, isFetching } = usePublicOrganizations(organization)
+  const options = data ?? []
+  const showMatches = open && term.length >= 2
+
+  return (
+    <Field
+      label="External Organization Name"
+      htmlFor="public-organization"
+      hint="Start typing to reuse an existing organization. If yours is not listed, keep the name you entered — it will be saved with your reservation."
+      className="sm:col-span-2"
+    >
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
+          aria-hidden
+        />
+        <Input
+          id="public-organization"
+          value={organization}
+          onChange={(event) => {
+            onChange('organization', event.target.value)
+            setOpen(true)
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          placeholder="Search or enter organization name"
+          maxLength={120}
+          autoComplete="off"
+          role="combobox"
+          aria-expanded={showMatches}
+          aria-controls="public-organization-options"
+          aria-autocomplete="list"
+          required
+          className={cn(
+            reservationControlClass,
+            'pl-9',
+            showErrors && !organization.trim() && reservationInvalidControlClass,
+          )}
+          aria-invalid={showErrors && !organization.trim()}
+        />
+        {showMatches && (
+          <div
+            id="public-organization-options"
+            role="listbox"
+            aria-label="Matching organizations"
+            className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg"
+          >
+            {isFetching && options.length === 0 ? (
+              <p className="px-3 py-2 text-sm text-muted" role="status">
+                Searching organizations…
+              </p>
+            ) : options.length === 0 ? (
+              <p className="px-3 py-2 text-sm text-muted">
+                No existing organization matches “{term}”. It will be created when you submit.
+              </p>
+            ) : (
+              options.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    onChange('organization', option.organization_name)
+                    onChange(
+                      'organization_type',
+                      reservationOrganizationType(option.organization_type),
+                    )
+                    setOpen(false)
+                  }}
+                  className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-soft"
+                >
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
+                    <Building2 className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-ink">
+                      {option.organization_name}
+                    </span>
+                    <span className="block truncate text-xs text-muted">
+                      {option.organization_type_label} · {option.organization_code}
+                    </span>
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </Field>
   )
 }
 
@@ -1989,11 +2122,26 @@ function reservationOrganizationType(type: string): string {
   }
 }
 
+const EXTERNAL_ORGANIZATION_TYPE_OPTIONS: { value: ExternalOrganizationType; label: string }[] = [
+  { value: 'SCHOOL_UNIVERSITY', label: 'School/University' },
+  { value: 'GOVERNMENT_AGENCY', label: 'Government Agency' },
+  { value: 'PRIVATE_ORGANIZATION', label: 'Private Organization' },
+  { value: 'COMMUNITY_ORGANIZATION', label: 'Community Organization' },
+  { value: 'NGO', label: 'NGO' },
+  { value: 'OTHER', label: 'Other' },
+]
+
+function normalizeOrganizationName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 export function AdminOrganizationRequesterStep({
   requesterType,
   onRequesterType,
   selectedOrganizationId,
   onSelectOrganization,
+  onCreateOrganization,
+  pendingNewOrganizationName,
   search,
   onSearch,
   showErrors,
@@ -2002,13 +2150,20 @@ export function AdminOrganizationRequesterStep({
   onRequesterType: (type: 'CAMPUS' | 'EXTERNAL') => void
   selectedOrganizationId: string
   onSelectOrganization: (organization: AdminOrganization) => void
+  /** Add a not-yet-saved external organization as the requester. */
+  onCreateOrganization: (organization: Organization) => void
+  /** Name of the inline-added organization still to be saved, or ''. */
+  pendingNewOrganizationName: string
   search: string
   onSearch: (value: string) => void
   showErrors: boolean
 }) {
   const internalQuery = useInternalOrganizations()
+  // Every active external record — including the PENDING ones created by
+  // public requests — is selectable here. Verification status stays visible
+  // but no longer hides an organization from manual reservations.
   const externalQuery = useOrganizations(
-    { status: 'APPROVED', search: search.trim() || undefined },
+    { search: search.trim() || undefined },
     requesterType === 'EXTERNAL',
   )
   const externalRows = Array.isArray(externalQuery.data)
@@ -2020,6 +2175,65 @@ export function AdminOrganizationRequesterStep({
         return !needle || `${organization.organization_name} ${organization.acronym}`.toLowerCase().includes(needle)
       })
     : externalRows.filter((organization) => organization.is_active && !organization.is_internal)
+
+  // Inline "add organization" form. Reuses an existing record when the typed
+  // name matches one already in the registry; otherwise creates the record as
+  // part of the reservation (the backend resolves it again on save as the
+  // authoritative duplicate check).
+  const [newName, setNewName] = useState('')
+  const [newType, setNewType] = useState<ExternalOrganizationType>('SCHOOL_UNIVERSITY')
+  const [newContactPerson, setNewContactPerson] = useState('')
+  const [newContactEmail, setNewContactEmail] = useState('')
+  const [newOrganizationError, setNewOrganizationError] = useState('')
+
+  function addOrganization() {
+    const name = newName.trim()
+    if (!name) {
+      setNewOrganizationError('Enter the organization name.')
+      return
+    }
+    if (!newContactPerson.trim()) {
+      setNewOrganizationError('Enter the contact person for this organization.')
+      return
+    }
+    const needle = normalizeOrganizationName(name)
+    const existing =
+      externalRows.find(
+        (organization) =>
+          organization.is_active !== false &&
+          !organization.is_internal &&
+          normalizeOrganizationName(organization.organization_name) === needle &&
+          organization.organization_type === newType,
+      ) ??
+      externalRows.find(
+        (organization) =>
+          organization.is_active !== false &&
+          !organization.is_internal &&
+          normalizeOrganizationName(organization.organization_name) === needle,
+      )
+    if (existing) {
+      onSelectOrganization(existing)
+    } else {
+      onCreateOrganization({
+        id: 0,
+        organization_code: '',
+        organization_name: name,
+        organization_type: newType,
+        organization_type_label:
+          EXTERNAL_ORGANIZATION_TYPE_OPTIONS.find((option) => option.value === newType)?.label ?? '',
+        verification_status: 'PENDING',
+        verification_status_label: 'Pending',
+        is_internal: false,
+        is_active: true,
+        contact_person: newContactPerson.trim(),
+        contact_email: newContactEmail.trim(),
+      })
+    }
+    setNewName('')
+    setNewContactPerson('')
+    setNewContactEmail('')
+    setNewOrganizationError('')
+  }
 
   return (
     <section aria-label="Who is this reservation for?" className="mx-auto w-full max-w-5xl">
@@ -2078,7 +2292,7 @@ export function AdminOrganizationRequesterStep({
           title={requesterType === 'CAMPUS' ? 'Search internal organizations' : 'Search external organizations'}
           description={requesterType === 'CAMPUS'
             ? 'Select a registered NORSU-BSC organization.'
-            : 'Select an active, approved external organization.'}
+            : 'Select an existing external organization or add a new one below.'}
         />
         <div className="relative mt-4">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden />
@@ -2126,7 +2340,15 @@ export function AdminOrganizationRequesterStep({
                     {internal && organization.acronym ? `${organization.acronym} · ` : ''}{organization.organization_name}
                   </span>
                   <span className="block truncate text-xs text-muted">
-                    {internal ? 'Internal Organization' : `${organization.organization_type_label} · ${organization.organization_code}`}
+                    {internal
+                      ? 'Internal Organization'
+                      : [
+                          organization.organization_type_label,
+                          organization.organization_code,
+                          organization.status_label,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
                   </span>
                 </span>
                 {selected && <Badge tone="brand">Selected</Badge>}
@@ -2134,14 +2356,88 @@ export function AdminOrganizationRequesterStep({
             )
           })}
         </div>
-        {showErrors && !selectedOrganizationId && (
-          <p className="mt-3 text-xs text-status-rejected">Select an organization to continue.</p>
+        {showErrors && !selectedOrganizationId && !pendingNewOrganizationName.trim() && (
+          <p className="mt-3 text-xs text-status-rejected">
+            Select an existing organization or add a new one to continue.
+          </p>
+        )}
+        {requesterType === 'EXTERNAL' && pendingNewOrganizationName.trim() && (
+          <p role="status" className="mt-4 rounded-lg border border-brand/20 bg-brand-soft/40 px-3.5 py-2.5 text-sm text-brand">
+            <span className="font-semibold">{pendingNewOrganizationName.trim()}</span> will be
+            saved as a new external organization with this reservation.
+          </p>
         )}
         {requesterType === 'EXTERNAL' && (
-          <p className="mt-4 text-xs leading-5 text-muted">
-            New organizations must be registered and approved before they can be selected.{' '}
-            <Link to="/organizations" className="font-medium text-brand underline underline-offset-2">Manage organizations</Link>
-          </p>
+          <div className="mt-5 rounded-xl border border-line bg-soft/60 p-4">
+            <p className="text-sm font-semibold text-ink">Add a new external organization</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted">
+              Not in the list? Enter it here — an existing match is reused and a new
+              organization is saved with this reservation. It becomes available for
+              future public and administrator reservations immediately.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Field label="External Organization Name" htmlFor="admin-new-organization">
+                <Input
+                  id="admin-new-organization"
+                  value={newName}
+                  onChange={(event) => setNewName(event.target.value)}
+                  placeholder="Search or enter organization name"
+                  maxLength={160}
+                  autoComplete="off"
+                  className={reservationControlClass}
+                />
+              </Field>
+              <Field label="Organization type" htmlFor="admin-new-organization-type">
+                <Select
+                  id="admin-new-organization-type"
+                  value={newType}
+                  onChange={(event) => setNewType(event.target.value as ExternalOrganizationType)}
+                  className={reservationControlClass}
+                >
+                  {EXTERNAL_ORGANIZATION_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Contact person" htmlFor="admin-new-organization-contact">
+                <Input
+                  id="admin-new-organization-contact"
+                  value={newContactPerson}
+                  onChange={(event) => setNewContactPerson(event.target.value)}
+                  maxLength={120}
+                  className={reservationControlClass}
+                />
+              </Field>
+              <Field label="Contact email (optional)" htmlFor="admin-new-organization-email">
+                <Input
+                  id="admin-new-organization-email"
+                  type="email"
+                  value={newContactEmail}
+                  onChange={(event) => setNewContactEmail(event.target.value)}
+                  maxLength={254}
+                  className={reservationControlClass}
+                />
+              </Field>
+            </div>
+            {newOrganizationError && (
+              <p role="alert" className="mt-2 text-xs text-status-rejected">
+                {newOrganizationError}
+              </p>
+            )}
+            <div className="mt-3 flex items-center gap-3">
+              <Button type="button" variant="outline" onClick={addOrganization}>
+                Add and select
+              </Button>
+              <Link
+                to="/organizations"
+                className="text-xs font-medium text-brand underline underline-offset-2"
+              >
+                Manage organizations
+              </Link>
+            </div>
+          </div>
         )}
       </Card>
     </section>

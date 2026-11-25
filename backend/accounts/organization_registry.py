@@ -37,6 +37,33 @@ _IGNORED_TRAILING_WORDS = {
 
 NORMALIZED_NAME_MAX_LENGTH = 200
 
+#: Maps a reservation's display-vocabulary organization type back onto the
+#: registry model's type. Used when a reservation arrives with only a typed
+#: organization name (public form / manual admin entry) and the registry record
+#: has to be resolved or created from it.
+_ORGANIZATION_TYPE_FOR_RESERVATION_TYPE = {
+    "SCHOOL": "SCHOOL_UNIVERSITY",
+    "GOVERNMENT": "GOVERNMENT_AGENCY",
+    "PRIVATE": "PRIVATE_ORGANIZATION",
+    "COMMUNITY": "COMMUNITY_ORGANIZATION",
+    "NGO": "NGO",
+    "OTHER": "OTHER",
+}
+
+
+def organization_type_from_reservation_type(value: str) -> str:
+    """Registry organization type for a reservation ``organization_type``.
+
+    ``SPORTS``, ``COMPANY``, ``INDIVIDUAL`` and blank snapshots have no direct
+    registry equivalent and map to ``OTHER``, exactly as the previous inline
+    maps did.
+    """
+    from .models import Organization
+
+    return _ORGANIZATION_TYPE_FOR_RESERVATION_TYPE.get(
+        value or "", Organization.OrganizationType.OTHER
+    )
+
 
 def normalize_organization_name(value: str) -> str:
     """Return the canonical identity string for an organization name.
@@ -251,17 +278,9 @@ def link_reservation_organization(
             # Never invent a campus organization from free text; internal
             # reservations are resolved server-side before they reach here.
             return None
-        mapped_type = {
-            "SCHOOL": Organization.OrganizationType.SCHOOL_UNIVERSITY,
-            "GOVERNMENT": Organization.OrganizationType.GOVERNMENT_AGENCY,
-            "PRIVATE": Organization.OrganizationType.PRIVATE_ORGANIZATION,
-            "COMMUNITY": Organization.OrganizationType.COMMUNITY_ORGANIZATION,
-            "NGO": Organization.OrganizationType.NGO,
-            "OTHER": Organization.OrganizationType.OTHER,
-        }.get(reservation.organization_type, Organization.OrganizationType.OTHER)
         organization, _created = resolve_organization(
             name,
-            mapped_type,
+            organization_type_from_reservation_type(reservation.organization_type),
             create=create,
             contact_person=reservation.contact_person,
             contact_email=reservation.contact_email,
@@ -271,6 +290,19 @@ def link_reservation_organization(
         )
         if organization is None:
             return None
+
+    # A match reuses the registry record, so the reservation keeps the
+    # organization's official display name even when the requester typed a
+    # different capitalization or extra spacing ("test organization" →
+    # "Test Organization"). Internal reservations already carry the managed
+    # name and are unaffected.
+    if (
+        not organization.is_internal
+        and (reservation.organization or "").strip()
+        != organization.organization_name.strip()
+    ):
+        reservation.organization = organization.organization_name
+        reservation.save(update_fields=["organization"])
 
     record_organization_reservation(
         organization, reservation, update_contact=trusted_update
@@ -314,14 +346,7 @@ def organization_for_phone(phone: str):
     if organization is None:
         organization, _created = resolve_organization(
             reservation.organization,
-            {
-                "SCHOOL": "SCHOOL_UNIVERSITY",
-                "GOVERNMENT": "GOVERNMENT_AGENCY",
-                "PRIVATE": "PRIVATE_ORGANIZATION",
-                "COMMUNITY": "COMMUNITY_ORGANIZATION",
-                "NGO": "NGO",
-                "OTHER": "OTHER",
-            }.get(reservation.organization_type, "OTHER"),
+            organization_type_from_reservation_type(reservation.organization_type),
             create=False,
         )
     return organization, reservation

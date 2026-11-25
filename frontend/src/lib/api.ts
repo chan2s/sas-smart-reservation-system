@@ -36,6 +36,7 @@ import type {
   Notification,
   Organization,
   OrganizationDuplicateGroup,
+  PublicOrganizationOption,
   OrganizationReservationHistoryRow,
   Paginated,
   PricingQuote,
@@ -745,6 +746,14 @@ export const endpoints = {
   },
   publicReservationFacilities: () =>
     api.get<Facility[]>('/api/public/reservations/catalog/'),
+  /** Identity-only search over existing external organizations. */
+  publicOrganizations: (search = '') => {
+    const term = search.trim()
+    const qs = term ? `?search=${encodeURIComponent(term)}` : ''
+    return api.get<PublicOrganizationOption[]>(
+      `/api/public/reservations/organizations/${qs}`,
+    )
+  },
   publicReservationResources: (id: number, params?: Record<string, string>) => {
     const qs = new URLSearchParams(params).toString()
     return api.get<{ facility_id: number; resources: FacilityResource[] }>(

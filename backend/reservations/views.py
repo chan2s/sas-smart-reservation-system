@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.models import Organization
 from accounts.organization_registry import link_reservation_organization
 from accounts.permissions import (
     IsAccountApprovedOrReadOnly,
@@ -759,6 +760,47 @@ def reservation_approval_letter_image(request, pk):
     response["X-Content-Type-Options"] = "nosniff"
     response["Cache-Control"] = "private, no-store"
     return response
+
+
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def public_organization_search(request):
+    """GET /api/public/reservations/organizations/ — search external orgs.
+
+    Powers the public reservation form's searchable organization input: the
+    requester can reuse a registry record or keep a new name and let the
+    submission create it. Only the identity fields are exposed (never contact
+    details or member data), and managed INTERNAL organizations are excluded
+    because the internal flow has its own picker.
+    """
+    search = (
+        request.query_params.get("search")
+        or request.query_params.get("q")
+        or ""
+    ).strip()
+    organizations = (
+        Organization.objects.filter(is_active=True)
+        .exclude(organization_type=Organization.OrganizationType.INTERNAL)
+        .order_by("-last_reservation_date", "organization_name")
+    )
+    if search:
+        organizations = organizations.filter(
+            Q(organization_name__icontains=search)
+            | Q(normalized_name__icontains=search.lower())
+        )
+    return Response(
+        [
+            {
+                "id": organization.id,
+                "organization_code": organization.organization_code,
+                "organization_name": organization.organization_name,
+                "organization_type": organization.organization_type,
+                "organization_type_label": organization.get_organization_type_display(),
+            }
+            for organization in organizations[:20]
+        ]
+    )
 
 
 @api_view(["GET"])

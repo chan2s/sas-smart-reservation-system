@@ -976,6 +976,22 @@ export function useSetAffiliation() {
   })
 }
 
+/**
+ * Search existing external organizations for the public reservation form.
+ *
+ * Only runs once the requester has typed something, so opening the form does
+ * not expose the registry; results are cached briefly per search term.
+ */
+export function usePublicOrganizations(search: string, enabled = true) {
+  const term = search.trim()
+  return useQuery({
+    queryKey: ['public-organizations', term],
+    queryFn: () => endpoints.publicOrganizations(term),
+    enabled: enabled && term.length >= 2,
+    staleTime: 60 * 1000,
+  })
+}
+
 /** Staff verification queue. */
 export function useOrganizations(params: OrganizationFilters = {}, enabled = true) {
   return useQuery({

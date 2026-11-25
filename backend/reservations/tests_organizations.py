@@ -243,6 +243,7 @@ class ExternalOrganizationReservationTests(TestCase):
         self.assertEqual(body["organization_code"], "")
 
     def test_staff_external_reservation_without_account_still_works(self):
+        """A typed external organization is saved and linked to the reservation."""
         self.client.force_authenticate(self.staff)
         response = self.client.post(
             RESERVATIONS_URL,
@@ -259,9 +260,17 @@ class ExternalOrganizationReservationTests(TestCase):
         body = response.json()
         self.assertEqual(body["requester_type"], "EXTERNAL")
         self.assertEqual(body["requester"], "ABC National High School")
-        self.assertEqual(body["organization_code"], "")
         reservation = Reservation.objects.get(pk=body["id"])
-        self.assertIsNone(reservation.organization_ref)
+        self.assertIsNotNone(reservation.organization_ref)
+        self.assertEqual(
+            reservation.organization_ref.organization_name,
+            "ABC National High School",
+        )
+        self.assertEqual(
+            reservation.organization_ref.verification_status,
+            Organization.VerificationStatus.PENDING,
+        )
+        self.assertEqual(body["organization_code"], reservation.organization_ref.organization_code)
 
     # -- Pricing follows the trusted affiliation --------------------------
 

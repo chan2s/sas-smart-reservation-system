@@ -20,9 +20,14 @@ afterEach(() => {
   queryState.external.data = { results: [] }
 })
 
-function renderStep(requesterType: 'CAMPUS' | 'EXTERNAL', onSelectOrganization = vi.fn()) {
+function renderStep(
+  requesterType: 'CAMPUS' | 'EXTERNAL',
+  onSelectOrganization = vi.fn(),
+  onCreateOrganization = vi.fn(),
+) {
   return {
     onSelectOrganization,
+    onCreateOrganization,
     ...render(
       <MemoryRouter>
         <AdminOrganizationRequesterStep
@@ -30,6 +35,8 @@ function renderStep(requesterType: 'CAMPUS' | 'EXTERNAL', onSelectOrganization =
           onRequesterType={vi.fn()}
           selectedOrganizationId=""
           onSelectOrganization={onSelectOrganization}
+          onCreateOrganization={onCreateOrganization}
+          pendingNewOrganizationName=""
           search=""
           onSearch={vi.fn()}
           showErrors={false}
@@ -70,7 +77,7 @@ describe('AdminOrganizationRequesterStep', () => {
     expect(onSelectOrganization).toHaveBeenCalledWith(cas)
   })
 
-  it('searches approved external organizations from the existing organization directory', () => {
+  it('searches external organizations from the existing organization directory', () => {
     const externalOrg = {
       id: 12,
       organization_code: 'EXT-0012',
@@ -91,5 +98,55 @@ describe('AdminOrganizationRequesterStep', () => {
     fireEvent.click(screen.getByRole('button', { name: /ABC National High School/ }))
     expect(onSelectOrganization).toHaveBeenCalledWith(externalOrg)
     expect(screen.getByRole('link', { name: 'Manage organizations' })).toHaveAttribute('href', '/organizations')
+  })
+
+  it('reuses an existing organization typed into the add form', () => {
+    const pendingOrg = {
+      id: 21,
+      organization_code: 'EXT-0021',
+      organization_name: 'Test Organization',
+      organization_type: 'NGO' as const,
+      organization_type_label: 'NGO',
+      is_internal: false,
+      is_active: true,
+      verification_status: 'PENDING' as const,
+      verification_status_label: 'Pending',
+      status_label: 'Pending',
+    }
+    queryState.external.data = { results: [pendingOrg] }
+    const { onSelectOrganization, onCreateOrganization } = renderStep('EXTERNAL')
+
+    fireEvent.change(screen.getByLabelText('External Organization Name'), {
+      target: { value: 'test  organization' },
+    })
+    fireEvent.change(screen.getByLabelText('Contact person'), {
+      target: { value: 'Maria Santos' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add and select' }))
+
+    expect(onSelectOrganization).toHaveBeenCalledWith(pendingOrg)
+    expect(onCreateOrganization).not.toHaveBeenCalled()
+  })
+
+  it('adds a new external organization that is not in the registry yet', () => {
+    const { onSelectOrganization, onCreateOrganization } = renderStep('EXTERNAL')
+
+    fireEvent.change(screen.getByLabelText('External Organization Name'), {
+      target: { value: 'Brand New Foundation' },
+    })
+    fireEvent.change(screen.getByLabelText('Contact person'), {
+      target: { value: 'Juan Dela Cruz' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add and select' }))
+
+    expect(onCreateOrganization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organization_name: 'Brand New Foundation',
+        organization_type: 'SCHOOL_UNIVERSITY',
+        contact_person: 'Juan Dela Cruz',
+        verification_status: 'PENDING',
+      }),
+    )
+    expect(onSelectOrganization).not.toHaveBeenCalled()
   })
 })
