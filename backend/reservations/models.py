@@ -111,6 +111,12 @@ def approval_document_upload_path(instance, filename):
     return f"approval_letters/generated/{instance.reservation_id}/{uuid.uuid4().hex}{suffix}"
 
 
+def routing_letter_upload_path(instance, filename):
+    """Store generated internal routing letters in the private media namespace."""
+    suffix = Path(filename).suffix.lower()
+    return f"routing_letters/{instance.reservation_id}/{uuid.uuid4().hex}{suffix}"
+
+
 class PricingRule(models.Model):
     """One staff-editable official rental rate for the unified catalog.
 
@@ -578,6 +584,35 @@ class Reservation(models.Model):
         null=True,
         blank=True,
         help_text="When the current approval letter PDF was last generated successfully.",
+    )
+    # Routing letters are automatically generated documents for approved
+    # internal reservations. They have no workflow status of their own: these
+    # fields only remember the last generated PDFs so the same files can be
+    # previewed, downloaded, and printed repeatedly without creating duplicates.
+    # GSO requests permission to use the sound system; CAS requests permission
+    # to use the LED wall. One reservation may need both separate documents.
+    generated_gso_routing_letter_pdf = models.FileField(
+        upload_to=routing_letter_upload_path, blank=True
+    )
+    generated_gso_routing_letter_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the current GSO routing letter PDF was last generated successfully.",
+    )
+    generated_cas_routing_letter_pdf = models.FileField(
+        upload_to=routing_letter_upload_path, blank=True
+    )
+    generated_cas_routing_letter_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the current CAS routing letter PDF was last generated successfully.",
+    )
+    # Delivery marker only: the CAS letter is emailed once to the requesting
+    # organization. Regenerating or reprinting the PDF never sends it again.
+    generated_cas_routing_letter_email_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the CAS routing letter email was successfully delivered.",
     )
     approval_email_sent_at = models.DateTimeField(null=True, blank=True)
     approval_email_last_error = models.CharField(max_length=80, blank=True)

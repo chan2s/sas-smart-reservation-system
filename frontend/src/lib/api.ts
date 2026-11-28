@@ -1061,6 +1061,8 @@ export const endpoints = {
     `/api/reservations/${id}/approval-document/${preview ? '?preview=1' : ''}`,
   approvalDocumentDocx: (id: number) =>
     `/api/reservations/${id}/approval-document-docx/`,
+  routingLetter: (id: number, kind: 'gso' | 'cas', preview = false) =>
+    `/api/reservations/${id}/routing-letter/?kind=${kind}${preview ? '&preview=1' : ''}`,
   reservationActionForm: (id: number, action: string, form: FormData) =>
     api.postForm<ReservationDetail>(`/api/reservations/${id}/${action}/`, form),
   reservationByCheckinCode: (code: string) =>

@@ -35,6 +35,122 @@ from .services.recommendations import (
 User = get_user_model()
 
 
+class ExpectedParticipantsValidationTests(TestCase):
+    """Expected participants accepts positive whole numbers only.
+
+    The wizard's form validation refuses bad values before submit; these tests
+    pin the backend's independent enforcement through the create endpoint so a
+    crafted API request cannot bypass the form (decimals, negatives, zero,
+    empty values, and junk text).
+    """
+
+    #: Marks a payload whose expected_participants key is removed entirely.
+    _OMITTED = object()
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="testuser",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+            first_name="Test",
+            last_name="User",
+            email="test@example.com",
+        )
+        self.client.force_authenticate(self.user)
+        self.facility = Facility.objects.create(
+            name="AVR",
+            facility_type=Facility.FacilityType.AVR,
+            capacity=50,
+        )
+        OperatingHour.objects.create(
+            facility=self.facility,
+            day_of_week=0,
+            open_time=time(6, 0),
+            close_time=time(22, 0),
+        )
+        category = EquipmentCategory.objects.create(name="Chairs")
+        self.chairs = Equipment.objects.create(
+            name="Folding Chair", category=category, total_quantity=100
+        )
+        # Near-future Monday matching the operating hours above.
+        self.day = timezone.localdate() + timedelta(days=1)
+        while self.day.weekday() != 0:
+            self.day += timedelta(days=1)
+
+    def _create(self, participants):
+        """POST a reservation whose participants value is `participants`.
+
+        The class sentinel `_OMITTED` sends a payload without the field at
+        all, exercising the "empty" case on the API surface.
+        """
+        payload = {
+            "facility_id": self.facility.id,
+            "date": self.day.isoformat(),
+            "start_time": "09:00",
+            "end_time": "11:00",
+            "event_name": "Test Event",
+            "event_type": "MEETING",
+            "purpose": "Test purpose",
+            "expected_participants": 25,
+            "items": [{"equipment_id": self.chairs.id, "quantity": 5}],
+        }
+        if participants is self._OMITTED:
+            payload.pop("expected_participants")
+        else:
+            payload["expected_participants"] = participants
+        return self.client.post("/api/reservations/", payload, format="json")
+
+    def test_accepts_positive_whole_numbers(self):
+        response = self._create(25)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["expected_participants"], 25)
+
+    def test_rejects_decimal_values(self):
+        for bad in (2.5, "2.5"):
+            with self.subTest(participants=bad):
+                response = self._create(bad)
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertEqual(
+                    response.json()["expected_participants"],
+                    ["Expected participants must be a positive whole number."],
+                )
+
+    def test_rejects_negative_numbers(self):
+        response = self._create(-5)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(
+            response.json()["expected_participants"],
+            ["Expected participants must be a positive whole number."],
+        )
+
+    def test_rejects_zero(self):
+        response = self._create(0)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(
+            response.json()["expected_participants"],
+            ["Expected participants must be at least 1."],
+        )
+
+    def test_rejects_non_numeric_and_empty_values(self):
+        for bad in ("abc", "", "  "):
+            with self.subTest(participants=bad):
+                response = self._create(bad)
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertEqual(
+                    response.json()["expected_participants"],
+                    ["Expected participants must be a positive whole number."],
+                )
+
+    def test_rejects_missing_participants(self):
+        response = self._create(self._OMITTED)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(
+            response.json()["expected_participants"],
+            ["Expected participants must be at least 1."],
+        )
+
+
 class AvailabilityServiceTests(TestCase):
     def setUp(self):
         self.facility = Facility.objects.create(

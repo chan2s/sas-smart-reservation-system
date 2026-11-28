@@ -294,6 +294,10 @@ export function DetailsStep({
               id={RESERVATION_FIELD_IDS.expectedParticipants}
               type="number"
               min={1}
+              // Whole numbers only: the spinner steps by 1 and the browser
+              // flags decimals as step-mismatched. Entry is still validated
+              // by reservationFieldErrors, which rejects any non-integer.
+              step={1}
               max={capacity > 0 ? capacity : undefined}
               inputMode="numeric"
               value={details.expectedParticipants}

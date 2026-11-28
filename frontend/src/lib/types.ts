@@ -844,6 +844,14 @@ export interface ReservationSummary {
   generated_approval_error: string
   /** When the current approval letter PDF was last generated successfully. */
   generated_approval_at: string | null
+  /** Staff-only: can the GSO sound-system routing letter be opened? */
+  gso_routing_letter_available: boolean
+  /** Staff-only: when the current GSO routing letter PDF was generated. */
+  gso_routing_letter_generated_at: string | null
+  /** Staff-only: can the CAS LED-wall routing letter be opened? */
+  cas_routing_letter_available: boolean
+  /** Staff-only: when the current CAS routing letter PDF was generated. */
+  cas_routing_letter_generated_at: string | null
   approval_pdf_available: boolean
   approval_docx_available: boolean
   approval_email_sent_at: string | null

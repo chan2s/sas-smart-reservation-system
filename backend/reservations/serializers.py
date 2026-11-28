@@ -82,6 +82,33 @@ ORGANIZATION_TYPE_LABELS = dict(Reservation.OrganizationType.choices)
 
 REQUESTER_TYPE_LABELS = dict(Reservation.RequesterType.choices)
 
+# Whole-number rule for expected_participants, shared by the create and
+# resubmit serializers: every invalid value (decimals, negatives, non-numeric
+# text) gets one clear, field-specific message instead of DRF's generic text.
+# Declared on the concrete serializers because plain mixins never receive the
+# SerializerMetaclass, so fields declared on them are silently ignored.
+EXPECTED_PARTICIPANTS_ERROR_MESSAGES = {
+    "invalid": "Expected participants must be a positive whole number.",
+    "min_value": "Expected participants must be a positive whole number.",
+}
+
+
+def expected_participants_field():
+    """Integer field mirroring the model column's own bounds (0..2147483647).
+
+    Zero passes the min_value check and still reaches validate() for its
+    "at least 1" message; negatives are rejected here. ``required=False``
+    matches the model default, so an omitted value is likewise rejected by
+    validate() instead of failing with a missing-field error.
+    """
+    return serializers.IntegerField(
+        min_value=0,
+        max_value=2147483647,
+        required=False,
+        error_messages=EXPECTED_PARTICIPANTS_ERROR_MESSAGES,
+    )
+
+
 
 class ReservationItemSerializer(serializers.ModelSerializer):
     equipment_id = serializers.IntegerField(source="equipment.id", read_only=True)
@@ -295,6 +322,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
     )
     generated_approval_error = serializers.SerializerMethodField()
     generated_approval_at = serializers.DateTimeField(read_only=True)
+    gso_routing_letter_available = serializers.SerializerMethodField()
+    gso_routing_letter_generated_at = serializers.SerializerMethodField()
+    cas_routing_letter_available = serializers.SerializerMethodField()
+    cas_routing_letter_generated_at = serializers.SerializerMethodField()
     approval_pdf_available = serializers.SerializerMethodField()
     approval_docx_available = serializers.SerializerMethodField()
     approval_email_sent_at = serializers.DateTimeField(read_only=True)
@@ -358,6 +389,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
             "generated_approval_status_label",
             "generated_approval_error",
             "generated_approval_at",
+            "gso_routing_letter_available",
+            "gso_routing_letter_generated_at",
+            "cas_routing_letter_available",
+            "cas_routing_letter_generated_at",
             "approval_pdf_available",
             "approval_docx_available",
             "approval_email_sent_at",
@@ -415,6 +450,81 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_generated_approval_error(self, obj):
         request = self.context.get("request")
         return obj.generated_approval_error if request and request.user.is_gso_staff else ""
+
+    def _routing_letter_staff(self):
+        request = self.context.get("request")
+        return bool(
+            request
+            and request.user.is_authenticated
+            and request.user.is_gso_staff
+        )
+
+    def _routing_letter_owner(self, obj) -> bool:
+        request = self.context.get("request")
+        return bool(
+            request
+            and request.user.is_authenticated
+            and not request.user.is_gso_staff
+            and obj.requester_id == request.user.id
+        )
+
+    def _routing_letter_kind_available(self, obj, kind):
+        """Whether staff can open one equipment routing letter right now.
+
+        This describes document availability only; the reservation's own
+        approval status remains the workflow source of truth. An available
+        letter is generated on first access if the approval-time attempt could
+        not produce it.
+        """
+        from reservations.services.routing_letters import (
+            routing_letter_eligibility,
+        )
+
+        eligible, _reason = routing_letter_eligibility(obj, kind)
+        return eligible
+
+    def get_gso_routing_letter_available(self, obj):
+        from reservations.services.routing_letters import GSO
+
+        return (
+            self._routing_letter_kind_available(obj, GSO)
+            if self._routing_letter_staff()
+            else False
+        )
+
+    def get_gso_routing_letter_generated_at(self, obj):
+        return (
+            obj.generated_gso_routing_letter_at
+            if self._routing_letter_staff()
+            else None
+        )
+
+    def get_cas_routing_letter_available(self, obj):
+        """CAS letter availability for staff, or for the reservation's owner.
+
+        The requesting account sees the document only after it was generated
+        at approval (and emailed); it never triggers generation by viewing its
+        tracking page. Staff keep the existing lazy-generation behaviour.
+        """
+        from reservations.services.routing_letters import CAS
+
+        if self._routing_letter_staff():
+            return self._routing_letter_kind_available(obj, CAS)
+        if not self._routing_letter_owner(obj):
+            return False
+        return bool(
+            obj.generated_cas_routing_letter_pdf
+            and obj.generated_cas_routing_letter_at
+            and self._routing_letter_kind_available(obj, CAS)
+        )
+
+    def get_cas_routing_letter_generated_at(self, obj):
+        if self._routing_letter_staff() or (
+            self._routing_letter_owner(obj)
+            and obj.generated_cas_routing_letter_pdf
+        ):
+            return obj.generated_cas_routing_letter_at
+        return None
 
     def get_approval_document_status(self, obj):
         return event_approval_document_status(obj)
@@ -876,6 +986,9 @@ class ReservationCreateSerializer(_ReservationCreateMixin, serializers.ModelSeri
     approval_letter_image = serializers.ImageField(
         required=False, allow_null=True, write_only=True
     )
+
+    # Whole numbers only — see expected_participants_field().
+    expected_participants = expected_participants_field()
 
     class Meta:
         model = Reservation
@@ -1354,6 +1467,9 @@ class ReservationResubmitSerializer(
         max_length=20,
         default=None,
     )
+
+    # Whole numbers only — see expected_participants_field().
+    expected_participants = expected_participants_field()
 
     class Meta:
         model = Reservation

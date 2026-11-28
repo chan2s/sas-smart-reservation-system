@@ -1615,6 +1615,87 @@ class ReservationViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
+        methods=["get"],
+        url_path="routing-letter",
+        permission_classes=[IsAuthenticated, IsAccountApprovedOrReadOnly],
+    )
+    def routing_letter(self, request, pk=None):
+        """Preview/download of an equipment routing letter.
+
+        ``?kind=gso`` returns GSO's request to use the sound system and
+        ``?kind=cas`` returns the request to use the LED wall. GSO staff may
+        open both: generation is automatic, and a missing or outdated copy is
+        produced here from the current reservation and equipment data.
+
+        The reservation's own requester may open only the CAS letter, and only
+        the copy already generated and emailed at approval. The reservation
+        queryset limits non-staff accounts to their own reservations, so one
+        organization can never read another organization's letter. Reading or
+        printing never changes the reservation status, creates duplicate
+        documents, or sends CAS email again.
+        """
+        reservation = self.get_object()
+        if (
+            reservation.requester_type == Reservation.RequesterType.EXTERNAL
+            or reservation.status != Reservation.Status.APPROVED
+        ):
+            return Response({"detail": "Routing letter is unavailable."}, status=404)
+        from reservations.services.routing_letters import (
+            CAS,
+            GSO,
+            LETTER_KINDS,
+            RoutingLetterUnavailable,
+            ensure_routing_letters,
+        )
+
+        kind = (request.query_params.get("kind") or GSO).strip().lower()
+        if kind not in LETTER_KINDS:
+            return Response(
+                {"detail": "Routing letter kind must be 'gso' or 'cas'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request.user.is_gso_staff:
+            try:
+                ensure_routing_letters(reservation)
+            except RoutingLetterUnavailable as exc:
+                return Response({"detail": str(exc)}, status=404)
+            except Exception:
+                logger.exception(
+                    "Routing letter could not be prepared for %s.",
+                    reservation.reservation_id,
+                )
+                return Response(
+                    {"detail": "Routing letter generation failed. Please try again."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+        elif (
+            kind != CAS
+            or not reservation.generated_cas_routing_letter_pdf
+            or not reservation.generated_cas_routing_letter_at
+        ):
+            # Requesters only see what was genuinely generated and emailed;
+            # this path never creates a document or sends a message.
+            return Response({"detail": "Routing letter is unavailable."}, status=404)
+        field_name = (
+            "generated_gso_routing_letter_pdf"
+            if kind == GSO
+            else "generated_cas_routing_letter_pdf"
+        )
+        pdf = getattr(reservation, field_name)
+        if not pdf:
+            return Response({"detail": "Routing letter is unavailable."}, status=404)
+        filename = (
+            f"GSO-RESERVE-{kind.upper()}-ROUTING-{reservation.reservation_id}.pdf"
+        )
+        response = FileResponse(pdf.open("rb"), content_type="application/pdf")
+        disposition = "inline" if request.query_params.get("preview") == "1" else "attachment"
+        response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    @action(
+        detail=True,
         methods=["get", "post", "patch"],
         url_path="payments",
         permission_classes=[IsGsoStaff, IsAccountApprovedOrReadOnly],

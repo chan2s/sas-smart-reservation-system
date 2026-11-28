@@ -11,6 +11,7 @@ import {
   Eye,
   FileText,
   Mail,
+  Printer,
   QrCode,
   RotateCw,
   Upload,
@@ -45,6 +46,8 @@ import type {
   ReservationFee,
   ReservationPaymentInfo,
 } from '@/lib/types'
+
+type RoutingLetterKind = 'gso' | 'cas'
 
 /**
  * A payment needs acknowledgement whenever the server supplies a warning or
@@ -92,10 +95,21 @@ export function ReservationDetailPage() {
   const [revisionMessage, setRevisionMessage] = useState('')
   const [approvalImageFile, setApprovalImageFile] = useState<File | null>(null)
   const [approvalPreviewUrl, setApprovalPreviewUrl] = useState<string | null>(null)
+  const [routingPreview, setRoutingPreview] = useState<{
+    kind: RoutingLetterKind
+    url: string
+  } | null>(null)
 
   useEffect(() => () => {
     if (approvalPreviewUrl) URL.revokeObjectURL(approvalPreviewUrl)
   }, [approvalPreviewUrl])
+
+  useEffect(() => {
+    const url = routingPreview?.url
+    return () => {
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [routingPreview])
 
   if (!Number.isInteger(reservationId) || reservationId <= 0) {
     return (
@@ -424,6 +438,63 @@ export function ReservationDetailPage() {
     }
   }
 
+  async function downloadRoutingLetter(kind: RoutingLetterKind) {
+    const current = reservation
+    if (!current) return
+    try {
+      await api.downloadFile(
+        endpoints.routingLetter(current.id, kind),
+        `GSO-RESERVE-${kind.toUpperCase()}-ROUTING-${current.reservation_id}.pdf`,
+      )
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : 'Could not download the routing letter.', 'error')
+    }
+  }
+
+  async function toggleRoutingPreview(kind: RoutingLetterKind) {
+    const current = reservation
+    if (!current) return
+    if (routingPreview?.kind === kind) {
+      setRoutingPreview(null)
+      return
+    }
+    try {
+      const url = await api.fileUrl(endpoints.routingLetter(current.id, kind, true))
+      setRoutingPreview({ kind, url })
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : 'Could not preview the routing letter.', 'error')
+    }
+  }
+
+  async function printRoutingLetter(kind: RoutingLetterKind) {
+    const current = reservation
+    if (!current) return
+    const preview = window.open('about:blank', '_blank')
+    if (preview) preview.opener = null
+    try {
+      const url = await api.fileUrl(endpoints.routingLetter(current.id, kind, true))
+      if (!preview) {
+        URL.revokeObjectURL(url)
+        toast('Allow pop-ups to print the routing letter.', 'error')
+        return
+      }
+      preview.location.href = url
+      // Printing reuses the stored PDF and never changes the reservation or its
+      // routing letter, so the same document can be printed any number of times.
+      window.setTimeout(() => {
+        try {
+          preview.print()
+        } catch {
+          // The browser's PDF viewer exposes its own print control.
+        }
+      }, 1000)
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (error) {
+      preview?.close()
+      toast(error instanceof ApiError ? error.message : 'Could not print the routing letter.', 'error')
+    }
+  }
+
   function runRetryApprovalDocument() {
     retryDocument.mutate(undefined, {
       onSuccess: () => toast('Approval document generated.'),
@@ -441,6 +512,25 @@ export function ReservationDetailPage() {
   // The requester-submitted event approval letter only applies to internal
   // reservations. External generated approval letters use a separate card.
   const showEventApprovalLetter = reservation.requester_type !== 'EXTERNAL'
+  // Each equipment routing letter is a separate document. The backend decides
+  // availability from the current approval, Gymnasium, equipment, and document
+  // requirements; the UI never infers eligibility from equipment names.
+  const routingLetters = [
+    {
+      kind: 'gso' as const,
+      title: 'GSO Routing Letter',
+      description: 'Permission to use the Sound System',
+      available: reservation.gso_routing_letter_available,
+      generatedAt: reservation.gso_routing_letter_generated_at,
+    },
+    {
+      kind: 'cas' as const,
+      title: 'CAS Routing Letter',
+      description: 'Permission to use the LED Wall — emailed to the requesting organization',
+      available: reservation.cas_routing_letter_available,
+      generatedAt: reservation.cas_routing_letter_generated_at,
+    },
+  ].filter((letter) => letter.available)
   const letterNotification = approvalLetterNotification(reservation)
   const rescheduleRequest = reservation.reschedule_request
   const rescheduleTone =
@@ -1194,6 +1284,70 @@ export function ReservationDetailPage() {
                   </Button>
                 </div>
               )}
+            </Card>
+          )}
+
+          {/* The server decides which letters this viewer may open: staff see
+              both, the reservation's requester sees only its CAS letter after
+              it was generated and emailed. */}
+          {reservation.requester_type !== 'EXTERNAL' && reservation.status === 'APPROVED' &&
+            routingLetters.length > 0 && (
+            <Card>
+              <CardHeader
+                title="Routing Letters"
+                description="Generated automatically for approved internal Gymnasium reservations"
+              />
+              <div className="mt-4 space-y-6">
+                {routingLetters.map((letter) => (
+                  <div key={letter.kind} className="space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-ink">{letter.title}</p>
+                      <p className="text-xs text-muted">{letter.description}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={<Download className="size-4" aria-hidden />}
+                        aria-label={`Download ${letter.title}`}
+                        onClick={() => void downloadRoutingLetter(letter.kind)}
+                      >
+                        Download
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        icon={<Eye className="size-4" aria-hidden />}
+                        aria-label={`${routingPreview?.kind === letter.kind ? 'Hide' : 'Preview'} ${letter.title}`}
+                        onClick={() => void toggleRoutingPreview(letter.kind)}
+                      >
+                        {routingPreview?.kind === letter.kind ? 'Hide preview' : 'Preview PDF'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        icon={<Printer className="size-4" aria-hidden />}
+                        aria-label={`Print ${letter.title}`}
+                        onClick={() => void printRoutingLetter(letter.kind)}
+                      >
+                        Print
+                      </Button>
+                    </div>
+                    {letter.generatedAt && (
+                      <p className="text-xs text-muted">
+                        Generated {formatDateTime(letter.generatedAt)}
+                      </p>
+                    )}
+                    {routingPreview?.kind === letter.kind && (
+                      <iframe
+                        title={`${letter.title} preview for ${reservation.reservation_id}`}
+                        src={routingPreview.url}
+                        className="h-[34rem] w-full rounded-lg border border-line bg-white"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
             </Card>
           )}
 

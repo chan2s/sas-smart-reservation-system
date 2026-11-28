@@ -167,6 +167,26 @@ def _send_approval_email_after_commit(reservation_id, actor, force=False):
             )
 
 
+def _generate_routing_letters_safely(reservation):
+    """Generate eligible internal routing letters without affecting approval.
+
+    Runs only AFTER the approval transaction has committed. Any generation
+    failure is logged and leaves the approval intact; staff can still preview,
+    download, or print the letters later, which retries generation
+    automatically. The CAS letter is emailed here, after it has been stored;
+    delivery failures never undo the approval or delete the document.
+    """
+    from reservations.services.routing_letters import generate_routing_letters
+
+    try:
+        generate_routing_letters(reservation, send_cas_email=True)
+    except Exception:  # noqa: BLE001 - document failures must not undo approval
+        logger.exception(
+            "Routing letter generation failed after approving reservation %s.",
+            reservation.reservation_id,
+        )
+
+
 def _schedule_approval_email(reservation, actor):
     """Queue exactly one delivery for a newly approved reservation."""
     logger.info(
@@ -379,6 +399,7 @@ def auto_approve(reservation, actor, message=""):
         if from_status != Reservation.Status.APPROVED:
             _schedule_approval_email(locked, actor)
     reservation.refresh_from_db()
+    _generate_routing_letters_safely(reservation)
     return reservation
 
 
@@ -454,6 +475,7 @@ def approve_reservation(reservation, actor, comment=""):
         )
         _schedule_approval_email(locked, actor)
     reservation.refresh_from_db()
+    _generate_routing_letters_safely(reservation)
     return reservation
 
 

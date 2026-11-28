@@ -8,6 +8,8 @@ payment history), and recalculates fees with the existing pricing service.
 
 from __future__ import annotations
 
+import logging
+
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.utils import timezone
@@ -23,6 +25,8 @@ from reservations.models import (
 from reservations.services.availability import check_availability
 from reservations.services.pricing import snapshot_reservation_fees
 from reservations.services.workflow import record_event
+
+logger = logging.getLogger(__name__)
 
 
 class RescheduleUnavailable(ValueError):
@@ -159,6 +163,28 @@ def _regenerate_letter_and_resend_email(reservation_id, actor_id):
         message=message,
         recipient_email=recipient,
     )
+
+
+def _refresh_routing_letters(reservation_id):
+    """Replace an internal reservation's routing letters after a reschedule.
+
+    Runs after the reschedule commits. No email is sent from this path, so a
+    reschedule never produces a repeated CAS message. A failure is logged only:
+    the affected letter is regenerated automatically the next time staff open
+    it, and the approved reservation is never rolled back or altered.
+    """
+    from reservations.services.routing_letters import generate_routing_letters
+
+    reservation = Reservation.objects.filter(pk=reservation_id).first()
+    if reservation is None:
+        return
+    try:
+        generate_routing_letters(reservation, regenerate=True)
+    except Exception:  # noqa: BLE001 - retain the rescheduled reservation
+        logger.exception(
+            "Routing letter regeneration failed after reschedule for %s.",
+            reservation.reservation_id,
+        )
 
 
 def _review_guard(reschedule_request, actor):
@@ -301,15 +327,23 @@ def approve(reschedule_request, actor, comment=""):
                 ),
                 robust=True,
             )
-        elif recipient:
-            from notifications.email_service import send_reschedule_approved
-
+        else:
+            # The routing letters carry the schedule too. Refresh them from the
+            # committed reservation so a printed copy always matches the new
+            # date and time; no email is involved.
             transaction.on_commit(
-                lambda current=reservation, req=request_row, to=recipient: (
-                    send_reschedule_approved(current, req, to)
-                ),
+                lambda pk=reservation.pk: _refresh_routing_letters(pk),
                 robust=True,
             )
+            if recipient:
+                from notifications.email_service import send_reschedule_approved
+
+                transaction.on_commit(
+                    lambda current=reservation, req=request_row, to=recipient: (
+                        send_reschedule_approved(current, req, to)
+                    ),
+                    robust=True,
+                )
     return request_row
 
 

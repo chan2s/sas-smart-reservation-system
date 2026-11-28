@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { DetailsStep } from './DetailsStep'
 import type { EventDetailsDraft } from '@/lib/reservationDraft'
@@ -45,8 +46,10 @@ function resource(id: number, name: string): ReservableResource {
   }
 }
 
-function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof DetailsStep>> = {}) {
-  const props: React.ComponentProps<typeof DetailsStep> = {
+function detailsStepProps(
+  overrides: Partial<React.ComponentProps<typeof DetailsStep>> = {},
+): React.ComponentProps<typeof DetailsStep> {
+  return {
     details,
     onDetailsChange: vi.fn(),
     contact: { name: 'Juan Dela Cruz', phone: '09171234567' },
@@ -70,6 +73,10 @@ function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof Detail
     showApprovalLetter: true,
     ...overrides,
   }
+}
+
+function renderDetailsStep(overrides: Partial<React.ComponentProps<typeof DetailsStep>> = {}) {
+  const props = detailsStepProps(overrides)
   return { ...render(<DetailsStep {...props} />), props }
 }
 
@@ -91,6 +98,44 @@ describe('DetailsStep reservation form presentation', () => {
     expect(screen.getByLabelText('Purpose')).toHaveAttribute('aria-invalid', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     expect(screen.getByLabelText('Contact phone')).toHaveAttribute('aria-invalid', 'false')
+  })
+
+  it('accepts positive whole numbers only for expected participants', () => {
+    // The step is fully controlled; a tiny holder supplies the state the
+    // wizard page would, so typed values actually stick.
+    function StatefulDetailsStep(props: React.ComponentProps<typeof DetailsStep>) {
+      const [details, setDetails] = useState(props.details)
+      return <DetailsStep {...props} details={details} onDetailsChange={setDetails} />
+    }
+    render(<StatefulDetailsStep {...detailsStepProps()} />)
+
+    const input = screen.getByLabelText('Expected participants')
+
+    // Browser-level config steers entry toward whole numbers; reservationFieldErrors
+    // remains the enforcement so decimals typed into the field can never be submitted.
+    expect(input).toHaveAttribute('type', 'number')
+    expect(input).toHaveAttribute('min', '1')
+    expect(input).toHaveAttribute('step', '1')
+
+    fireEvent.change(input, { target: { value: '25' } })
+    fireEvent.blur(input)
+    expect(input).toHaveAttribute('aria-invalid', 'false')
+
+    const invalidCases: Array<[string, string]> = [
+      ['2.5', 'Enter a whole number of at least 1.'],
+      ['-5', 'Enter a whole number of at least 1.'],
+      ['0', 'Enter a whole number of at least 1.'],
+      // Letters are rejected by the number input itself, which reports an
+      // empty value — so the required message is the one that surfaces.
+      ['abc', 'Expected participants is required.'],
+      ['', 'Expected participants is required.'],
+    ]
+    for (const [value, message] of invalidCases) {
+      fireEvent.change(input, { target: { value } })
+      fireEvent.blur(input)
+      expect(screen.getByText(message)).toBeInTheDocument()
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+    }
   })
 
   it('renders schedule-checked suggestions as optional Add/Ignore actions', () => {

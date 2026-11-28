@@ -598,6 +598,89 @@ def send_external_reservation_approval(reservation) -> tuple[bool, Optional[str]
         return False, _classify_email_error(exc)
 
 
+def send_cas_routing_letter(reservation) -> tuple[bool, Optional[str]]:
+    """Email the generated CAS LED-wall routing letter to the requester.
+
+    The attachment is the same PDF staff can preview, download, and print; the
+    message explains that it must be printed and physically submitted to the
+    College of Arts and Sciences. A missing address or delivery failure is
+    reported to the caller, which keeps the generated document in place.
+    """
+    from reservations.services.routing_letters import (
+        routing_letter_recipient_email,
+    )
+
+    email = routing_letter_recipient_email(reservation)
+    if not email:
+        return False, "no_email"
+    if not reservation.generated_cas_routing_letter_pdf:
+        return False, "pdf_unavailable"
+    try:
+        with reservation.generated_cas_routing_letter_pdf.open("rb") as attachment:
+            pdf = attachment.read()
+        if (
+            not pdf.startswith(b"%PDF-")
+            or len(pdf) < 100
+            or b"%%EOF" not in pdf[-1024:]
+        ):
+            return False, "invalid_pdf"
+        requester_name = (
+            reservation.requester.display_name
+            if reservation.requester_id
+            else reservation.contact_person
+            or reservation.organization
+            or "Requester"
+        )
+        event_date = reservation.date.strftime("%B %d, %Y").replace(" 0", " ")
+        start_time = reservation.start_time.strftime("%I:%M %p").lstrip("0")
+        end_time = reservation.end_time.strftime("%I:%M %p").lstrip("0")
+        subject = (
+            f"CAS Routing Letter — LED Wall Permission | "
+            f"{reservation.reservation_id} | GSO RESERVE"
+        )
+        body = (
+            f"Dear {requester_name},\n\n"
+            "Your request to use the LED wall for the following approved "
+            "Gymnasium reservation requires permission from the College of "
+            "Arts and Sciences (CAS):\n\n"
+            f"Reservation ID: {reservation.reservation_id}\n"
+            f"Facility: {reservation.facility.name}\n"
+            f"Event: {reservation.event_name}\n"
+            f"Event date: {event_date}\n"
+            f"Time: {start_time} to {end_time}\n\n"
+            "The official CAS routing letter is attached to this email as a "
+            "PDF. Please download, print, and physically submit the letter to "
+            "the College of Arts and Sciences.\n\n"
+            "The same letter remains available to GSO staff for preview, "
+            "download, and printing.\n\n"
+            "Thank you for choosing NORSU-BSC.\n\n"
+            "Sincerely,\n\nNORSU-BSC General Services Office\nGSO RESERVE"
+        )
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=getattr(
+                settings, "DEFAULT_FROM_EMAIL", "GSO RESERVE <noreply@example.com>"
+            ),
+            to=[email],
+        )
+        message.attach(
+            f"GSO-RESERVE-CAS-ROUTING-{reservation.reservation_id}.pdf",
+            pdf,
+            "application/pdf",
+        )
+        sent, send_exc = _deliver(message)
+        if sent:
+            return True, None
+        return False, _classify_email_error(send_exc) if send_exc else "delivery_failed"
+    except Exception as exc:  # noqa: BLE001 - the generated letter must survive
+        logger.exception(
+            "CAS routing letter email failed for reservation %s.",
+            reservation.reservation_id,
+        )
+        return False, _classify_email_error(exc)
+
+
 def send_reservation_revision_request(
     reservation,
     actor,

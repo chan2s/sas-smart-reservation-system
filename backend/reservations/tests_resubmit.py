@@ -426,6 +426,30 @@ class ReservationResubmitTests(TestCase):
             Reservation.objects.get(pk=self.reservation.pk).end_time, time(17, 0)
         )
 
+    def test_resubmit_rejects_non_whole_participants(self):
+        """The resubmit serializer enforces the same whole-number rule as creation."""
+        for bad in (2.5, "2.5", "abc", -5):
+            with self.subTest(participants=bad):
+                response = self._resubmit(
+                    self._resubmit_payload(expected_participants=bad), user=self.admin
+                )
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertEqual(
+                    response.json()["expected_participants"],
+                    ["Expected participants must be a positive whole number."],
+                )
+
+    def test_resubmit_rejects_zero_participants(self):
+        self._request_changes()
+        response = self._resubmit(
+            self._resubmit_payload(expected_participants=0), user=self.admin
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(
+            response.json()["expected_participants"],
+            ["Expected participants must be at least 1."],
+        )
+
     def test_generic_update_endpoints_are_disabled(self):
         """PUT/PATCH can never edit a reservation — not even by its owner."""
         self._request_changes()

@@ -143,6 +143,10 @@ function reservation(overrides: Partial<ReservationDetail> = {}): ReservationDet
     generated_approval_status_label: 'Not generated',
     generated_approval_error: '',
     generated_approval_at: null,
+    gso_routing_letter_available: false,
+    gso_routing_letter_generated_at: null,
+    cas_routing_letter_available: false,
+    cas_routing_letter_generated_at: null,
     approval_pdf_available: false,
     approval_docx_available: false,
     approval_email_sent_at: null,
@@ -231,6 +235,45 @@ beforeEach(() => {
 })
 
 afterEach(cleanup)
+
+describe('ReservationDetailPage routing letters', () => {
+  it('shows separate GSO and CAS letters when the backend reports them', () => {
+    state.reservation = reservation({
+      gso_routing_letter_available: true,
+      gso_routing_letter_generated_at: '2026-10-10T09:00:00+08:00',
+      cas_routing_letter_available: true,
+      cas_routing_letter_generated_at: '2026-10-10T09:00:00+08:00',
+    })
+    renderPage()
+
+    expect(screen.getByText('Routing Letters')).toBeInTheDocument()
+    expect(screen.getByText('GSO Routing Letter')).toBeInTheDocument()
+    expect(screen.getByText('CAS Routing Letter')).toBeInTheDocument()
+    expect(screen.getByText('Permission to use the Sound System')).toBeInTheDocument()
+    expect(screen.getByText(/Permission to use the LED Wall/)).toBeInTheDocument()
+  })
+
+  it('hides the routing letter card when no equipment letter applies', () => {
+    renderPage()
+    expect(screen.queryByText('Routing Letters')).not.toBeInTheDocument()
+  })
+
+  it('shows the CAS letter to the requesting account without the GSO letter', () => {
+    state.isStaff = false
+    state.reservation = reservation({
+      cas_routing_letter_available: true,
+      cas_routing_letter_generated_at: '2026-10-10T09:00:00+08:00',
+    })
+    renderPage()
+
+    expect(screen.getByText('Routing Letters')).toBeInTheDocument()
+    expect(screen.getByText('CAS Routing Letter')).toBeInTheDocument()
+    expect(screen.queryByText('GSO Routing Letter')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Download CAS Routing Letter' }),
+    ).toBeInTheDocument()
+  })
+})
 
 describe('ReservationDetailPage direct editing access', () => {
   it('offers the no-OTP edit form to authorized GSO staff for eligible reservations', () => {

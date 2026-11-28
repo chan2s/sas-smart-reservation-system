@@ -489,6 +489,26 @@ LIBREOFFICE_TIMEOUT_SECONDS = int(
     os.environ.get("LIBREOFFICE_TIMEOUT_SECONDS", "90")
 )
 
+# ---------------------------------------------------------------------------
+# Routing letter recipients
+# ---------------------------------------------------------------------------
+# The GSO letter is addressed to the sound-system custodian; the CAS letter is
+# addressed to the college that manages the LED wall. Both are configuration,
+# not invented signatories: set the env vars to the official names/designations
+# without changing code. Blank designations are omitted from the document.
+GSO_ROUTING_LETTER_RECIPIENT_NAME = os.environ.get(
+    "GSO_ROUTING_LETTER_RECIPIENT_NAME", "Sir Clyde"
+)
+GSO_ROUTING_LETTER_RECIPIENT_DESIGNATION = os.environ.get(
+    "GSO_ROUTING_LETTER_RECIPIENT_DESIGNATION", ""
+)
+CAS_ROUTING_LETTER_RECIPIENT_NAME = os.environ.get(
+    "CAS_ROUTING_LETTER_RECIPIENT_NAME", "College of Arts and Sciences"
+)
+CAS_ROUTING_LETTER_RECIPIENT_DESIGNATION = os.environ.get(
+    "CAS_ROUTING_LETTER_RECIPIENT_DESIGNATION", ""
+)
+
 
 # ---------------------------------------------------------------------------
 # Automatic reservation reminder scheduler
