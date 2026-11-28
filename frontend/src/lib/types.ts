@@ -1019,6 +1019,8 @@ export interface BookedDateEvent {
   end_time: string
   status: ReservationStatus
   status_label: string
+  /** Requested resource names — public-safe, no quantities or contact data. */
+  resources?: string[]
 }
 
 export interface Paginated<T> {

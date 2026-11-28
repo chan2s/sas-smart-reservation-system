@@ -60,6 +60,45 @@ function hasReservationConflict(events: BookedDateEvent[], requestedStart: numbe
   )
 }
 
+type DayAvailability = keyof typeof DAY_AVAILABILITY
+
+/**
+ * Occupancy for one day from its booked events. Only APPROVED reservations
+ * commit time (mirroring the backend's AVAILABILITY_BLOCKING_STATUSES), so a
+ * day holding pending requests alone is still bookable — the separate pending
+ * marker communicates the request without ever making the day look booked.
+ */
+export function occupancyFromEvents(
+  events: BookedDateEvent[],
+  candidateStarts: number[],
+): 'available' | 'partial' | 'full' {
+  const approvedEvents = events.filter((event) => event.status === 'APPROVED')
+  if (approvedEvents.length === 0) return 'available'
+  const hasFreeSlot = candidateStarts.some(
+    (slotStart) => !hasReservationConflict(approvedEvents, slotStart, slotStart + 30),
+  )
+  return hasFreeSlot ? 'partial' : 'full'
+}
+
+/** True when the day holds at least one request awaiting GSO review. */
+export function hasPendingRequest(events: BookedDateEvent[]): boolean {
+  return events.some((event) => event.status === 'PENDING')
+}
+
+/** Day cell/aria label: the occupancy state plus the pending marker when present. */
+export function dayStatusLabel(availability: DayAvailability, pending: boolean): string {
+  return pending
+    ? `${DAY_AVAILABILITY[availability].label}, ${PENDING_DAY_MARKER.label}`
+    : DAY_AVAILABILITY[availability].label
+}
+
+/**
+ * The "a request awaits review here" marker: a hollow amber dot, kept in the
+ * pending color family but distinct from the filled amber "Partially booked"
+ * dot. Pending never changes the occupancy dot itself.
+ */
+export const PENDING_DAY_MARKER = { label: 'Pending request', marker: 'border-2 border-status-pending' } as const
+
 export const EVENT_TYPE_OPTIONS: [EventType, string][] = [
   ['SEMINAR', 'Seminar'],
   ['MEETING', 'Meeting'],
@@ -330,7 +369,7 @@ export function StepSchedule({
   )
 
   // Keep the existing Booked Dates View availability legend unchanged.
-  const bookedDateAvailability = (day: Date): 'available' | 'partial' | 'full' | 'unavailable' | null => {
+  const bookedDateAvailability = (day: Date): DayAvailability | null => {
     if (!facility) return null
     if (day.getFullYear() !== month.getFullYear() || day.getMonth() !== month.getMonth()) return null
     const today = manilaCalendarDate()
@@ -340,7 +379,6 @@ export function StepSchedule({
     if (!operatingHours || operatingHours.is_closed || !operatingHours.open_time || !operatingHours.close_time) return 'unavailable'
     const events = eventsByDate.get(format(day, 'yyyy-MM-dd')) ?? []
     if (bookedDatesQuery.isPending || bookedDatesQuery.isError) return null
-    if (events.length === 0) return 'available'
     const [openHour, openMinute] = operatingHours.open_time.split(':').map(Number)
     const [closeHour, closeMinute] = operatingHours.close_time.split(':').map(Number)
     const open = Math.max(openHour * 60 + openMinute, EARLIEST_START_MINUTES)
@@ -350,15 +388,14 @@ export function StepSchedule({
     const candidateStarts = Array.from({ length: Math.floor((close - open) / 30) }, (_, index) => open + index * 30)
       .filter((slotStart) => !isToday || slotStart > nowMinutes)
     if (candidateStarts.length === 0) return 'unavailable'
-    const hasFreeSlot = candidateStarts.some((slotStart) =>
-      !hasReservationConflict(events, slotStart, slotStart + 30),
-    )
-    return hasFreeSlot ? 'partial' : 'full'
+    // Occupancy counts CONFIRMED bookings only (approved reservations); a day
+    // holding pending requests alone stays "Available" + the pending marker.
+    return occupancyFromEvents(events, candidateStarts)
   }
 
   // Calendar View's date state uses the same 30-minute intervals as its time
   // selectors and excludes the reservation being edited when authorized.
-  const calendarDayAvailability = (day: Date): 'available' | 'partial' | 'full' | 'unavailable' | null => {
+  const calendarDayAvailability = (day: Date): DayAvailability | null => {
     if (!facility) return null
     if (day.getFullYear() !== month.getFullYear() || day.getMonth() !== month.getMonth()) return null
     const today = manilaCalendarDate()
@@ -373,7 +410,6 @@ export function StepSchedule({
       ? selectedDateReservationsQuery.data
       : eventsByDate.get(dayKey) ?? EMPTY_BOOKED_EVENTS
     if (bookedDatesQuery.isPending || bookedDatesQuery.isError) return null
-    const approvedEvents = events.filter((event) => event.status === 'APPROVED')
     const open = Math.max(minutesSinceMidnight(operatingHours.open_time), EARLIEST_START_MINUTES)
     const close = minutesSinceMidnight(operatingHours.close_time)
     if (close - open < 30) return 'unavailable'
@@ -381,36 +417,35 @@ export function StepSchedule({
     const candidateStarts = Array.from({ length: Math.floor((close - open) / 30) }, (_, index) => open + index * 30)
       .filter((slotStart) => !isToday || slotStart > nowMinutes)
     if (candidateStarts.length === 0) return 'unavailable'
-    if (approvedEvents.length === 0) return 'available'
-    const hasFreeSlot = candidateStarts.some((slotStart) =>
-      !hasReservationConflict(approvedEvents, slotStart, slotStart + 30),
-    )
-    return hasFreeSlot ? 'partial' : 'full'
+    // Same rule as the Booked Dates View: approved reservations only.
+    return occupancyFromEvents(events, candidateStarts)
   }
 
-  const renderAvailability = (day: Date) => {
-    const availability = bookedDateAvailability(day)
+  /**
+   * Day markers shared by both views: the occupancy dot plus, when the day
+   * holds a request awaiting review, the distinct hollow amber pending marker.
+   * The pending marker never replaces or recolors the occupancy dot — a day
+   * with only pending requests still reads as Available for booking.
+   */
+  const renderDayMarkers = (day: Date, availability: DayAvailability | null) => {
     if (!availability) return null
-    const details = DAY_AVAILABILITY[availability]
+    const events = eventsByDate.get(format(day, 'yyyy-MM-dd')) ?? EMPTY_BOOKED_EVENTS
+    const pending = hasPendingRequest(events)
+    const label = dayStatusLabel(availability, pending)
     return (
-      <span className="mt-1 flex items-center justify-center gap-1" aria-label={details.label} title={details.label}>
-        <span aria-hidden className={cn('size-1.5 rounded-full', details.marker)} />
-        <span className="sr-only">{details.label}</span>
+      <span className="mt-1 flex items-center justify-center gap-1" aria-label={label} title={label}>
+        <span aria-hidden className={cn('size-1.5 rounded-full', DAY_AVAILABILITY[availability].marker)} />
+        {pending && (
+          <span aria-hidden className={cn('size-1.5 rounded-full bg-transparent', PENDING_DAY_MARKER.marker)} />
+        )}
+        <span className="sr-only">{label}</span>
       </span>
     )
   }
 
-  const renderCalendarAvailability = (day: Date) => {
-    const availability = calendarDayAvailability(day)
-    if (!availability) return null
-    const details = DAY_AVAILABILITY[availability]
-    return (
-      <span className="mt-1 flex items-center justify-center gap-1" aria-label={details.label} title={details.label}>
-        <span aria-hidden className={cn('size-1.5 rounded-full', details.marker)} />
-        <span className="sr-only">{details.label}</span>
-      </span>
-    )
-  }
+  const renderAvailability = (day: Date) => renderDayMarkers(day, bookedDateAvailability(day))
+
+  const renderCalendarAvailability = (day: Date) => renderDayMarkers(day, calendarDayAvailability(day))
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMinutes(manilaNowMinutes()), 30_000)
@@ -498,6 +533,8 @@ export function StepSchedule({
     <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-line pt-4 text-xs text-body" aria-label="Date availability legend">
       {[
         ['bg-status-available', 'Available'],
+        // Hollow amber: a request awaits review here — it is NOT a booking.
+        ['border-2 border-status-pending bg-transparent', 'Pending request'],
         ['bg-status-pending', 'Partially booked'],
         ['bg-status-rejected', 'Fully booked'],
         ['bg-faint', 'Unavailable'],
@@ -522,7 +559,8 @@ export function StepSchedule({
       renderDay={renderCalendarAvailability}
       getDayLabel={(day) => {
         const availability = calendarDayAvailability(day)
-        return availability ? DAY_AVAILABILITY[availability].label : ''
+        if (!availability) return ''
+        return dayStatusLabel(availability, hasPendingRequest(eventsByDate.get(format(day, 'yyyy-MM-dd')) ?? EMPTY_BOOKED_EVENTS))
       }}
     />
   )
@@ -535,7 +573,8 @@ export function StepSchedule({
       renderDay={renderAvailability}
       getDayLabel={(day) => {
         const availability = bookedDateAvailability(day)
-        return availability ? DAY_AVAILABILITY[availability].label : ''
+        if (!availability) return ''
+        return dayStatusLabel(availability, hasPendingRequest(eventsByDate.get(format(day, 'yyyy-MM-dd')) ?? EMPTY_BOOKED_EVENTS))
       }}
     />
   )
@@ -613,19 +652,25 @@ export function StepSchedule({
                     )}
                     {facility && bookedDates.length > 0 && (
                       <ul className="mt-3 max-h-48 space-y-2 overflow-y-auto">
-                        {[...eventsByDate.entries()].map(([eventDate, events]) => (
-                          <li key={eventDate}>
-                            <button
-                              type="button"
-                              aria-pressed={selectedBookedDate === eventDate}
-                              onClick={() => openBookedDate(new Date(`${eventDate}T12:00:00`))}
-                              className={cn('w-full rounded-lg border px-3 py-2.5 text-left transition-colors hover:border-brand/40 hover:bg-brand-soft/50', selectedBookedDate === eventDate ? 'border-brand/40 bg-brand-soft/50' : 'border-line bg-surface')}
-                            >
-                              <span className="block text-sm font-semibold text-ink">{format(new Date(`${eventDate}T12:00:00`), 'EEE, MMM d')}</span>
-                              <span className="mt-0.5 block text-xs text-body">{events.length} reservation{events.length === 1 ? '' : 's'}</span>
-                            </button>
-                          </li>
-                        ))}
+                        {[...eventsByDate.entries()].map(([eventDate, events]) => {
+                          const pendingCount = events.filter((event) => event.status === 'PENDING').length
+                          return (
+                            <li key={eventDate}>
+                              <button
+                                type="button"
+                                aria-pressed={selectedBookedDate === eventDate}
+                                onClick={() => openBookedDate(new Date(`${eventDate}T12:00:00`))}
+                                className={cn('w-full rounded-lg border px-3 py-2.5 text-left transition-colors hover:border-brand/40 hover:bg-brand-soft/50', selectedBookedDate === eventDate ? 'border-brand/40 bg-brand-soft/50' : 'border-line bg-surface')}
+                              >
+                                <span className="block text-sm font-semibold text-ink">{format(new Date(`${eventDate}T12:00:00`), 'EEE, MMM d')}</span>
+                                <span className="mt-0.5 block text-xs text-body">
+                                  {events.length} reservation{events.length === 1 ? '' : 's'}
+                                  {pendingCount > 0 && ` · ${pendingCount} pending request${pendingCount === 1 ? '' : 's'}`}
+                                </span>
+                              </button>
+                            </li>
+                          )
+                        })}
                       </ul>
                     )}
                   </aside>

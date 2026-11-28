@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
 import { X } from 'lucide-react'
-import { cn, formatTime } from '@/lib/utils'
+import { cn, formatTime, STATUS_META } from '@/lib/utils'
 import type { BookedDateEvent } from '@/lib/types'
 
 export function ReservationEventsModal({
@@ -144,7 +144,15 @@ export function ReservationEventsModal({
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <h3 className="text-base font-semibold text-ink">{event.event_name}</h3>
-                <span className="rounded-full bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand">
+                {/* Amber for Pending, green-family for Approved/Active — the
+                    same per-status convention as the reservation calendar page. */}
+                <span
+                  className={cn(
+                    'rounded-full px-2.5 py-1 text-xs font-semibold',
+                    STATUS_META[event.status].bg,
+                    STATUS_META[event.status].text,
+                  )}
+                >
                   {event.status_label}
                 </span>
               </div>
@@ -169,6 +177,12 @@ export function ReservationEventsModal({
                   <dt className="text-xs font-medium text-muted">Reservation status</dt>
                   <dd className="mt-0.5 text-body">{event.status_label}</dd>
                 </div>
+                {event.resources && event.resources.length > 0 && (
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs font-medium text-muted">Requested resources</dt>
+                    <dd className="mt-0.5 text-body">{event.resources.join(', ')}</dd>
+                  </div>
+                )}
               </dl>
             </article>
           ))}

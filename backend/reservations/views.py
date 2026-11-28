@@ -2610,7 +2610,10 @@ def public_booked_dates(request):
     Live reservations, including pending requests, are returned for Booked
     Dates visibility. Availability calculations separately filter to approved
     reservations. The response excludes requester identity, contact details,
-    reservation references, notes, and all other private reservation data.
+    reservation references, notes, and all other private reservation data —
+    only the event name, schedule, workflow status, and requested resource
+    names are exposed, so other requesters can see a facility or resource has
+    already been requested.
     """
     expiration.expire_overdue_reservations()
     params = request.query_params
@@ -2651,9 +2654,14 @@ def public_booked_dates(request):
         date__gte=start,
         date__lte=end,
         status__in=Reservation.ACTIVE_STATUSES,
-    ).select_related("facility").order_by("date", "start_time", "event_name")
+    ).select_related("facility").prefetch_related("items__equipment").order_by("date", "start_time", "event_name")
     if exclude_id:
         reservations = reservations.exclude(pk=exclude_id)
+
+    def requested_resources(reservation):
+        """Deduplicated names of the resources this reservation requests."""
+        return sorted({item.equipment.name for item in reservation.items.all()})
+
     return Response([
         {
             "event_name": reservation.event_name,
@@ -2663,6 +2671,7 @@ def public_booked_dates(request):
             "end_time": reservation.end_time,
             "status": reservation.status,
             "status_label": reservation.get_status_display(),
+            "resources": requested_resources(reservation),
         }
         for reservation in reservations
     ])
